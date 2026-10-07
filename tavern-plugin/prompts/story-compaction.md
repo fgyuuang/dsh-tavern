@@ -5,7 +5,7 @@ Condense prior history into structured summary for plot continuation. Include ma
 剧情脉络：Record key events, causal chains & pending items chronologically. Preserve exact time, location, participants and outcomes. Content summary handled separately; prioritize structural links.
 人物档案：每位人物一行——身份、外貌特征、性格、口吻习惯、能力、动机、秘密、当前状态（伤势/持有/所在位置/活动）、Sexualization、Erogenous、Allure、Genitalia；Take note of newly introduced characters; Monitor character changes and OfflineActivity for departed characters
 关系网：Directed relationships and evolution between characters — relationship type, current stage, key turning-point events, secrets, promises, Amorous, Lust
-世界与设定：动态世界书快照与正文中确立的世界规则——地理、组织、能力体系、经济政治规则、公开与秘密状态；不要抄录，整理为关键规则；
+世界与设定：各轮世界书上下文与正文中确立的世界规则——地理、组织、能力体系、经济政治规则、公开与秘密状态；不要抄录，整理为关键规则；
 物品与资源：重要物品的持有者、所在位置、状态与来历
 伏笔与约定：所有未解决线索、未兑现约定、待确认事项、用户否定过的走向；已兑现的注明结果，若篇幅不足，则压缩或删除已兑现的伏笔，仅保留精要事实
 当前情况：Time, location, present characters, their states & ongoing actions, ambient mood. Concise, no redundancy. Prioritize off-screen hidden character dynamics. Live scene handled by separate system maintenance. 注意不要和剧情主线段冗余！关注暗线进展！

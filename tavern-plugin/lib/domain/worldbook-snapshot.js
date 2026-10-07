@@ -17,7 +17,12 @@ export function worldbookSnapshot(session, text, pendingMessages = []) {
   }
   if (previous ? previous.text === text : !text) return null
   const version = createHash('sha256').update(text).digest('hex').slice(0, 16)
-  // One complete ordered snapshot keeps cross-entry XML wrappers intact.
-  const rendered = `【动态世界书快照 · ${version}】\n以下是当前完整状态，替代此前所有动态世界书快照；未列出的旧内容已失效。\n${text || '当前无有效动态条目，此前动态世界书内容全部失效。'}`
+  // One complete ordered snapshot keeps cross-entry XML wrappers intact. Older
+  // snapshots stay in the cached history, so each one supersedes them: entries
+  // no longer triggered (often directives, not facts) must stop applying.
+  const body = text.replace(/^【本轮世界书上下文】\n?/, '')
+  const rendered = body
+    ? `【本轮世界书上下文】（关键词触发，替代此前各轮触发的条目）\n${body}`
+    : '【本轮世界书上下文】本轮没有触发条目，此前各轮触发的条目不再适用。'
   return { schemaVersion: 1, text, version, rendered }
 }
