@@ -3067,7 +3067,7 @@ export async function apply(ctx) {
             system: [
               backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '本轮不生成或提交姿势。完成启用的后台任务后简短回复完成。',
               ...(backgroundTasksSettings.characterDesign ? ['若发现重要人物需要建立、补全或修订长期设计，在当前后台 Agent 内调用 skill 加载 character-design，并按 Skill 读取或保存人物档案；无需也不得创建另一个 Agent。',
-              '人物设计保存独立于姿势结算；完成设计后继续当前任务。'] : ['本轮人物设计已关闭，不调用人物设计 Skill 或生成档案。']),
+              '人物设计保存独立于姿势结算；完成设计后继续当前任务。'] : []),
               backgroundTasksSettings.posture ? 'posture_submit 是本任务最后一步。' : ''
             ].join('\n\n'),
             tools: [...(backgroundTasksSettings.posture ? [POSTURE_SUBMIT_TOOL] : []), ...(backgroundTasksSettings.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])],
