@@ -150,7 +150,7 @@ import {
 import { createLedgerEditor } from './domain/ledger-editor.js'
 import { readLedger, LEDGER_SUBMIT_TOOL } from './domain/story-ledger.js'
 import { createManualLedger } from './domain/manual-ledger.js'
-import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission } from './domain/posture-submission.js'
+import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, lastSubmittedPosture, normalizePostureSubmission } from './domain/posture-submission.js'
 import { TAVERN_COMPATIBILITY_CAPABILITIES, createTavernCompatibilityDiagnosticStore } from './domain/tavern-compatibility-diagnostics.js'
 import { createMvuDiagnosticStore, createMvuDiagnosticExport, sanitizeRuntimeDiagnostics, sanitizeModuleFailure, sanitizeMvuLoadDiagnostic, redactMvuLoadError } from './domain/mvu-diagnostics.js'
 import { createPlayChatDebugReference, readPlayChatDebugTurn } from './domain/play-chat-debug.js'
@@ -2785,12 +2785,15 @@ export async function apply(ctx) {
   }
 
   // ---------- 后台结算 ----------
-  function settleUserText(chat, includePosture = true) {
+  // `knownPosture`: the posture the background history already shows; the block is
+  // repeated only when that differs (new session, compaction, rewind).
+  function settleUserText(chat, includePosture = true, knownPosture = '') {
     const msgs = (chat.messages || []).filter(function (message) {
       return message && (message.role === 'user' || message.role === 'assistant')
     }).slice(-2)
+    const repeatPosture = includePosture && !(str(chat.posture).trim() !== '' && str(chat.posture).trim() === knownPosture)
     const lines = [
-      ...(includePosture ? ['【上一轮结算姿势】',
+      ...(repeatPosture ? ['【上一轮结算姿势】',
       str(chat.posture) !== '' ? projectAgentContent(chat.posture, { charName: chat.cardName, macroState: chat.macroState }).agentText : '（无）'] : []),
       '【最新一轮对话】'
     ]
@@ -3061,7 +3064,7 @@ export async function apply(ctx) {
               id: 'settle-' + Date.now().toString(36),
               role: 'user',
               regexPlacement: 2,
-              content: [{ type: 'text', text: settleUserText(snapshot, backgroundTasksSettings.posture) }],
+              content: [{ type: 'text', text: settleUserText(snapshot, backgroundTasksSettings.posture, taskRun.participantRequest.rewindTo == null ? lastSubmittedPosture(backgroundSessionId && (agentRegistry.get(backgroundSessionId)?.session || sessionStore.get(backgroundSessionId))) : '') }],
               source: { kind: 'plugin', plugin: 'dsh-tavern' }
             }],
             system: [

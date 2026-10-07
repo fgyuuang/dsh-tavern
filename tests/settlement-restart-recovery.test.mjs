@@ -17,7 +17,7 @@ import { createRoundHistory } from '../tavern-plugin/lib/domain/round-history.js
 import { applyMvuSettlementEffect, createMvuSettlementEffect } from '../tavern-plugin/lib/domain/mvu-settlement-effect.js'
 import { createMvuSettlementReconciler } from '../tavern-plugin/lib/domain/mvu-settlement-reconciler.js'
 import { LEDGER_SUBMIT_TOOL, LEDGER_RULES, ledgerContext, createLedgerSubmission } from '../tavern-plugin/lib/domain/story-ledger.js'
-import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission } from '../tavern-plugin/lib/domain/posture-submission.js'
+import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, lastSubmittedPosture, normalizePostureSubmission } from '../tavern-plugin/lib/domain/posture-submission.js'
 import { CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL } from '../tavern-plugin/lib/domain/character-design-document.js'
 
 const server = await readFile(new URL('../tavern-plugin/lib/index.js', import.meta.url), 'utf8')
@@ -71,7 +71,8 @@ async function harness({ beginRunning = true, mvu = true } = {}) {
     backgroundAgentRunner: { async run() { throw new Error('backgroundAgentRunner not configured') } },
     characterDesignDocuments: { async execute() { return JSON.stringify({ ok: true }) } },
     CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL,
-    POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission,
+    POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission, lastSubmittedPosture,
+    agentRegistry: { get: () => undefined }, sessionStore: { get: () => undefined },
     LEDGER_SUBMIT_TOOL, LEDGER_RULES, ledgerContext, createLedgerSubmission,
     conversationRegistry: { list: async () => [] }, ctx: { effect() {} },
     mvuSettlement: { settleVariables: async () => ({ receipt: { version: 1, status: 'unchanged', changes: [] } }) }
