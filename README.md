@@ -101,8 +101,6 @@
 
 以上均为社区作者开发，更多插件见[讨论区的 Show and tell](https://github.com/flizzywine/dsh-tavern/discussions/categories/show-and-tell)。
 
-
-
 ## 看看实际效果
 
 **MVU 状态栏**：人物状态随剧情变化，正文下方可查看本轮更新了什么。
