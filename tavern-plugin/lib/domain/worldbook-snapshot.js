@@ -15,14 +15,10 @@ export function worldbookSnapshot(session, text, pendingMessages = []) {
     const content = (message.content || []).filter(block => block.type === 'text').map(block => block.text).join('')
     if (content.includes(record.rendered)) previous = record
   }
-  if (previous ? previous.text === text : !text) return null
+  // Only the entries triggered this turn; an untriggered turn adds nothing.
+  if (!text || previous?.text === text) return null
   const version = createHash('sha256').update(text).digest('hex').slice(0, 16)
-  // One complete ordered snapshot keeps cross-entry XML wrappers intact. Older
-  // snapshots stay in the cached history, so each one supersedes them: entries
-  // no longer triggered (often directives, not facts) must stop applying.
-  const body = text.replace(/^【本轮世界书上下文】\n?/, '')
-  const rendered = body
-    ? `【本轮世界书上下文】（关键词触发，替代此前各轮触发的条目）\n${body}`
-    : '【本轮世界书上下文】本轮没有触发条目，此前各轮触发的条目不再适用。'
+  // One complete ordered snapshot keeps cross-entry XML wrappers intact.
+  const rendered = `【本轮世界书上下文】\n${text.replace(/^【本轮世界书上下文】\n?/, '')}`
   return { schemaVersion: 1, text, version, rendered }
 }
