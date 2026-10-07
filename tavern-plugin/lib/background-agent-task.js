@@ -31,7 +31,7 @@ function backgroundPrompt(messages, turnContext, task, taskProtocol, input = {})
   const sections = []
   const authoritative = str(turnContext).trim()
   if (authoritative !== '') {
-    sections.push('【本轮权威状态】\n以下内容是当前最新状态；若与后台会话中的旧游标、姿势或指导冲突，以本节为准。\n' + authoritative)
+    sections.push('【本轮权威状态】\n' + authoritative)
   }
   const recent = (messages || []).map(function (message) {
     const role = task === 'phone'
@@ -42,7 +42,7 @@ function backgroundPrompt(messages, turnContext, task, taskProtocol, input = {})
   const taskName = task === 'worldbook-filter' ? '世界书筛选' : task === 'image' ? '场景生图' : task === 'settlement' ? '状态结算' : task === 'phone' ? '手机私聊' : task === 'character-design' ? '人物设计' : task === 'ledger' ? '台账整理' : '候选生成'
   sections.push('【最近剧情与本次任务】\n任务类型：' + taskName + '\n' + recent)
   const protocol = str(taskProtocol).trim()
-  if (protocol !== '') sections.push('【DSH 后台任务协议（最终指令）】\n' + protocol)
+  if (protocol !== '') sections.push('【任务要求】\n' + protocol)
   if (task === 'candidate' && str(input.postHistoryText).trim()) {
     sections.push('【人物卡历史后指令】\n' + str(input.postHistoryText).trim())
   }

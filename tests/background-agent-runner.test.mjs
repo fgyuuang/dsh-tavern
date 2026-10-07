@@ -250,7 +250,7 @@ test('生图常驻会话隔离后台任务与游戏，先保存编号且恢复�
   assert.equal(first.traceSessionId, second.traceSessionId)
   assert.equal(personas.get(first.traceSessionId), readSceneImageSystemInstruction())
   const taskMessage = sessions.get(first.traceSessionId).events.find(event => event.type === 'user/message').data.message.content[0].text
-  assert.ok(taskMessage.endsWith('【DSH 后台任务协议（最终指令）】\n' + readScenePlanInstruction()))
+  assert.ok(taskMessage.endsWith('【任务要求】\n' + readScenePlanInstruction()))
   assert.ok(!taskMessage.includes(readSceneImageSystemInstruction()), '初始系统提示词不重复放入本次任务')
   assert.equal(creates, 1)
   assert.equal(disposed, 0)
