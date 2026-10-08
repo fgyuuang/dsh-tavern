@@ -4,16 +4,17 @@ import { inspectPreset, nativeRegexScriptsOf } from './preset-reading.js'
 import { previewPresetConversion } from './preset-conversion-preview.js'
 import { createPresetEditor } from './preset-editor.js'
 import { createRuntimePresetModule } from './runtime-presets.js'
-import { createBypassPlanModule } from './bypass-plans.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
 }
 
+// Bypass plans were retired on this date; their file is only read for migrations.
+const PLANS_RETIRED_AT = Date.parse('2026-08-28T00:00:00+08:00')
+
 /** Own the preset library's reads, source mappings, selection and legacy migrations.
  * Editors/compilers still own their existing formats; raw documents are never rewritten here.
  */
-const PLANS_RETIRED_AT = Date.parse('2026-08-28T00:00:00+08:00')
 
 export function createPresetLibrary({ resources: fileResources, state: profileData, prepareImport: prepareTextImport, logger = console }) {
   const readJson = function (path) { return profileData.readJson(path) }
@@ -83,54 +84,19 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
     updateState: async function (updater) { return await profileData.updateJson('runtime-presets.json', updater) },
     now: Date.now
   })
-  const bypassPlans = createBypassPlanModule({
-    readPreset,
-    readPresetDocument,
-    runtimeRegexScripts: runtimeRegexScriptsOf,
-    readState: async function () { return await readJson('bypass-plans.json') },
-    updateState: async function (updater) { return await profileData.updateJson('bypass-plans.json', updater) },
-    now: Date.now
-  })
-  async function migrateLegacyPresetPlans() {
-    const target = await bypassPlans.state()
-    if (target.plans.length > 0) return
-    const legacy = await runtimePresets.state()
-    const candidates = (legacy.plans || []).map(function (plan) {
-      return { name: plan.name, path: plan.presetPath, entryKeys: plan.entryKeys || [], regexKeys: plan.regexKeys || [] }
-    })
-    if (legacy.activePreset && !candidates.some(function (item) { return item.path === legacy.activePreset })) {
-      candidates.push({
-        name: (legacy.activePreset.split('/').pop() || '外部预设').replace(/\.json$/i, '') + ' · 迁移方案',
-        path: legacy.activePreset,
-        entryKeys: Object.keys(legacy.entries[legacy.activePreset] || {}),
-        regexKeys: Object.keys(legacy.regexes[legacy.activePreset] || {})
-      })
-    }
-    for (const candidate of candidates) {
-      try {
-        const preset = await readPreset(candidate.path)
-        const document = await readPresetDocument(candidate.path)
-        if (!preset || !document) continue
-        const availableRegexes = new Set(runtimeRegexScriptsOf(preset, document).map(function (script) { return script.regexKey }))
-        const regexKeys = candidate.regexKeys.filter(function (key) { return availableRegexes.has(key) })
-        await bypassPlans.extract({
-          name: candidate.name,
-          sourcePresetPath: candidate.path,
-          entryKeys: candidate.entryKeys,
-          regexKeys
-        })
-      } catch (error) {
-        logger.warn('dsh-tavern: 旧预设方案迁移失败', candidate.path, error)
-      }
-    }
+  async function readRetiredPlans() {
+    const value = await readJson('bypass-plans.json')
+    const plans = Array.isArray(value?.plans) ? value.plans.filter(function (plan) { return plan && typeof plan.id === 'string' && plan.id !== '' }) : []
+    return { plans, activePlanId: str(value?.activePlanId) }
   }
+  // An install that last ran with an active plan continues with that plan's source preset.
   async function migrateActivePresetSelection() {
-    const legacy = await bypassPlans.state()
+    const legacy = await readRetiredPlans()
+    if (legacy.activePlanId === '') return
     const activePlan = legacy.plans.find(function (plan) { return plan.id === legacy.activePlanId })
-    if (!activePlan) return
-    const path = str(activePlan.source && activePlan.source.presetPath)
+    const path = str(activePlan && activePlan.source && activePlan.source.presetPath)
     if (path !== '' && await readPreset(path)) await runtimePresets.select(path)
-    await bypassPlans.activate('')
+    await profileData.updateJson('bypass-plans.json', function (current) { return Object.assign({}, current, { activePlanId: '' }) })
   }
 
   // Games started after bypass plans were retired never chose a plan. A startup
@@ -138,7 +104,7 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
   // text that no longer followed edits (#166); return them to their source preset.
   async function restoreRetiredPlanChat(chat) {
     if (!chat || str(chat.bypassPlanId) === '' || !(Number(chat.createdAt) >= PLANS_RETIRED_AT)) return false
-    const plan = (await bypassPlans.list()).find(function (item) { return item.id === chat.bypassPlanId })
+    const plan = (await readRetiredPlans()).plans.find(function (item) { return item.id === chat.bypassPlanId })
     const path = str(plan && plan.source && plan.source.presetPath)
     if (path === '' || !await readPreset(path)) return false
     let snapshot = null
@@ -220,7 +186,6 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
       if (!preset || preset.valid !== true || preset.recognized !== true) throw new Error('该文件不是可运行的 SillyTavern 预设：' + path)
     }
     await runtimePresets.select(path)
-    await bypassPlans.activate('')
     return { activePresetPath: path }
   }
   async function detail(path) {
@@ -249,11 +214,10 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
     return Object.assign({}, next, { extractableRegexScripts: runtimeRegexScriptsOf(next, await readPresetDocument(normalized)) })
   }
   async function migrate() {
-    await migrateLegacyPresetPlans()
     await migrateActivePresetSelection()
   }
   return Object.freeze({ read: readPreset, readDocument: readPresetDocument, detail,
     catalog, select, import: importPreset, export: exportPreset, preview: previewPreset,
     updateEntry, updateRegex, moveEntry, migrate, restoreChat: restoreRetiredPlanChat,
-    editor: presetEditor, runtime: runtimePresets, plans: bypassPlans })
+    editor: presetEditor, runtime: runtimePresets })
 }

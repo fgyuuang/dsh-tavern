@@ -55,29 +55,25 @@ test('重复正则 ID 和空槽位映射到正确原文位置；编辑保留未�
   assert.equal((await library.export(path)).text, h.files.get(path))
 })
 
-test('旧方案迁移隔离失败资源，过滤失效正则，重复启动不重复创建', async () => {
+test('启动时把旧版启用的方案换成其源预设，并清除方案选择', async () => {
   const h = harness()
-  h.state.set('runtime-presets.json', { version: 6, plans: [
-    { id: 'bad', name: '损坏', presetPath: 'presets/unreadable.json', entryKeys: ['main#1'] },
-    { id: 'good', name: '有效', presetPath: path, entryKeys: ['main#1'], regexKeys: ['same#1', 'missing#1'] }
-  ] })
+  h.state.set('bypass-plans.json', { activePlanId: 'p1', plans: [{ id: 'p1', name: '旧方案', source: { presetPath: path } }] })
   await h.create().migrate()
-  assert.equal(h.warnings.length, 1)
-  const plans = await h.create().plans.list()
-  assert.equal(plans.length, 1)
-  assert.deepEqual(plans[0].regexScripts.map(r => r.regexKey), ['same#1'])
-  await h.create().migrate()
-  assert.equal((await h.create().plans.list()).length, 1)
+  assert.equal((await h.create().catalog()).activePresetPath, path)
+  assert.equal(h.state.get('bypass-plans.json').activePlanId, '')
+  assert.equal(h.state.get('bypass-plans.json').plans.length, 1)
 })
 
 test('方案退役后新开的对话被误绑旧方案时，恢复为跟随源预设 (#166)', async () => {
   const h = harness(), library = h.create()
-  const plan = await library.plans.extract({ name: '旧对话 · 角色', sourcePresetPath: path, entryKeys: ['main#1'], regexKeys: [] })
+  h.state.set('bypass-plans.json', { plans: [
+    { id: 'stale', name: '旧对话 · 角色', source: { presetPath: path } },
+    { id: 'orphan', name: '孤立', source: { presetPath: 'presets/deleted.json' } }
+  ] })
   await library.updateEntry(path, 'main#1', { content: '新规则' })
   const created = Date.parse('2026-09-30T12:00:00+08:00')
-  const chat = { id: 'new', createdAt: created, bypassPlanId: plan.id, runtimePresetPath: '', messages: [{ role: 'assistant', text: '正文' }],
-    runtimePresetSnapshot: await library.plans.snapshot(plan.id) }
-  assert.ok(JSON.stringify(chat.runtimePresetSnapshot).includes('写故事'))
+  const chat = { id: 'new', createdAt: created, bypassPlanId: 'stale', runtimePresetPath: '', messages: [{ role: 'assistant', text: '正文' }],
+    runtimePresetSnapshot: { planId: 'stale', text: '写故事' } }
   assert.equal(await library.restoreChat(chat), true)
   assert.equal(chat.bypassPlanId, '')
   assert.equal(chat.runtimePresetPath, path)
@@ -86,12 +82,11 @@ test('方案退役后新开的对话被误绑旧方案时，恢复为跟随源�
   assert.deepEqual(chat.messages, [{ role: 'assistant', text: '正文' }])
   assert.equal(await library.restoreChat(chat), false)
   // 方案退役前的对话、源预设已删除的对话保持原样。
-  const legacy = { id: 'legacy', createdAt: Date.parse('2026-08-27T12:00:00+08:00'), bypassPlanId: plan.id, runtimePresetSnapshot: { planId: plan.id } }
+  const legacy = { id: 'legacy', createdAt: Date.parse('2026-08-27T12:00:00+08:00'), bypassPlanId: 'stale', runtimePresetSnapshot: { planId: 'stale' } }
   assert.equal(await library.restoreChat(legacy), false)
-  const orphan = await library.plans.importPlan({ name: '孤立', source: { presetName: '已删', presetPath: 'presets/deleted.json', presetDigest: '' }, entries: [{ entryKey: 'x', identifier: 'x', name: 'x', role: 'system', content: '孤立规则', enabled: true, injectable: true, phase: 'front' }], regexScripts: [], compatibilitySettings: {} })
-  const kept = { id: 'kept', createdAt: created, bypassPlanId: orphan.id, runtimePresetSnapshot: { planId: orphan.id } }
+  const kept = { id: 'kept', createdAt: created, bypassPlanId: 'orphan', runtimePresetSnapshot: { planId: 'orphan' } }
   assert.equal(await library.restoreChat(kept), false)
-  assert.equal(kept.bypassPlanId, orphan.id)
+  assert.equal(kept.bypassPlanId, 'orphan')
 })
 
 test('无效导入在写入前失败，导出保留原始文本', async () => {
