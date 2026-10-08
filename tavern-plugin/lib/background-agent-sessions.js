@@ -164,12 +164,13 @@ export function createBackgroundAgentSessions(options, task) {
       runtimeInput.webSearchEnabled = await options.resolveWebSearch(input)
     }
     const persistent = input.persistent === true
-    const requestedSessionId = str(persistent && typeof input.resolvePersistentSessionId === 'function'
+    const startOver = input.startOverAfterRewindFailure === true
+    const requestedSessionId = startOver ? '' : str(persistent && typeof input.resolvePersistentSessionId === 'function'
       ? await input.resolvePersistentSessionId() : input.persistentSessionId)
     const key = residentKey(input)
     const needsSession = persistent && input.task !== 'image' && typeof options.needsNewBackgroundSession === 'function'
       && await options.needsNewBackgroundSession(input.sessionId)
-    const residentSessionId = needsSession && requestedSessionId === '' ? '' : str(residentSessionByParent.get(key))
+    const residentSessionId = startOver || needsSession && requestedSessionId === '' ? '' : str(residentSessionByParent.get(key))
     let traceSessionId = requestedSessionId || (persistent ? residentSessionId : '') || makeId()
     const abandoned = abandonedSessions.has(traceSessionId) || Boolean(await options.retirement?.isRetired(traceSessionId))
     if (abandoned) traceSessionId = makeId()
@@ -273,6 +274,13 @@ export function createBackgroundAgentSessions(options, task) {
     })
     try {
       return await task.execute({ agent: handle.agent, state, traceSessionId, persistent }, input)
+    } catch (error) {
+      // Discarding all task history equals starting a new session. Some hosts
+      // (an unpatched DSH) cannot replace surface messages; never strand every
+      // later task on that. The old session is retired, not reused.
+      if (error?.code !== 'BACKGROUND_REWIND_FAILED' || input.rewindTo !== -1 || !persistent || startOver || input.task === 'image') throw error
+      console.warn('dsh-tavern: 后台历史无法回退，改用新的后台会话', traceSessionId, error.cause || error)
+      state.abandoned = true
     } finally {
       activeSessions.delete(traceSessionId)
       if (state.abandoned) {
@@ -293,6 +301,7 @@ export function createBackgroundAgentSessions(options, task) {
         await handle.dispose()
       } else { resident.lastUsedAt = now(); await releaseSuperseded(key) }
     }
+    return execute({ ...input, persistentSessionId: '', resolvePersistentSessionId: undefined, startOverAfterRewindFailure: true })
   }
 
   function enqueue(key, work) {

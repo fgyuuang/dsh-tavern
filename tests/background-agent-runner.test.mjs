@@ -374,6 +374,60 @@ for (const rewindFails of [false, true]) test('后台 Surface 回退失败时停
   assert.deepEqual(appendCalls[0].options.sourceEventSeqs, [3, 4])
 })
 
+test('整段回退失败时改用新的后台会话，旧会话退休 (#164)', async () => {
+  const parent = { id: 'parent-session', session: { header: { cwd: '/tmp/tavern', delegationDepth: 0 } } }
+  const source = { kind: 'model', provider: 'test', model: 'scripted' }
+  const retired = [], ready = [], created = []
+  function child(events, nodes, appendFails) {
+    let work = Promise.resolve()
+    return {
+      session: {
+        events, surface: { nodes },
+        append(type, data, options) {
+          if (appendFails && options?.surfaceOp?.op === 'replace') throw new Error('assistant/message embeds its source stream and cannot carry sourceEventSeqs')
+          events.push({ seq: events.length, type, data, ...(options || {}) })
+        }
+      },
+      followup() {
+        work = Promise.resolve().then(function () {
+          events.push({ seq: events.length, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '新会话结算' }] } } })
+          events.push({ seq: events.length, type: 'turn/end', data: {} })
+        })
+      },
+      async whenIdle() { await work }
+    }
+  }
+  const setupCtx = () => ({ systemPrompt: { section() {}, variable() {}, suppressRuntimeContext() {} }, tools: { restrict() {}, register() {} }, on() {} })
+  const agents = {
+    get(id) { return id === parent.id ? parent : undefined },
+    async resume(options) {
+      assert.equal(options.resumeSessionId, 'old-background')
+      await options.setup(setupCtx())
+      return { agent: child([
+        { seq: 0, type: 'user/message', data: { text: '第一轮' } },
+        { seq: 1, type: 'assistant/message', data: { turn: 1, step: 1, message: { source, content: [{ type: 'text', text: '第一轮结算' }] } } },
+        { seq: 2, type: 'turn/end', data: {} }
+      ], [0, 1], true), async dispose() {} }
+    },
+    async create(options) {
+      created.push(options.sessionId)
+      await options.setup(setupCtx())
+      return { agent: child([], [], true), async dispose() {} }
+    }
+  }
+  const runner = createBackgroundAgentRunner({ agents, id: () => 'new-background',
+    retirement: { async isRetired() { return false }, async retire(id, parentId) { retired.push([id, parentId]) } } })
+  const result = await runner.run({
+    sessionId: parent.id, task: 'settlement', selection: { provider: 'test', model: 'scripted' },
+    system: '结算规则', messages: [], tools: [], persistent: true, persistentSessionId: 'old-background', rewindTo: -1,
+    onPersistentSessionReady: id => ready.push(id)
+  })
+  assert.equal(result.traceSessionId, 'new-background')
+  assert.deepEqual(created, ['new-background'])
+  assert.deepEqual(retired, [['old-background', parent.id]])
+  assert.deepEqual(ready, ['new-background'])
+})
+
 test('manual stop cancels the active background agent belonging to this game only', async () => {
   let ready, finish, cancelled = 0;
   const started = new Promise(resolve => { ready = resolve; });
