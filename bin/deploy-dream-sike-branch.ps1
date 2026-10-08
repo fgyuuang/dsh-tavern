@@ -157,7 +157,7 @@ if (@($files | Where-Object operation -EQ 'replace').Count -ne 15 -or @($files |
     throw '部署文件类型与预期不符；要求替换 15 项、新建 11 项。'
 }
 
-$newPaths = @($files | Where-Object operation -EQ 'create' | ForEach-Object relativePath)
+$newPaths = @($files | Where-Object operation -EQ 'create' | ForEach-Object { $_.relativePath })
 $nextInventory = (@($installedFiles + $newPaths) | Sort-Object -Unique) -join "`n"
 $nextInventory += "`n"
 $nextInventoryHash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($utf8NoBom.GetBytes($nextInventory))).ToLowerInvariant()
@@ -224,7 +224,9 @@ try {
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
         if ($entry.operation -eq 'replace') {
             if ((Get-Sha256 $target) -ne $entry.originalSha256) { throw "安装文件在部署期间变化：$($entry.relativePath)" }
-            [System.IO.File]::Replace($staged, $target, $null)
+            $replaced = Assert-ContainedPath $backupRoot (Join-Path $backupRoot ('replaced\' + $entry.relativePath.Replace('/', '\')))
+            New-Item -ItemType Directory -Path (Split-Path -Parent $replaced) -Force | Out-Null
+            [System.IO.File]::Replace($staged, $target, $replaced)
         } else {
             if (Test-Path -LiteralPath $target) { throw "新增文件在部署期间出现：$($entry.relativePath)" }
             [System.IO.File]::Move($staged, $target)
@@ -232,7 +234,9 @@ try {
         if ((Get-Sha256 $target) -ne $entry.deployedSha256) { throw "部署校验失败：$($entry.relativePath)" }
     }
     if ((Get-Sha256 $inventoryPath) -ne $inventoryHash) { throw '安装清单在部署期间变化。' }
-    [System.IO.File]::Replace($stagedInventory, $inventoryPath, $null)
+    $replacedInventory = Assert-ContainedPath $backupRoot (Join-Path $backupRoot 'replaced\.dsh-tavern-files.txt')
+    New-Item -ItemType Directory -Path (Split-Path -Parent $replacedInventory) -Force | Out-Null
+    [System.IO.File]::Replace($stagedInventory, $inventoryPath, $replacedInventory)
     if ((Get-Sha256 $inventoryPath) -ne $nextInventoryHash) { throw '安装清单更新校验失败。' }
     $manifest.status = 'deployed'
     $manifest.deployedAt = (Get-Date).ToString('o')

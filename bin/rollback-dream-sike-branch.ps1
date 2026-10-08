@@ -105,7 +105,7 @@ if ($manifest.schemaVersion -ne 1 -or $manifest.kind -ne 'dream-sike-dsh-branch'
 $appVersion = (Get-Content -LiteralPath (Join-Path $appRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 if ($appVersion -ne '2.5.0') { throw "当前程序版本为 $appVersion，不能用 2.5.0 备份回滚。" }
 $files = @($manifest.files)
-if ($files.Count -ne 26 -or @($files | ForEach-Object relativePath | Sort-Object -Unique).Count -ne 26) { throw '备份清单不是 26 个唯一运行文件。' }
+if ($files.Count -ne 26 -or @($files | ForEach-Object { $_.relativePath } | Sort-Object -Unique).Count -ne 26) { throw '备份清单不是 26 个唯一运行文件。' }
 foreach ($entry in $files) {
     $relative = [string]$entry.relativePath
     if ($relative -notin $expectedPaths -or $relative -match '(^|/)\.\.?(/|$)' -or
@@ -114,7 +114,7 @@ foreach ($entry in $files) {
     }
 }
 foreach ($path in $expectedPaths) {
-    if ($path -notin @($files | ForEach-Object relativePath)) { throw "备份清单缺少文件：$path" }
+    if ($path -notin @($files | ForEach-Object { $_.relativePath })) { throw "备份清单缺少文件：$path" }
 }
 if (@($files | Where-Object operation -EQ 'replace').Count -ne 15 -or @($files | Where-Object operation -EQ 'create').Count -ne 11) {
     throw '备份清单应记录替换 15 项、新建 11 项。'
@@ -172,7 +172,9 @@ foreach ($entry in ($files | Where-Object operation -EQ 'replace')) {
         Copy-Item -LiteralPath $backup -Destination $staged -ErrorAction Stop
         if ((Get-Sha256 $staged) -ne $entry.originalSha256) { throw "待恢复文件校验失败：$($entry.relativePath)" }
         if ((Get-Sha256 $target) -ne $entry.deployedSha256) { throw "安装文件在回滚期间变化：$($entry.relativePath)" }
-        [System.IO.File]::Replace($staged, $target, $null)
+        $replaced = Assert-ContainedPath $restoreRoot (Join-Path $restoreRoot ('replaced\' + $entry.relativePath.Replace('/', '\')))
+        New-Item -ItemType Directory -Path (Split-Path -Parent $replaced) -Force | Out-Null
+        [System.IO.File]::Replace($staged, $target, $replaced)
         if ((Get-Sha256 $target) -ne $entry.originalSha256) { throw "原文件恢复校验失败：$($entry.relativePath)" }
     }
 }
@@ -189,7 +191,9 @@ if ((Get-Sha256 $stagedInventory) -ne $manifest.inventory.originalSha256) { thro
 if ((Get-Sha256 $inventoryPath) -notin @($manifest.inventory.deployedSha256, $manifest.inventory.originalSha256)) {
     throw '安装清单在回滚期间变化。'
 }
-[System.IO.File]::Replace($stagedInventory, $inventoryPath, $null)
+$replacedInventory = Assert-ContainedPath $restoreRoot (Join-Path $restoreRoot 'replaced\.dsh-tavern-files.txt')
+New-Item -ItemType Directory -Path (Split-Path -Parent $replacedInventory) -Force | Out-Null
+[System.IO.File]::Replace($stagedInventory, $inventoryPath, $replacedInventory)
 if ((Get-Sha256 $inventoryPath) -ne $manifest.inventory.originalSha256) { throw '安装清单恢复校验失败。' }
 $manifest.status = 'rolledBack'
 $manifest.rolledBackAt = (Get-Date).ToString('o')
