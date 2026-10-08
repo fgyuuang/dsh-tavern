@@ -18383,11 +18383,16 @@ function bindTavernFontZoom(node, win) {
             const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
             const mode = useTavernSessionMode(owner);
             if (!isPlayMode(mode)) return null;
-            return React.createElement("button", { type: "button", className: "dsh-tavern-btn dsh-tavern-header-settings", "aria-label": "酒馆状态", title: "查看本局酒馆状态", onClick: () => props.open(owner) },
-                React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", "aria-hidden": "true" },
-                    React.createElement("path", { d: "M4 7h3m4 0h9M4 17h9m4 0h3" }),
-                    React.createElement("circle", { cx: 9, cy: 7, r: 2 }), React.createElement("circle", { cx: 15, cy: 17, r: 2 })),
-                React.createElement("span", { className: "dsh-tavern-header-action-label" }, "酒馆状态"));
+            return React.createElement(React.Fragment, null,
+                React.createElement("button", { type: "button", className: "dsh-tavern-btn dsh-tavern-header-settings", "aria-label": "本局设置", title: "打开本局设置与 Agent 模式", onClick: () => props.openSettings(owner) },
+                    React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", "aria-hidden": "true" },
+                        React.createElement("path", { d: "M4 7h3m4 0h9M4 17h9m4 0h3" }),
+                        React.createElement("circle", { cx: 9, cy: 7, r: 2 }), React.createElement("circle", { cx: 15, cy: 17, r: 2 })),
+                    React.createElement("span", { className: "dsh-tavern-header-action-label" }, "本局设置")),
+                React.createElement("button", { type: "button", className: "dsh-tavern-btn dsh-tavern-header-settings", "aria-label": "酒馆状态", title: "查看本局酒馆状态", onClick: () => props.openStatus(owner) },
+                    React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", "aria-hidden": "true" },
+                        React.createElement("path", { d: "M4 18V9m5 9V5m5 13v-7m5 7V7" })),
+                    React.createElement("span", { className: "dsh-tavern-header-action-label" }, "酒馆状态")));
         }
 
         function TavernConversationBackgroundModel(props) {
@@ -18880,7 +18885,9 @@ function bindTavernFontZoom(node, win) {
             )), "dsh-tavern: immersive header action");
             ctx.effect(() => slots.inject("conversation.session.header.utilities", () => slots.register(
                 { name: "conversation.session.header.utilities", id: "dsh-tavern-conversation-settings", order: 80 },
-                props => React.createElement(TavernConversationSettingsAction, { ...props, sessions: ctx.sessions, open: sessionId => openTavernSidebarTab(ctx, { type: "dsh-tavern:status" }, { sessionId }) })
+                props => React.createElement(TavernConversationSettingsAction, { ...props, sessions: ctx.sessions,
+                    openSettings: sessionId => openTavernSidebarTab(ctx, { type: "dsh-tavern:conversation-settings" }, { sessionId }),
+                    openStatus: sessionId => openTavernSidebarTab(ctx, { type: "dsh-tavern:status" }, { sessionId }) })
             )), "dsh-tavern: conversation settings action");
 			ctx.effect(() => ctx.betterSidebar.registerTab({
 				id: "dsh-tavern:status",
