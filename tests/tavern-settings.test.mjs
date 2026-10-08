@@ -65,16 +65,16 @@ test('全局写作 Skill 逐项保存，恢复开启不改动其他 Skill', () =
   assert.throws(() => applyTavernSettingsPatch(document, { defaultWritingSkill: { name: 'one', enabled: 'false' } }), /无效/)
 })
 
-test('候选项默认填入后隐藏，保存后持久化且不覆盖其他设置', async t => {
+test('候选项默认发送后才隐藏，保存后持久化且不覆盖其他设置', async t => {
   const h = await settingsHarness(t)
-  assert.equal((await h.read()).candidateDismissMode, 'after-fill')
-  await h.update({ systemAppendEnabled: true, candidateDismissMode: 'after-send' })
   assert.equal((await h.read()).candidateDismissMode, 'after-send')
-  await h.update({ candidateDismissMode: 'after-fill' })
+  await h.update({ systemAppendEnabled: true, candidateDismissMode: 'after-fill' })
   assert.equal((await h.read()).candidateDismissMode, 'after-fill')
+  await h.update({ candidateDismissMode: 'after-send' })
+  assert.equal((await h.read()).candidateDismissMode, 'after-send')
   assert.equal((await h.read()).systemAppendEnabled, true)
   await assert.rejects(h.update({ candidateDismissMode: 'invalid' }), /无效的候选项/)
-  assert.equal((await h.read()).candidateDismissMode, 'after-fill')
+  assert.equal((await h.read()).candidateDismissMode, 'after-send')
 })
 
 test('全局隐藏注入与思考设置可持久化和恢复，不改动其他配置', async t => {

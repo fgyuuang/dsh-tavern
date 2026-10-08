@@ -124,7 +124,7 @@ export function presentTavernSettings(document, defaults) {
     defaultWorkbenchModel: normalizeBackgroundModel(object(document).defaultWorkbenchModel),
     contextCompaction: compactionPolicy(object(document).contextCompaction),
     hideContextAndReasoning: object(document).hideContextAndReasoning !== false,
-    candidateDismissMode: object(document).candidateDismissMode === 'after-send' ? 'after-send' : 'after-fill',
+    candidateDismissMode: object(document).candidateDismissMode === 'after-fill' ? 'after-fill' : 'after-send',
     compatibilityMode: false,
     sillyModeEnabled: false,
     webSearchEnabled: object(document).webSearchEnabled === true,

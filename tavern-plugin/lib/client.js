@@ -14370,7 +14370,7 @@ function bindTavernFontZoom(node, win) {
         }
 
         function useCandidatePreferences() {
-            const [mode, setMode] = React.useState("after-fill");
+            const [mode, setMode] = React.useState("after-send");
             React.useEffect(function () {
                 let active = true;
                 let changed = false;
