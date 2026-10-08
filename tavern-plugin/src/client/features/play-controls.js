@@ -1102,18 +1102,51 @@
 		}
 		// @include background-suppression.js
 		const pollBackgroundSuppression = createBackgroundSuppressionPoller(rpc);
+		// Undo the scene-image agent's latest drawing conversation; pictures stay.
+		function TavernImageAgentUndoAction(props) {
+			const h = React.createElement;
+			const sessionId = String(props.sessionId || "");
+			const [imageAgent, setImageAgent] = React.useState(false);
+			const [status, setStatus] = React.useState("");
+			const askConfirm = useTavernConfirm(sessionId);
+			React.useEffect(function () {
+				setImageAgent(false); setStatus("");
+				if (!sessionId.startsWith("background-")) return;
+				let active = true;
+				rpc("getBackgroundSuppressedTurns", { sessionId }).then(function (result) { if (active) setImageAgent(result.imageAgent === true); }, function () {});
+				return function () { active = false; };
+			}, [sessionId]);
+			if (!imageAgent) return null;
+			async function undo() {
+				if (!await askConfirm("撤销文生图 Agent 最近一轮对话？\n\n已画好的图片会保留，只是 Agent 不再记得那次画图的过程。")) return;
+				setStatus("busy");
+				try {
+					const result = await rpc("undoImageAgentTurn", { agentSessionId: sessionId });
+					setStatus(result.undone ? "" : "empty");
+					window.dispatchEvent(new CustomEvent("dsh-tavern-background-history-changed", { detail: { sessionId } }));
+				} catch (err) { setStatus(""); tavernErrorHub.report("撤销文生图对话", err); }
+			}
+			return h("button", { type: "button", className: "dsh-tavern-btn quiet", disabled: status === "busy", title: "撤销最近一轮画图对话；图片保留", onClick: undo },
+				status === "busy" ? "撤销中…" : status === "empty" ? "没有可撤销的对话" : "撤销最近一轮");
+		}
 		function TurnHistoryProjection(props) {
 			const running = props.useSession(function (snapshot) { return snapshot.running; });
 			const latestMessageId = props.useChat(latestTavernAssistantMessageId);
 			const suppressionState = useLiveTavernView(props.sessionId, "suppression:" + String(latestMessageId || "") + ":" + String(running));
 			const [backgroundTurns, setBackgroundTurns] = React.useState([]);
+			const [backgroundRevision, setBackgroundRevision] = React.useState(0);
 			React.useEffect(function () { setBackgroundTurns([]); }, [props.sessionId]);
+			React.useEffect(function () {
+				function changed(event) { if (event.detail?.sessionId === props.sessionId) setBackgroundRevision(value => value + 1); }
+				window.addEventListener("dsh-tavern-background-history-changed", changed);
+				return function () { window.removeEventListener("dsh-tavern-background-history-changed", changed); };
+			}, [props.sessionId]);
 			React.useEffect(function () {
 				if (!String(props.sessionId || "").startsWith("background-")) return;
 				return pollBackgroundSuppression(props.sessionId, running,
 					result => setBackgroundTurns(result.turns || []),
 					error => console.warn("后台回退显示刷新失败", error));
-			}, [props.sessionId, latestMessageId, running]);
+			}, [props.sessionId, latestMessageId, running, backgroundRevision]);
 			const foregroundTurns = suppressionState.view && Array.isArray(suppressionState.view.suppressedDshTurns) ? suppressionState.view.suppressedDshTurns : [];
 			const suppressedDshTurns = foregroundTurns.concat(backgroundTurns);
 			const suppressedDshTurnsRevision = suppressedDshTurns.join(",");
@@ -1337,6 +1370,10 @@
                 { name: "conversation.session.header.utilities", id: "session-log-download", order: 0, priority: -1 },
                 () => null
             )), "dsh-tavern: hide host session-log-download");
+            ctx.effect(() => slots.inject("conversation.session.header.actions", () => slots.register(
+                { name: "conversation.session.header.actions", id: "dsh-tavern-image-agent-undo", order: 8 },
+                props => React.createElement(TavernImageAgentUndoAction, props)
+            )), "dsh-tavern: image agent undo action");
             ctx.effect(() => slots.inject("conversation.session.header.actions", () => slots.register(
                 { name: "conversation.session.header.actions", id: "dsh-tavern-immersive", order: 9 },
                 () => React.createElement(TavernImmersiveAction)

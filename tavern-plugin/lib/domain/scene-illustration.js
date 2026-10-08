@@ -600,6 +600,17 @@ export function createSceneIllustrations(deps) {
     if (!version?.attachment) throw new Error('图片尚未就绪或已删除')
     return deps.attachments().readImage(version.attachment)
   }
+  // Undo the image agent's latest drawing conversation in its own Session. Pictures stay.
+  async function undoAgentTurn(sessionId, agentSessionId) {
+    const chat = await deps.chatForSession(sessionId)
+    if (!chat) throw new Error('找不到这局游戏')
+    const saved = await deps.store.readJson('scene-images/' + hash(String(chat.id)) + '/agent.json')
+    if (saved?.parentSessionId !== sessionId || saved.sessionId !== agentSessionId) throw new Error('这不是当前游戏的文生图对话，未撤销')
+    const selection = deps.selection(sessionId)
+    if (!selection) throw new Error('请先为当前对话选择模型')
+    const result = await deps.runAgent({ sessionId, task: 'image', persistent: true, persistentSessionId: agentSessionId, undoLastTask: true, selection, messages: [] })
+    return { undone: result?.undone === true }
+  }
   // The picture a reader sees for each turn (its latest version); turns without one are skipped.
   async function exportImages(sessionId, turns) {
     const images = []
@@ -630,7 +641,7 @@ export function createSceneIllustrations(deps) {
     })
     return present(target, next)
   }
-  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, exportImages, removeImage, setReference,
+  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, exportImages, undoAgentTurn, removeImage, setReference,
     async dispose() { for (const job of jobs.values()) job.controller.abort(); await Promise.allSettled([...jobs.values()].map(job => job.promise)); imageHosts.delete(ownerId); imageAborters.delete(ownerId) }
   }
 }

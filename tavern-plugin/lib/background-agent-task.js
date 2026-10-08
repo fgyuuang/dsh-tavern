@@ -340,8 +340,25 @@ export function createBackgroundAgentTask(options) {
     }
   }
 
+  // Hide the latest task (its request and everything after) from the model's
+  // surface in the same Session; raw events stay for the trace. Fixed seeds remain.
+  async function undoLastTask(session, traceSessionId) {
+    const events = new Map(sessionEvents(session).map(event => [event.seq, event]))
+    const nodes = Array.isArray(session?.surface?.nodes) ? session.surface.nodes : []
+    const start = nodes.findLast(seq => {
+      const event = events.get(seq)
+      return event?.type === 'user/message' && !String(event.data?.id || '').startsWith('tavern-session-prefix:')
+    })
+    if (start === undefined) return { traceSessionId, undone: false }
+    try { rewindBackgroundSurface(session, start - 1) }
+    catch (error) { throw new Error('撤销失败，对话未改变。原因：' + str(error?.message || error), { cause: error }) }
+    if (typeof options.flushSession === 'function') await options.flushSession(session)
+    return { traceSessionId, undone: true }
+  }
+
   async function execute({ agent, state, traceSessionId, persistent }, input) {
     state.session = agent.session
+    if (input.undoLastTask === true) return undoLastTask(agent.session, traceSessionId)
     const runtimeInput = state.input
     try { rewindBackgroundSurface(agent.session, input.rewindTo) }
     catch (error) {
