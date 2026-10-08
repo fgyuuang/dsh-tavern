@@ -3,7 +3,7 @@
 // real Session.append rejects Tavern rollback/edit tombstones.
 // The dedicated installer test verifies unpatched rejection itself, so skip there.
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { prepareExpandedPatch } from '../../tavern-plugin/lib/domain/host-session-patch.js'
 
 const APPLIED = Symbol.for('dsh-tavern.host-session-patch-preload.v1')
@@ -15,7 +15,7 @@ if (!globalThis[APPLIED] && !process.argv.some(arg => arg.endsWith('/host-sessio
     const anchor = new URL('../../dsh-session/package.json', pathToFileURL(process.env.DSH_BOOT_MODULE))
     const require = createRequire(anchor)
     version = require('@deepseek-ai/dsh-session/package.json').version
-    runtimeRoot = new URL('../../../', anchor).pathname
+    runtimeRoot = fileURLToPath(new URL('../../../', anchor))
   } else {
     const pluginRequire = createRequire(new URL('../../tavern-plugin/package.json', import.meta.url))
     const hostRequire = createRequire(pluginRequire.resolve('@deepseek-ai/dsh-tools'))

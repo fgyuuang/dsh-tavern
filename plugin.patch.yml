@@ -77,7 +77,7 @@
     - id: tavern-cordis-inspect
       name: ./tavern-plugin/lib/cordis-inspect.js
     - id: dsh-tavern
-      name: ./tavern-plugin/lib/index.js
+      name: dsh-tavern-plugin
       inject:
         - fs
         - llm
