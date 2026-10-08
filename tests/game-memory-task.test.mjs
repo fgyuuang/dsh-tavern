@@ -21,7 +21,7 @@ function harness() {
   current = timeline.apply({ chat: { id: 'chat-memory', sessionId: 's', mode: 'story', playPresetId: 'dream-sike-dsh', messages: [], settleStatus: 'idle', _storageRevision: 1 }, intent: { kind: 'ensure' } }).chat
   before = structuredClone(current)
   const body = timeline.apply({ chat: current, intent: { kind: 'body.begin', turn: 1, userText: '进入钟楼' } })
-  current = timeline.complete({ chat: body.chat, operationId: body.value.operationId, basedOn: body.value.basedOn, outcome: { status: 'success' }, apply(draft) { draft.messages.push({ role: 'assistant', text: '她进入钟楼，记住了门上的暗号。' }) } }).chat
+  current = timeline.complete({ chat: body.chat, operationId: body.value.operationId, basedOn: body.value.basedOn, outcome: { status: 'success' }, apply(draft) { draft.messages.push({ role: 'assistant', turn: 1, text: '她进入钟楼，记住了门上的暗号。' }) } }).chat
   const coordinator = createBackgroundTaskCoordinator({ timeline, store: {
     async readChat() { return structuredClone(current) },
     async writeChat(chat) { current = structuredClone(chat); return current },
@@ -102,4 +102,23 @@ test('存档包携带不可变记忆，导入新局后可读与分叉，旧存�
   await h.workspace.importFiles(imported, save.memory)
   assert.equal((await h.workspace.read(imported, 'memory/current-scene.md')).status, 'found')
   assert.equal((await h.workspace.fork(imported, { id: 'chat-fork' })).head, imported.gameMemory.head)
+})
+
+test('编辑正文撤销由旧正文生成的记忆；状态维护重试不会重复提交记忆', async () => {
+  const h = harness(), task = await h.coordinator.begin(h.current(), 'settlement')
+  const memory = await createGameMemoryTask({ workspace: h.workspace, chat: task.chat, taskRun: task })
+  await memory.execute(submission)
+  await task.commit({ apply: draft => memory.apply(draft) })
+  const settled = h.current()
+  const changed = h.timeline.apply({ chat: settled, intent: { kind: 'ledger.edit', ledger: { version: 1 } } }).chat
+  h.set(changed)
+  const retry = await h.coordinator.begin(h.current(), 'settlement')
+  const savedMemory = await createGameMemoryTask({ workspace: h.workspace, chat: retry.chat, taskRun: retry })
+  assert.equal(savedMemory.complete(), true)
+  const beforeHead = h.current().gameMemory.head
+  await retry.commit({ apply: draft => savedMemory.apply(draft) })
+  assert.equal(h.current().gameMemory.head, beforeHead)
+  const edited = h.timeline.apply({ chat: h.current(), intent: { kind: 'body.edit', turn: 1, patch: { text: '她转身离开，没有进入钟楼。' } } }).chat
+  assert.equal((await h.workspace.list(edited)).total, 0)
+  assert.equal(edited.timeline.operations[h.bodyId].memoryReceipt, undefined)
 })

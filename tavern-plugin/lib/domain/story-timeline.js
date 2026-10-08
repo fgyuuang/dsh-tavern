@@ -509,6 +509,11 @@ export function createStoryTimeline(options = {}) {
       // bind to the edited revision. Old in-flight work still fails basedOn.
       const editedRound = backgroundBody(chat)
       if (editedRound && Number(editedRound.turn) === Number(intent.turn)) {
+        const previousMemoryHead = editedRound.memoryReceipt?.expectedHead
+        if (previousMemoryHead) chat.gameMemory = { version: 1, head: previousMemoryHead }
+        else if (editedRound.memoryReceipt) delete chat.gameMemory
+        delete editedRound.memoryReceipt
+        delete editedRound.memoryPrepared
         editedRound.committedRevision = chat.timeline.revision
       }
       chat.timeline.updatedAt = now()

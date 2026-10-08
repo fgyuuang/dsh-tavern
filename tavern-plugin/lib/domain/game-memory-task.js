@@ -41,10 +41,16 @@ export async function readGameMemory(workspace, chat, args = {}) {
 export async function createGameMemoryTask({ workspace, chat, taskRun }) {
   if (!gameMemoryEnabled(chat)) return null
   const operation = chat.timeline?.operations?.[taskRun.operationId]
-  const bodyId = operation?.roundOperationId
+  const bodyId = operation?.roundOperationId || Object.values(chat.timeline?.operations || {})
+    .filter(item => item?.kind === 'body' && item.status === 'completed' && item.committedBranchId === taskRun.basedOn.branchId)
+    .sort((a, b) => b.committedRevision - a.committedRevision)[0]?.id
   const body = chat.timeline?.operations?.[bodyId]
   if (!body || body.kind !== 'body' || body.status !== 'completed') return null
+  const alreadyApplied = Boolean(body.memoryReceipt && body.memoryReceipt.head === chat.gameMemory?.head
+    && body.memoryReceipt.revision === body.committedRevision && body.memoryReceipt.branchId === body.committedBranchId)
   let prepared = body.memoryPrepared || null
+  if (prepared && (prepared.receipt?.branchId !== taskRun.basedOn.branchId || prepared.receipt?.revision !== taskRun.basedOn.revision
+    || prepared.receipt?.expectedHead !== (chat.gameMemory?.head || null))) prepared = null
   if (prepared) await workspace.validatePrepared(chat, prepared)
   const listing = await workspace.list(chat, { limit: 20 })
   return {
@@ -55,11 +61,12 @@ export async function createGameMemoryTask({ workspace, chat, taskRun }) {
       '优先维护 memory/current-scene.md、memory/open-threads.md 与需要变化的人物记忆；章节记忆保留回合出处。记忆只描述已发生事实，人物所知分别记录。核心设定修改须有玩家明确要求。',
       '后续压缩与新分支会从这些文档恢复；不要复制整段聊天或重复保存 MVU 数值。',
       JSON.stringify(listing),
-      prepared ? '本轮记忆已暂存，可直接完成其余结算。' : ''
+      alreadyApplied ? '本轮记忆已经保存，可直接完成其余结算，无需重复更新文档。' : prepared ? '本轮记忆已暂存，可直接完成其余结算。' : ''
     ].filter(Boolean).join('\n'),
-    complete: () => prepared !== null,
+    complete: () => alreadyApplied || prepared !== null,
     async execute(call) {
       if (call?.name !== GAME_MEMORY_SUBMIT_TOOL.name) return JSON.stringify({ ok: false, error: '未知记忆工具' })
+      if (alreadyApplied) return JSON.stringify({ ok: true, alreadyApplied: true, head: chat.gameMemory.head })
       if (prepared) return JSON.stringify({ ok: true, alreadyPrepared: true, head: prepared.head })
       try {
         const writes = call.arguments?.writes, deletes = call.arguments?.deletes
@@ -78,6 +85,10 @@ export async function createGameMemoryTask({ workspace, chat, taskRun }) {
       } catch (error) { return JSON.stringify({ ok: false, retryable: true, error: error.message }) }
     },
     apply(draft) {
+      if (alreadyApplied) {
+        if (draft.gameMemory?.head !== chat.gameMemory?.head) throw new Error('记忆版本已变化')
+        return
+      }
       if (!prepared) throw new Error('后台尚未提交记忆更新')
       workspace.apply(draft, prepared, { operationId: bodyId, branchId: taskRun.basedOn.branchId, revision: taskRun.basedOn.revision })
       delete draft.timeline.operations[bodyId].memoryPrepared
