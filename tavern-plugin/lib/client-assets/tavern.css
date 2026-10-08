@@ -2661,3 +2661,38 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 
 /* 侧边卡片是 better-sidebar 的开发者设置，玩家无需看到。 */
 [data-dsh-better-sidebar-settings-nav] { display: none !important; }
+
+/* Dream Sike's optional draft workspace and the card's original cover. */
+.dsh-tavern-card-cover { flex: none; margin: 0 16px; padding: 12px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.dsh-tavern-card-cover-button { display: flex; flex-direction: column; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: zoom-in; }
+.dsh-tavern-card-cover-button img { display: block; max-width: 100%; width: auto; max-height: min(45vh, 380px); border-radius: 9px; object-fit: contain; box-shadow: 0 4px 18px #0002; }
+.dsh-tavern-card-cover-button:focus-visible { outline: 2px solid var(--dsh-tavern-accent); outline-offset: 3px; border-radius: 9px; }
+.dsh-tavern-card-cover-placeholder { display: grid; place-items: center; min-height: 140px; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 9px; background: var(--dsw-specific-input-major); color: var(--dsw-alias-label-secondary); font-size: 13px; }
+.dsh-tavern-card-cover-lightbox { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 16px; box-sizing: border-box; border: 0; background: rgba(0, 0, 0, .82); cursor: zoom-out; }
+.dsh-tavern-card-cover-lightbox[open] { display: grid; place-items: center; }
+.dsh-tavern-card-cover-lightbox::backdrop { background: rgba(0, 0, 0, .82); }
+.dsh-tavern-card-cover-lightbox-content { position: relative; display: flex; align-items: center; justify-content: center; width: min(100%, 1000px); height: min(100%, 900px); outline: none; cursor: default; }
+.dsh-tavern-card-cover-lightbox-content img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.dsh-tavern-card-cover-close { position: absolute; z-index: 1; top: 8px; right: 8px; border: 1px solid #fff7; border-radius: 8px; padding: 7px 11px; background: #181818da; color: white; font: inherit; cursor: pointer; }
+.dsh-sike-draft { min-width: 0; }
+.dsh-sike-draft-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.dsh-sike-draft-head > div { min-width: 0; }
+.dsh-sike-draft-head > button { flex: none; }
+.dsh-sike-draft-phase { display: inline-flex; align-items: center; max-width: 100%; padding: 4px 9px; border-radius: 999px; background: var(--dsh-tavern-accent-soft); color: var(--dsh-tavern-accent-active); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.dsh-sike-main-status { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0; padding: 7px 11px; border: 1px solid var(--dsh-tavern-accent-border); border-radius: 999px; color: var(--dsh-tavern-accent-active); background: var(--dsh-tavern-accent-soft); font-size: 12px; line-height: 1.4; }
+.dsh-sike-draft-resume { margin: 0 0 14px; }
+.dsh-sike-draft-body { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
+.dsh-sike-draft-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.dsh-sike-draft-section { min-width: 0; margin-bottom: 18px; }
+.dsh-sike-draft-section h3 { margin: 0 0 8px; color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 600; }
+.dsh-sike-draft-completed summary { margin-bottom: 8px; color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
+.dsh-sike-draft-text { margin: 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: var(--dsw-specific-input-major); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dsh-sike-draft-muted { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.6; }
+.dsh-sike-draft-list { margin: 0; padding-left: 22px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.dsh-sike-draft-list li + li { margin-top: 6px; }
+.dsh-sike-draft-list li b { display: block; color: var(--dsw-alias-label-primary); font-weight: 600; }
+.dsh-sike-draft-list li span { display: block; }
+.dsh-sike-draft-checks { margin: 8px 0 0; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.dsh-sike-draft-trace { padding-top: 11px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.dsh-sike-draft-trace summary { color: var(--dsw-alias-label-primary); font-size: 13px; cursor: pointer; }
+.dsh-sike-draft-trace[open] .dsh-sike-draft-list { margin-top: 10px; }

@@ -790,21 +790,63 @@
             const [busy, setBusy] = React.useState(false);
             const [notice, setNotice] = React.useState("");
             async function refresh() {
-                const [catalog, session] = await Promise.all([rpc("listPresets", {}, props.sessionId), rpc("getSession", {}, props.sessionId)]);
-                setData({ presets: catalog.presets || [], current: session.view?.runtimePreset });
+                const [catalog, session, agent] = await Promise.all([
+                    rpc("listPresets", {}, props.sessionId),
+                    rpc("getSession", {}, props.sessionId),
+                    rpc("listPlayPresets", { sessionId: props.sessionId }, props.sessionId)
+                ]);
+                const playPresets = Array.isArray(agent.presets) ? agent.presets : [];
+                setData({
+                    presets: catalog.presets || [], current: session.view?.runtimePreset,
+                    playPresets: playPresets,
+                    currentPlayPresetId: agent.currentPlayPresetId || playPresets.find(p => p.selected)?.id || "tavern",
+                    defaultPlayPresetId: agent.defaultPlayPresetId || playPresets.find(p => p.isDefault)?.id || "tavern"
+                });
             }
-            React.useEffect(() => { refresh().catch(err => setError(String(err.message || err))); }, []);
+            React.useEffect(() => { refresh().catch(err => setError(String(err.message || err))); }, [props.sessionId]);
             async function change(path) {
                 setBusy(true); setError(""); setNotice("");
-                try { await rpc("applyConversationPreset", { sessionId: props.sessionId, path }, props.sessionId); await refresh(); setNotice("已保存"); liveTavernView.invalidate(props.sessionId); notifyTavernDataChanged(["presets", "sessions"], "presets"); }
+                try { await rpc("applyConversationPreset", { sessionId: props.sessionId, path }, props.sessionId); await refresh(); setNotice("酒馆预设已保存，从下一回合生效"); liveTavernView.invalidate(props.sessionId); notifyTavernDataChanged(["presets", "sessions"], "presets"); }
                 catch (err) { setError(String(err.message || err)); }
                 finally { setBusy(false); }
             }
-            return h("div", { className: "dsh-local-field" }, h("label", null, "当前预设", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局预设", value: data?.current?.id || "", disabled: busy || !data, onChange: event => change(event.target.value) },
-                h("option", { value: "" }, "不使用外部预设"),
-                data?.current?.id && !data.presets.some(p => p.path === data.current.id) ? h("option", { value: data.current.id }, data.current.name + "（源文件已移除）") : null,
-                (data?.presets || []).filter(p => p.valid && p.recognized).map(p => h("option", { key: p.path, value: p.path }, p.title)))),
-                h("p", { className: "dsh-tavern-settings-desc" }, "用于后续正文，选择后自动保存。"), error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
+            async function changeAgent(presetId) {
+                setBusy(true); setError(""); setNotice("");
+                try {
+                    await rpc("applyPlayPreset", { sessionId: props.sessionId, presetId: presetId }, props.sessionId);
+                    await refresh();
+                    setNotice("Agent 模式已切换，从下一回合生效");
+                    liveTavernView.invalidate(props.sessionId);
+                    notifyTavernDataChanged(["sessions"], "play-controls");
+                } catch (err) { setError(String(err.message || err)); }
+                finally { setBusy(false); }
+            }
+            async function setNewGameDefault() {
+                if (!data || busy || data.currentPlayPresetId === data.defaultPlayPresetId) return;
+                setBusy(true); setError(""); setNotice("");
+                try {
+                    await rpc("setDefaultPlayPreset", { presetId: data.currentPlayPresetId }, props.sessionId);
+                    await refresh();
+                    setNotice("已设为新游戏默认；当前游戏保持原设置");
+                } catch (err) { setError(String(err.message || err)); }
+                finally { setBusy(false); }
+            }
+            const playPresets = data?.playPresets || [];
+            const selectedPlayPreset = playPresets.find(p => p.id === data?.currentPlayPresetId);
+            const defaultPlayPreset = playPresets.find(p => p.id === data?.defaultPlayPresetId);
+            return h("div", { className: "dsh-local-field" },
+                h("label", null, "Agent 模式（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局 Agent 模式", value: data?.currentPlayPresetId || "tavern", disabled: busy || !data, onChange: event => changeAgent(event.target.value) },
+                    playPresets.map(p => h("option", { key: p.id, value: p.id }, p.name)))),
+                h("p", { className: "dsh-tavern-settings-desc" }, selectedPlayPreset?.description || "切换后从下一回合生效，已有历史和变量保留。"),
+                h("p", { className: "dsh-tavern-settings-desc" }, "新游戏默认：" + (defaultPlayPreset?.name || "原酒馆预设")),
+                h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !data || data.currentPlayPresetId === data.defaultPlayPresetId, onClick: setNewGameDefault },
+                    data?.currentPlayPresetId === data?.defaultPlayPresetId ? "已用于新游戏" : "用于新游戏"),
+                h("label", null, "酒馆预设（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局酒馆预设", value: data?.current?.id || "", disabled: busy || !data, onChange: event => change(event.target.value) },
+                    h("option", { value: "" }, "不使用外部预设"),
+                    data?.current?.id && !data.presets.some(p => p.path === data.current.id) ? h("option", { value: data.current.id }, data.current.name + "（源文件已移除）") : null,
+                    (data?.presets || []).filter(p => p.valid && p.recognized).map(p => h("option", { key: p.path, value: p.path }, p.title)))),
+                h("p", { className: "dsh-tavern-settings-desc" }, "本局引用的酒馆预设；梦境思客DSH会沿用其可用正则。切换从下一回合生效。"),
+                error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
         }
 
         function TavernLocalPlayerName(props) {

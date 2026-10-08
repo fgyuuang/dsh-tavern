@@ -136,7 +136,7 @@
 			const h = React.createElement;
 			if (selectedPath) {
 				if (!card) return h("div", { className: "dsh-tavern-library dsh-tavern-card-library" }, h("div", { className: "dsh-tavern-status-head" }, h("button", { className: "dsh-tavern-btn", onClick: clearCard }, "← 返回人物卡库")), loading ? h("div", { className: "dsh-tavern-empty" }, "正在读取人物卡…") : error ? h("div", { className: "dsh-tavern-dock-error" }, error, h("button", { className: "dsh-tavern-btn", onClick: function () { loadCard(selectedPath); } }, "重新读取")) : h("div", { className: "dsh-tavern-empty" }, "人物卡读取失败", h("button", { className: "dsh-tavern-btn", onClick: function () { loadCard(selectedPath); } }, "重新读取")));
-				return h(CardFieldsPanel, { view: { card: card }, library: true, organizationSettings: organization.detailSettings(cards.find(item => item.path === selectedPath)), busy: busy, onBack: clearCard, onAttach: sessionMode === "card" ? function () { props.appendMention(card.path, card.name); } : null, onOpenWorldBook: props.openWorldBook, onRename: renameCard, onExport: exportCardFile, onDelete: deleteCardFile, onSaved: function (saved) { setCard(Object.assign({}, saved, { path: selectedPath })); refreshCards(); } });
+				return h(CardFieldsPanel, { view: { card: card }, library: true, hasImage: Boolean(cards.find(item => item.path === selectedPath)?.hasImage), organizationSettings: organization.detailSettings(cards.find(item => item.path === selectedPath)), busy: busy, onBack: clearCard, onAttach: sessionMode === "card" ? function () { props.appendMention(card.path, card.name); } : null, onOpenWorldBook: props.openWorldBook, onRename: renameCard, onExport: exportCardFile, onDelete: deleteCardFile, onSaved: function (saved) { setCard(Object.assign({}, saved, { path: selectedPath })); refreshCards(); } });
 			}
 			const visible = organization.visible;
 			return h("div", { className: "dsh-tavern-library dsh-tavern-card-library" },
@@ -177,6 +177,19 @@
 			const worldBookDetailsRef = React.useRef(null);
 			const worldBookCatalogRequestRef = React.useRef(null);
 			const cardPath = props.view.card.path;
+			const [coverFailed, setCoverFailed] = React.useState(false);
+			const [coverZoomed, setCoverZoomed] = React.useState(false);
+			const coverDialogRef = React.useRef(null);
+			React.useEffect(function () {
+				setCoverFailed(false);
+				setCoverZoomed(false);
+			}, [cardPath, props.hasImage]);
+			React.useEffect(function () {
+				const dialog = coverDialogRef.current;
+				if (!coverZoomed || !dialog) return;
+				if (!dialog.open) dialog.showModal();
+				return function () { if (dialog.open) dialog.close(); };
+			}, [coverZoomed]);
 			function call(method, args) { return rpc(method, args); }
 			function worldBookChoiceValue(item) {
 				if (!item) return "";
@@ -448,6 +461,16 @@
 				scriptPanel,
 				scriptError ? h("div", { className: "dsh-card-error" }, scriptError) : null
 			);
+			const coverUrl = "/api/dsh-tavern/card-image?path=" + encodeURIComponent(cardPath);
+			const showCover = props.hasImage && !coverFailed;
+			const coverPanel = h("div", { className: "dsh-tavern-card-cover" },
+				showCover ? h("button", { type: "button", className: "dsh-tavern-card-cover-button", onClick: function () { setCoverZoomed(true); }, "aria-label": "放大查看" + props.view.card.name + "的卡面" },
+					h("img", { src: coverUrl, alt: props.view.card.name + "的卡面", loading: "lazy", onError: function () { setCoverFailed(true); setCoverZoomed(false); } }),
+					h("span", null, "点击放大卡面")) : h("div", { className: "dsh-tavern-card-cover-placeholder", role: "img", "aria-label": "这张人物卡没有可用的卡面图片" }, "暂无卡面图片"));
+			const coverLightbox = coverZoomed && showCover ? h("dialog", { ref: coverDialogRef, className: "dsh-tavern-card-cover-lightbox", "aria-label": props.view.card.name + "的卡面图片", onClose: function () { setCoverZoomed(false); }, onClick: function (event) { if (event.target === event.currentTarget) setCoverZoomed(false); } },
+				h("div", { className: "dsh-tavern-card-cover-lightbox-content" },
+					h("button", { type: "button", className: "dsh-tavern-card-cover-close", onClick: function () { setCoverZoomed(false); }, "aria-label": "关闭卡面图片" }, "关闭 ×"),
+					h("img", { src: coverUrl, alt: props.view.card.name + "的卡面", onError: function () { setCoverFailed(true); setCoverZoomed(false); } }))) : null;
 			const boundWorldBooks = worldBookBinding && worldBookBinding.kind === "multiple" ? worldBookBinding.books : worldBookBinding && worldBookBinding.source ? [worldBookBinding] : [];
 			const hasWorldBookBinding = boundWorldBooks.length > 0;
 			const ownWorldBook = props.view.card.character_book;
@@ -486,6 +509,7 @@
 					h("div", { className: "dsh-tavern-question-sub" }, props.view.card.path ? props.view.card.path.split("/").pop() : ""),
 					props.library ? h("div", { className: "dsh-tavern-library-head-actions" }, props.onAttach ? h("button", { className: "dsh-tavern-btn", onClick: props.onAttach }, "在对话中引用") : null, h("button", { className: "dsh-tavern-btn", onClick: props.onRename }, "重命名"), h("button", { className: "dsh-tavern-btn", onClick: props.onExport }, "导出"), h("button", { className: "dsh-tavern-btn danger", onClick: props.onDelete }, "删除")) : null
 				),
+				coverPanel,
 				props.organizationSettings,
 				scriptHero,
 				h("div", { className: "dsh-tavern-card-fields" },
@@ -494,7 +518,8 @@
 					h(TavernLazyDetails, { className: "dsh-tavern-card-advanced", summary: h("summary", null, "扩展内容 · " + extensionCount + " 项"), render: extensionPanel }),
 					error ? h("div", { className: "dsh-card-error" }, error) : null,
 					h("div", { className: "dsh-tavern-card-save" }, h("button", { className: "dsh-card-primary", disabled: busy, onClick: save }, busy ? "保存中…" : "保存字段"))
-				)
+				),
+				coverLightbox
 			);
 		}
 		function register(input) {

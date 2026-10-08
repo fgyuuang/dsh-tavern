@@ -60,7 +60,8 @@
 			const [managing, setManaging] = React.useState(false);
 			const [selectedChats, setSelectedChats] = React.useState([]);
 			const [deleteNotice, setDeleteNotice] = React.useState("");
-			React.useEffect(function () { setSelectedChats([]); setManaging(false); setDeleteNotice(""); }, [uiMode, requestMode]);
+			const [rescueNotice, setRescueNotice] = React.useState("");
+			React.useEffect(function () { setSelectedChats([]); setManaging(false); setDeleteNotice(""); setRescueNotice(""); }, [uiMode, requestMode]);
 			const removedChatsHandler = React.useRef(null);
 			React.useEffect(function () {
 				function onRemoved(event) { if (removedChatsHandler.current) removedChatsHandler.current(event.detail && event.detail.sessionIds || []); }
@@ -396,7 +397,13 @@
 					return next;
 				});
 			}
+			async function resolvePlayPreset(request) {
+				if (request && request.playPresetId) return request.playPresetId;
+				const choice = await call("listPlayPresets", {});
+				return choice.defaultPlayPresetId || "tavern";
+			}
 			async function ensureTavernPreset(sessionId, request) {
+				if (request && request.kind === "play" && !request.playPresetId) throw new Error("本局 Agent 预设尚未确定");
 				await props.conversationHost.ensurePreset(sessionId, request);
 			}
 			async function archiveCurrentBlankSession(protectedSessionId) {
@@ -459,6 +466,7 @@
 				},
 				connectWorkspace: function (targetWorkspaceId) { return props.conversationHost.connectWorkspace(targetWorkspaceId); },
 				waitForSession: waitForSessionSummary,
+				resolvePlayPreset: resolvePlayPreset,
 				ensurePreset: ensureTavernPreset,
 				createChat: function (request, sessionId) {
 					return call("startChat", {
@@ -469,7 +477,8 @@
 						openingId: request.openingId || "",
 						preparationId: request.preparationId || "",
 						userName: request.userName || "你",
-						requestMode: compatibilityAvailable && request.requestMode === "sillytavern" ? "sillytavern" : "dsh"
+						requestMode: compatibilityAvailable && request.requestMode === "sillytavern" ? "sillytavern" : "dsh",
+						playPresetId: request.playPresetId || "tavern"
 					});
 				},
 				rememberPending: setPendingOpen,
@@ -532,12 +541,19 @@
 					let attempt;
 					try { attempt = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
 					if (!attempt) {
+						const playPresetId = await resolvePlayPreset();
+						attempt = { operationId: window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now()) + ":" + String(Math.random()), sessionId: "", playPresetId: playPresetId };
+						localStorage.setItem(key, JSON.stringify(attempt));
+					}
+					// Attempts created by older versions already selected the original Tavern preset.
+					if (!attempt.playPresetId) { attempt.playPresetId = "tavern"; localStorage.setItem(key, JSON.stringify(attempt)); }
+					if (!attempt.sessionId) {
 						const targetWorkspaceId = await playWorkspaceResolverRef.current();
-						attempt = { operationId: window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now()) + ":" + String(Math.random()), sessionId: await props.conversationHost.connectWorkspace(targetWorkspaceId) };
+						attempt.sessionId = await props.conversationHost.connectWorkspace(targetWorkspaceId);
 						localStorage.setItem(key, JSON.stringify(attempt));
 					}
 					await waitForSessionSummary(attempt.sessionId);
-					await ensureTavernPreset(attempt.sessionId, { kind: "play" });
+					await ensureTavernPreset(attempt.sessionId, { kind: "play", playPresetId: attempt.playPresetId });
 					const imported = await call("importChatHistory", Object.assign({}, attempt, { cardPath: chatImport.cardPath, text: chatImport.text, fileName: chatImport.fileName, userName: chatImport.userName, textOnly: chatImport.textOnly }));
 					const pending = { sessionId: attempt.sessionId, targetMode: imported.mode || "story" };
 					setPendingOpen(pending);
@@ -682,23 +698,40 @@
 			}
             async function rescueConversation(item) {
                 if (busy || !await askConfirm("存档救援：仅在旧对话无法继续使用时操作。\n\n迁移玩家输入和剧情正文，并携带最后可用的 MVU 快照继续更新状态。快照可能落后于正文，迁移后请核对数值；MVU 卡缺少有效快照时会停止救援。新对话按故事模式继续，不恢复旧剧本进度。导入的历史不能回退或重新生成。原存档保留。\n\n确定迁移剧情到新对话？")) return;
-                setBusy(true); setError(""); setMenuSession(null);
+                setBusy(true); setError(""); setRescueNotice(""); setMenuSession(null);
                 const key = "dsh-tavern:rescue:" + item.chatId;
                 try {
                     await playPrewarmRef.current.cancel();
                     let attempt;
                     try { attempt = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
                     if (!attempt) {
+                        let playPresetId = "";
+                        let presetFallbackNotice = "";
+                        try {
+                            const sourcePreset = await call("listPlayPresets", { sessionId: item.sessionId });
+                            playPresetId = sourcePreset && sourcePreset.currentPlayPresetId || "";
+                        } catch (_) {}
+                        if (!playPresetId) {
+                            playPresetId = await resolvePlayPreset();
+                            presetFallbackNotice = "未能读取源局的 Agent 预设，救援局已使用新局默认预设。";
+                        }
+                        attempt = { operationId: window.crypto.randomUUID(), sessionId: "", playPresetId: playPresetId, presetFallbackNotice: presetFallbackNotice };
+                        localStorage.setItem(key, JSON.stringify(attempt));
+                    }
+					if (attempt.presetFallbackNotice) setRescueNotice(attempt.presetFallbackNotice);
+					if (!attempt.playPresetId) { attempt.playPresetId = "tavern"; localStorage.setItem(key, JSON.stringify(attempt)); }
+                    if (!attempt.sessionId) {
                         const workspaceId = await playWorkspaceResolverRef.current();
-                        attempt = { operationId: window.crypto.randomUUID(), sessionId: await props.conversationHost.connectWorkspace(workspaceId) };
+                        attempt.sessionId = await props.conversationHost.connectWorkspace(workspaceId);
                         localStorage.setItem(key, JSON.stringify(attempt));
                     }
                     await waitForSessionSummary(attempt.sessionId);
-                    await ensureTavernPreset(attempt.sessionId, { kind: "play" });
+                    await ensureTavernPreset(attempt.sessionId, { kind: "play", playPresetId: attempt.playPresetId });
                     const result = await call("rescueChatHistory", { ...attempt, sourceChatId: item.chatId });
                     const pending = { sessionId: result.sessionId, targetMode: result.mode || "story" };
                     setPendingOpen(pending); localStorage.removeItem(key);
                     await finishPendingOpen(pending);
+                    if (attempt.presetFallbackNotice) setRescueNotice(attempt.presetFallbackNotice);
                 } catch (err) { setError("存档救援未完成，旧存档未修改：" + String(err.message || err)); }
                 finally { setBusy(false); }
             }
@@ -1086,6 +1119,7 @@
 				h("div", { className: "dsh-tavern-side-list" }, rows.length ? rows : h("div", { className: "dsh-tavern-side-empty" }, uiMode === "play" ? (requestMode === "sillytavern" ? "还没有silly 对话。\n选择人物卡开始；未选择外部预设时自动使用内置纯净预设。" : "还没有游玩对话。\n选择人物卡开始；绑定剧本的卡会按剧本推进。") : "还没有卡片工作台对话。\n可以空白开始，再按需添加人物卡和剧本。")),
 				managing ? h("button", { className: "dsh-tavern-btn", style: { flexShrink: 0, margin: "8px 12px", color: "#e57373" }, disabled: busy || !visibleHistory.some(function (item) { return selectedChats.includes(item.chatId); }), onClick: deleteSelectedConversations }, busy ? "正在删除…" : "删除所选（" + visibleHistory.filter(function (item) { return selectedChats.includes(item.chatId); }).length + "）") : null,
 				deleteNotice ? h("div", { role: "status", style: { padding: "4px 12px" } }, deleteNotice) : null,
+				rescueNotice ? h("div", { role: "status", style: { padding: "4px 12px" } }, rescueNotice) : null,
 				!picking && error ? h("div", { className: "dsh-tavern-dock-error", role: "alert" }, error) : null,
 				h("div", { className: "dsh-tavern-update" },
 					h("div", { className: "dsh-tavern-update-row" },

@@ -376,8 +376,16 @@
 				);
 			}
 			function tavernAssistantViewPaths(turn, eager = true) {
-				return ["mode", eager ? "tavernHelper" : "$helperAvailable",
+				return ["mode", "playPresetId", eager ? "tavernHelper" : "$helperAvailable",
 					"tavernRuntimePolicy", "tavernMvuRuntime", "releaseCapabilities", "statusBarPlacement"].map(field => [field]).concat([["$projectionTurn", String(turn)], ["$projectionLatestTurn", String(turn)]]);
+			}
+			function tavernAssistantOwnsFinalProjection(turnRef, data, tail) {
+				return Boolean(turnRef && turnRef.status === "closed" && data && data.finalNode && tail && tail.closing && tail.closing.finalNode && tail.closing.finalNode.seq === data.finalNode.seq);
+			}
+			function tavernAssistantContentMode(dreamSikeMode, status, finalAssistantStep) {
+				if (!dreamSikeMode) return "native";
+				if (status === "running") return "progress";
+				return finalAssistantStep ? "final" : "hidden";
 			}
 			function tavernReceiptViewPaths(turn, receipt, latest) {
 				const paths = [["$mvuReceiptTurn", String(turn)], ["$settlementOwner", String(turn)]];
@@ -466,7 +474,11 @@
 				const currentView = liveTavernView.getSnapshot(props.sessionId).view;
                 const liveState = useLiveTavernView(props.sessionId, revision, tavernAssistantViewPaths(storyTurn, storyTurn > 0 && storyTurn === tavernLatestProjectionTurn(currentView)));
 				const sessionTransitioning = React.useSyncExternalStore(tavernSessionTransition.subscribe, tavernSessionTransition.getSnapshot, tavernSessionTransition.getSnapshot);
-					const projection = settled ? tavernProjectionForTurn(liveState.view, storyTurn) : null;
+				const tail = props.useTurnData("turn-tail");
+				const finalAssistantStep = tavernAssistantOwnsFinalProjection(turnRef, data, tail);
+				const dreamSikeMode = liveState.view?.playPresetId === "dream-sike-dsh" && storyTurn > 0;
+				const contentMode = tavernAssistantContentMode(dreamSikeMode, data.status, finalAssistantStep);
+				const projection = settled && finalAssistantStep ? tavernProjectionForTurn(liveState.view, storyTurn) : null;
 					const latestProjectionTurn = tavernLatestProjectionTurn(liveState.view);
                 React.useEffect(function () {
                     if(!historyNode.current || !currentView?.historyWindow || projection || storyTurn<=0 || storyTurn>=tavernLatestProjectionTurn(currentView))return;
@@ -479,14 +491,13 @@
                     observer.observe(historyNode.current);
                     return ()=>observer.disconnect();
                 },[props.sessionId,storyTurn,projection,currentView?.historyWindow?.revision,currentView?.historyWindow?.from]);
-				const tail = props.useTurnData("turn-tail");
 				const owner = React.useMemo(function () {
-					if (!turnRef || turnRef.status !== "closed" || !data.finalNode || !tail || !tail.closing || tail.closing.finalNode.seq !== data.finalNode.seq) return undefined;
+					if (!finalAssistantStep) return undefined;
 					return { turn: turnRef, seq: data.finalNode.seq, openFile: props.openFile };
-				}, [turnRef, data.finalNode, tail, props.openFile]);
+				}, [finalAssistantStep, turnRef, data.finalNode, props.openFile]);
 				const mentions = React.useMemo(function () { return owner === undefined ? undefined : props.fileMentions(owner); }, [owner, props.fileMentions]);
 				const waitingForHistory = Boolean(currentView?.historyWindow && !projection && settled && storyTurn>0 && storyTurn<latestProjectionTurn);
-				const playView = isPlayMode(liveState.view && liveState.view.mode) && storyTurn > 0 && !sessionTransitioning;
+				const playView = isPlayMode(liveState.view && liveState.view.mode) && storyTurn > 0 && !sessionTransitioning && (!dreamSikeMode || finalAssistantStep);
 				useTavernUiExtensions();
 				const pluginMedia = useTavernPluginMedia(props.sessionId, storyTurn, playView && settled);
 				const sceneImagesEnabled = Boolean(liveState.view && liveState.view.releaseCapabilities && liveState.view.releaseCapabilities.sceneImages);
@@ -499,8 +510,8 @@
 				})();
 				const illustration = sceneShown ? React.createElement(SceneIllustration, { key: props.sessionId + ":" + storyTurn + ":" + JSON.stringify(projection), sessionId: props.sessionId, turn: storyTurn, record: sceneRecord }) : null;
 				const pluginText = playView ? createTavernPluginTextContext({ items: pluginMedia.items, extras: illustration && sceneAnchor ? [{ id: "scene-illustration", anchor: sceneAnchor, render: function () { return illustration; } }] : [], sessionId: props.sessionId, turn: storyTurn, streaming: data.status === "running" }) : null;
-                const rendered = sessionTransitioning ? [React.createElement("div", { key: "switching", className: "dsh-tavern-session-switching", role: "status" }, "正在完成游戏初始化…")] : waitingForHistory ? [React.createElement("div", {key:"history",role:"status"}, "正在读取历史内容…")] : renderTavernAssistantBlocks({
-					blocks: data.blocks,
+				const rendered = sessionTransitioning ? [React.createElement("div", { key: "switching", className: "dsh-tavern-session-switching", role: "status" }, "正在完成游戏初始化…")] : waitingForHistory ? [React.createElement("div", {key:"history",role:"status"}, "正在读取历史内容…")] : contentMode === "progress" ? [React.createElement(DreamSikeMainTurnStatus, { key: "sike-progress", sessionId: props.sessionId })] : contentMode === "hidden" ? [] : renderTavernAssistantBlocks({
+					blocks: dreamSikeMode ? [] : data.blocks,
 					streaming: data.status === "running",
 					interrupted: data.status === "interrupted",
 					projection: projection,
@@ -527,7 +538,7 @@
 				const distantHeight = useTavernDistantFloor(historyNode, settled && !sessionTransitioning && storyTurn > 0 && latestProjectionTurn - storyTurn >= TAVERN_LIVE_FLOORS);
 				if (!(data.status === "running" || data.status === "interrupted" || rendered.length > 0)) return null;
 				if (distantHeight > 0) return React.createElement("div", { ref:historyNode, className: "dsh-tavern-assistant", "data-distant-floor": true, style: { height: distantHeight + "px" } });
-				const mvuReceiptNode = settled ? React.createElement(TavernTurnMvuReceipt, { sessionId: props.sessionId, turn: storyTurn }) : null;
+				const mvuReceiptNode = settled && (!dreamSikeMode || finalAssistantStep) ? React.createElement(TavernTurnMvuReceipt, { sessionId: props.sessionId, turn: storyTurn }) : null;
 				const trailingIllustration = pluginText && pluginText.placed.has("scene-illustration") ? null : illustration;
                 const inlineStatus = liveState.view?.statusBarPlacement === "body" && !sessionTransitioning && storyTurn > 0 && storyTurn === latestProjectionTurn && data.finalNode && tail?.closing?.finalNode?.seq === data.finalNode.seq
                     ? React.createElement(TavernInlineStatusRuntime, { sessionId: props.sessionId, executeSlash: props.executeSlash }) : null;

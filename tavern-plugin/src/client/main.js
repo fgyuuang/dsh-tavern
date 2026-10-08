@@ -754,6 +754,8 @@ window.__ModuleLoader__.load({
 
 // @include features/card-library.js
 
+// @include features/dream-sike-draft.js
+
 // @include features/turn-history.js
 
 // @include features/play-controls.js
@@ -931,6 +933,7 @@ window.__ModuleLoader__.load({
             ctx.effect(() => ctx.betterSidebar.registerTab({ id: "dsh-tavern:card-memory", title: "改卡记忆", order: 9, single: true, component: props => React.createElement(TavernCardMemoryTab, { sessionId: props.scope.sessionId }) }), "dsh-tavern: card memory");
 			worldBookLibraryFeature.register({ ctx: ctx, appendMention: appendMention });
 			cardLibraryFeature.register({ ctx: ctx, appendMention: appendMention });
+			dreamSikeDraftFeature.register({ ctx: ctx, slots: slots });
 			ctx.effect(function () {
 				reconcileLibraryTabTitles();
 				if (typeof ctx.betterSidebar.subscribeState !== "function") return;

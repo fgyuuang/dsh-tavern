@@ -63,3 +63,31 @@ test('同一次开始操作并发触发只创建一条会话', async () => {
   await Promise.all([module.start({ kind: 'play' }), module.start({ kind: 'play' })])
   assert.equal(calls.filter(item => item.startsWith('connect:')).length, 1)
 })
+
+test('新局在创建 Session 前固定 Agent 预设，失败重试沿用首次选择', async () => {
+  const values = new Map()
+  const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+  const attempts = client.createConversationAttemptStore(storage)
+  const calls = []
+  let selectedDefault = 'dream-sike-dsh'
+  let failWorkspace = true
+  let failFirstChat = true
+  const module = createConversationLifecycleModule({ attempts,
+    archiveCurrent: async () => {}, resolveWorkspace: async () => { calls.push('workspace'); if (failWorkspace) throw Error('工作区暂不可用'); return 'workspace-1' },
+    resolvePlayPreset: async () => { calls.push('resolve:' + selectedDefault); return selectedDefault },
+    connectWorkspace: async () => { calls.push('connect'); return 'session-1' },
+    waitForSession: async () => {},
+    ensurePreset: async (_id, request) => { calls.push('native:' + request.playPresetId) },
+    createChat: async (request) => { calls.push('chat:' + request.playPresetId); if (failFirstChat) { failFirstChat = false; throw Error('写入开场失败') } },
+    rememberPending: () => {}, finishOpen: async () => {}
+  })
+  const request = () => ({ kind: 'play', targetMode: 'story', card: { path: 'card' } })
+  await assert.rejects(module.start(request()), /工作区暂不可用/)
+  assert.equal(values.size, 1)
+  selectedDefault = 'tavern'
+  failWorkspace = false
+  await assert.rejects(module.start(request()), /写入开场失败/)
+  await module.start(request())
+  assert.deepEqual(calls, ['resolve:dream-sike-dsh', 'workspace', 'workspace', 'connect', 'native:dream-sike-dsh', 'chat:dream-sike-dsh', 'native:dream-sike-dsh', 'chat:dream-sike-dsh'])
+  assert.equal(values.size, 0)
+})
