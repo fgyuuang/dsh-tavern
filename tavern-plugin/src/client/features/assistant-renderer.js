@@ -328,7 +328,14 @@
 					finally { setBusy(false); notify(); }
 				}
 				const url = version ? "/api/dsh-tavern/scene-image?" + new URLSearchParams({ sessionId: props.sessionId, turn: String(props.turn), key: state.key, versionId: version.id }).toString() : "";
-				if (!state || state.status === "idle" && !state.hasDeletedImages) return null;
+				if (!state) return null;
+				if (state.status === "idle" && !state.hasDeletedImages) {
+					// Earlier turns have no composer button; offer a quiet way to illustrate them.
+					if (!props.offerGenerate || !state.enabled) return null;
+					return React.createElement("div", { className: "dsh-tavern-illustration-empty" },
+						React.createElement("button", { type: "button", className: "dsh-tavern-btn quiet", disabled: busy, onClick: function () { return generate("generate"); } }, busy ? "整理画面…" : "为这段生成插图"),
+						error ? React.createElement("span", { role: "alert", className: "dsh-tavern-settings-error" }, error) : null);
+				}
 				const locked = busy || state.status === "running" || state.recovery === "save";
 				const referencePeople = version && version.referencePeople || [];
 				const referenceBindings = state.reference && state.reference.bindings ? state.reference.bindings.filter(function (binding) { return version && binding.versionId === version.id; }) : [];
@@ -497,7 +504,7 @@
 					for (let index = versions.length - 1; index >= 0; index -= 1) if (versions[index].anchor) return versions[index].anchor;
 					return "";
 				})();
-				const illustration = sceneShown ? React.createElement(SceneIllustration, { key: props.sessionId + ":" + storyTurn + ":" + JSON.stringify(projection), sessionId: props.sessionId, turn: storyTurn, record: sceneRecord }) : null;
+				const illustration = sceneShown ? React.createElement(SceneIllustration, { key: props.sessionId + ":" + storyTurn + ":" + JSON.stringify(projection), sessionId: props.sessionId, turn: storyTurn, record: sceneRecord, offerGenerate: storyTurn < (Number(currentView?.latestAssistantTurn) || 0) }) : null;
 				const pluginText = playView ? createTavernPluginTextContext({ items: pluginMedia.items, extras: illustration && sceneAnchor ? [{ id: "scene-illustration", anchor: sceneAnchor, render: function () { return illustration; } }] : [], sessionId: props.sessionId, turn: storyTurn, streaming: data.status === "running" }) : null;
                 const rendered = sessionTransitioning ? [React.createElement("div", { key: "switching", className: "dsh-tavern-session-switching", role: "status" }, "正在完成游戏初始化…")] : waitingForHistory ? [React.createElement("div", {key:"history",role:"status"}, "正在读取历史内容…")] : renderTavernAssistantBlocks({
 					blocks: data.blocks,
