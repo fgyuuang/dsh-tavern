@@ -347,10 +347,11 @@ export function createScriptContinuity() {
       const total = chunks.length
       const position = request.position === undefined ? Math.min(total, state.cursor + 1) : request.position
       if (total && (!Number.isSafeInteger(position) || position < 1 || position > total)) throw new Error('请输入有效的剧本块号')
-      const start = Math.max(0, Math.min(position - 5, total - 10))
+      // Seven blocks: three before, the requested one, three after.
+      const start = Math.max(0, Math.min(position - 4, total - 7))
       return { cursor: state.cursor, totalChunks: total, scriptVersion: state.scriptVersion, chunkSize: state.chunkSize || 500, sourceOffset: state.sourceOffset,
-        from: total ? start + 1 : 0, to: Math.min(total, start + 10),
-        chunks: chunks.slice(start, start + 10).map((chunk, i) => ({ number: start + i + 1, text: str(chunk.text) })) }
+        from: total ? start + 1 : 0, to: Math.min(total, start + 7),
+        chunks: chunks.slice(start, start + 7).map((chunk, i) => ({ number: start + i + 1, text: str(chunk.text) })) }
     }
     if (request.kind === 'info') return infoOf(script)
     if (request.kind === 'read') return readWindow(script, request.query, request.offset, request.limit)
