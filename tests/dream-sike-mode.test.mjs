@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   BASE_PLAY_PRESET,
@@ -11,6 +12,12 @@ import {
   setDefaultPlayPreset
 } from '../tavern-plugin/lib/domain/dream-sike-mode.js'
 import { projectTavernHelperScripts } from '../tavern-plugin/lib/domain/tavern-helper-scripts.js'
+
+test('native Dream Sike persona declares the fields required by the installed DSH loader', async () => {
+  const preset = await readFile(new URL('../presets/dream-sike-dsh/agent.cordis.yml', import.meta.url), 'utf8')
+  assert.match(preset, /name: '@deepseek-ai\/dsh-persona'[\s\S]*?\n    prefix: \|/)
+  assert.match(preset, /\n    suffix: ''/)
+})
 
 test('switching a play chat returns a revisioned patch without changing its history', () => {
   const chat = { id: 'chat-1', mode: 'story', _storageRevision: 7, runtimePresetPath: 'presets/old.json', messages: [{ text: 'existing' }], tavernHelperLifecycleRevision: 2 }
