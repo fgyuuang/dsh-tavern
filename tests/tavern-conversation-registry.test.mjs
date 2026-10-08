@@ -35,6 +35,17 @@ function memoryStore(seed = {}) {
   }
 }
 
+test('后台的部分头更新保留项目归属和分叉来源，更新当前分支版本', async () => {
+  const store = memoryStore(), registry = createTavernConversationRegistry({ store: store.adapter })
+  await registry.publish({ id: 'child', sessionId: 's-child', projectId: 'project-1', cardPath: 'cards/a.json', cardName: '卡', createdAt: 1, timeline: { branchId: 'branch-1' }, forkedFrom: { chatId: 'parent', turn: 3 } })
+  await registry.sync({ id: 'child', updatedAt: 10, timeline: { branchId: 'branch-2' } })
+  const [row] = await registry.list()
+  assert.equal(row.projectId, 'project-1')
+  assert.equal(row.cardPath, 'cards/a.json')
+  assert.equal(row.branchId, 'branch-2')
+  assert.deepEqual(row.forkedFrom, { chatId: 'parent', turn: 3 })
+})
+
 test('索引发布失败时回滚 Chat 和 Session 关联', async function () {
   const store = memoryStore({ failures: { writeIndex: 'index locked' } })
   const registry = createTavernConversationRegistry({ store: store.adapter })
@@ -101,4 +112,57 @@ test('对话按创建时间固定排序，打开不会改变位置；旧索引�
   const rows = await registry.list()
   assert.deepEqual(rows.map(row => row.sessionId), ['session-new', 'session-old'])
   assert.equal(rows[1].createdAt, Date.UTC(2026, 7, 1))
+})
+
+test('发布后的 branchId 和分叉来源在轻量列表中保留，缺失回合不伪装为初始状态', async () => {
+  const store = memoryStore()
+  const registry = createTavernConversationRegistry({ store: store.adapter })
+  await registry.publish({ id: 'child', sessionId: 'front', timeline: { branchId: 'branch-child' }, forkedFrom: { chatId: 'parent' } })
+  const row = (await registry.list())[0]
+  assert.equal(row.branchId, 'branch-child')
+  assert.deepEqual(row.forkedFrom, { chatId: 'parent' })
+  assert.equal(store.snapshot().index.chats[0].relationshipVersion, 1)
+  assert.equal(store.snapshot().chatReads, 0)
+  await registry.sync({ id: 'child', branchId: 'branch-flat', forkedFrom: { chatId: 'parent', turn: 0 } })
+  assert.equal((await registry.list())[0].branchId, 'branch-flat')
+  assert.equal((await registry.list())[0].forkedFrom.turn, 0)
+})
+
+test('旧索引按批次读取专用 header 回填关系，保留摘要且完成后不重复读取', async () => {
+  const rows = [
+    { id: 'parent', cardPath: 'card', cardName: 'A', title: '原局', createdAt: 1 },
+    { id: 'child', cardPath: 'card', cardName: 'A', title: '旧分支', createdAt: 2, lastOpenedAt: 9 }
+  ]
+  const store = memoryStore({ links: { one: 'parent', two: 'child' }, index: { chats: rows }, failures: { readChat: 'full history forbidden' } })
+  const reads = []
+  store.adapter.readChatHeader = async id => {
+    reads.push(id)
+    return { id, timeline: { branchId: 'branch-' + id }, ...(id === 'child' ? { forkedFrom: { chatId: 'parent', turn: 5 } } : {}) }
+  }
+  const registry = createTavernConversationRegistry({ store: store.adapter })
+  assert.deepEqual(await registry.backfillForks({ limit: 1 }), { updated: 1, remaining: 1 })
+  assert.deepEqual(await registry.backfillForks({ limit: 1 }), { updated: 1, remaining: 0 })
+  assert.deepEqual(await registry.backfillForks(), { updated: 0, remaining: 0 })
+  assert.deepEqual(reads, ['parent', 'child'])
+  const child = (await registry.list()).find(row => row.chatId === 'child')
+  assert.equal(child.title, '旧分支')
+  assert.equal(child.cardPath, 'card')
+  assert.equal(child.lastOpenedAt, 9)
+  assert.equal(child.branchId, 'branch-child')
+  assert.deepEqual(child.forkedFrom, { chatId: 'parent', turn: 5 })
+  assert.equal(store.snapshot().chatReads, 0)
+})
+
+test('缺少专用 header 或迁移失败时保留旧索引，可随后重试', async () => {
+  const store = memoryStore({ index: { chats: [{ id: 'old', title: '保留' }] }, failures: { readChat: 'forbidden' } })
+  const registry = createTavernConversationRegistry({ store: store.adapter })
+  assert.deepEqual(await registry.backfillForks(), { updated: 0, remaining: 1, skipped: true })
+  store.adapter.readChatHeader = async () => { throw new Error('header unavailable') }
+  assert.equal((await registry.backfillForks()).failures[0].error, 'header unavailable')
+  assert.equal(store.snapshot().index.chats[0].relationshipVersion, undefined)
+  store.adapter.readChatHeader = async id => ({ id })
+  assert.deepEqual(await registry.backfillForks({ limit: 0 }), { updated: 0, remaining: 1 })
+  assert.deepEqual(await registry.backfillForks(), { updated: 1, remaining: 0 })
+  assert.equal(store.snapshot().index.chats[0].title, '保留')
+  assert.equal(store.snapshot().chatReads, 0)
 })

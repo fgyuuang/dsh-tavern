@@ -73,7 +73,7 @@ function scoreRound(round, query, terms) {
 
 export const HISTORY_RECALL_TOOL = Object.freeze({
   name: 'tavern_recall_history',
-  description: '检索或读取当前对话已经正式发生的历史正文，仅用于回忆细节和剧情。query 与 turn 必须且只能提供一个。每次生成最多召回 6 次；完整正文召回后冷却 10 个剧情轮次，冷却期间不可重复读取。已有信息足够时直接继续任务，不要重复读取同一轮。检索结果不是当前场景，不得重复演绎、照搬旧台词或让已经发生的事件再次发生。',
+  description: '检索或读取当前对话已经正式发生的历史正文，仅用于回忆细节和剧情。query 与 turn 必须且只能提供一个。每次生成最多召回 6 次；传统预设的完整正文召回冷却 10 轮，梦境思客DSH 可在后续回合或上下文压缩后重新读取。已有信息足够时直接继续任务，不要重复读取同一轮。检索结果不是当前场景，不得重复演绎、照搬旧台词或让已经发生的事件再次发生。',
   parameters: Object.freeze({
     type: 'object',
     additionalProperties: false,
@@ -131,10 +131,16 @@ export const HISTORY_RECALL_OUTPUT_SCHEMA = Object.freeze({
 
 export function createHistoryRecall() {
   const scopes = new WeakMap()
-  function stateFor(scope) {
+  function stateFor(scope, epoch) {
     if (!scope || typeof scope !== 'object') return null
     if (!scopes.has(scope)) scopes.set(scope, { calls: 0, rounds: new Set(), searches: new Set() })
-    return scopes.get(scope)
+    const state = scopes.get(scope)
+    if (Number.isSafeInteger(epoch) && state.epoch !== epoch) {
+      state.epoch = epoch
+      state.rounds.clear()
+      state.searches.clear()
+    }
+    return state
   }
   function recall(input = {}) {
     const chat = input.chat
@@ -163,7 +169,7 @@ export function createHistoryRecall() {
       matches: [],
       rounds: []
     }
-    const state = stateFor(input.scope)
+    const state = stateFor(input.scope, input.contextEpoch)
     if (state && state.calls++ >= 6) {
       return Object.assign(base, { notice: '本次生成的历史召回预算已用尽。请使用已经返回的资料继续当前任务，不要再调用历史召回。' })
     }

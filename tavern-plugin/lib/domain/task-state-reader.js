@@ -2,7 +2,7 @@
 // A legacy unfinished foreground operation is the exception: timeline.inspect
 // migrates that body using its original story data, so retain the full fallback.
 export const taskStateFields = Object.freeze([
-  'title', 'createdAt', 'lastOpenedAt', 'backgroundHistoryIds',
+  'title', 'createdAt', 'lastOpenedAt', 'backgroundHistoryIds', 'gameMemory', 'playPresetId', 'projectId',
   'id', 'sessionId', '_storageRevision', 'mode', 'backgroundConfigVersion', 'conversationFeaturesVersion',
   'regenInProgress', 'contextCompaction', 'cardPath', 'cardName', 'requestMode', 'candidates', 'taskMailbox', 'candidateAgent', 'updatedAt',
   ...['schemaVersion','branchId','revision','operations','participants','updatedAt'].map(key=>'timeline.'+key),

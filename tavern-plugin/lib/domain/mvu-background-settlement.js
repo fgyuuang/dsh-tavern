@@ -554,6 +554,7 @@ export function createMvuSettlementModule(options = {}) {
   async function settleVariables(input = {}) {
     const frame = taskFrame(input)
     const request = projectMvuBackgroundRequest(frame)
+    const extraTask = input.extraTask || null
     const tasks = normalizeBackgroundTasks(input.backgroundTasks)
     let attempt = 0
     let result = null
@@ -568,6 +569,10 @@ export function createMvuSettlementModule(options = {}) {
       try { await options.diagnostics?.record(input.sessionId, { diagnosticId, operationId: input.operationId, chatId: input.chatId, branchId: input.branchId, basedOnRevision: input.basedOnRevision, messageId: input.messageId, swipeId: input.swipeId, attempt, traceSessionId, stage, ...details }) } catch { /* Diagnostics must not change settlement behaviour. */ }
     }
     async function executeTool(call) {
+      if (extraTask?.tools.some(tool => tool.name === call?.name)) return extraTask.execute(call)
+      if (extraTask && !extraTask.complete() && [MVU_SUBMIT_UPDATE_TOOL_NAME, POSTURE_SUBMIT_TOOL_NAME].includes(call?.name)) {
+        return JSON.stringify({ ok: false, retryable: true, error: '请先使用 tavern_memory_submit 提交本轮记忆更新；无变化时提交空数组。' })
+      }
       if (call && (call.name === CHARACTER_DESIGN_READ_TOOL_NAME || call.name === CHARACTER_DESIGN_SAVE_TOOL_NAME)) {
         if (!tasks.characterDesign) return JSON.stringify({ ok: false, error: '人物设计已关闭' })
         if (!characterDesign || typeof characterDesign.execute !== 'function') {
@@ -667,11 +672,11 @@ export function createMvuSettlementModule(options = {}) {
         task: 'settlement', backgroundTasks: tasks, persistent: true, persistentSessionId: traceSessionId, rewindTo: -1,
         onPersistentSessionReady: input.onPersistentSessionReady,
         selection: input.selection, messages: request.messages, turnContext: request.turnContext,
-        system: [str(input.system).trim(), request.system].filter(Boolean).join('\n\n'),
-        tools: request.tools, maxToolCalls: maxAttempts + 12,
+        system: [str(input.system).trim(), request.system, extraTask?.system].filter(Boolean).join('\n\n'),
+        tools: [...(extraTask?.tools || []), ...request.tools], maxToolCalls: maxAttempts + 12,
         toolLimitMessage: '本轮后台工具调用过多，请停止额外查询；变量更新仍不得跳过校验。',
-        stopToolsWhen: () => feedback !== null && (feedback.ok || !feedback.retryable) && (!tasks.posture || posture !== null),
-        acceptWithoutText: () => result !== null && (!tasks.posture || posture !== null),
+        stopToolsWhen: () => feedback !== null && (feedback.ok || !feedback.retryable) && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
+        acceptWithoutText: () => result !== null && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
         temperature: 0.1, sessionId: input.sessionId, turn: Math.max(0, Number(input.turn) || 0), signal: input.signal,
         webSearchEnabled: input.webSearchEnabled === true,
         onToolCall(call) {
@@ -704,6 +709,7 @@ export function createMvuSettlementModule(options = {}) {
       error.traceBoundary = traceBoundary
       throw error
     }
+    if (extraTask && !extraTask.complete()) throw new Error('后台 Agent 尚未完成本局记忆更新')
     await record('finished', { status: result.receipt.status })
     return {
       frame,

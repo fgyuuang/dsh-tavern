@@ -756,6 +756,8 @@ window.__ModuleLoader__.load({
 
 // @include features/dream-sike-draft.js
 
+// @include features/game-memory.js
+
 // @include features/turn-history.js
 
 // @include features/play-controls.js
@@ -934,6 +936,7 @@ window.__ModuleLoader__.load({
 			worldBookLibraryFeature.register({ ctx: ctx, appendMention: appendMention });
 			cardLibraryFeature.register({ ctx: ctx, appendMention: appendMention });
 			dreamSikeDraftFeature.register({ ctx: ctx, slots: slots });
+			gameMemoryFeature.register({ ctx: ctx, slots: slots });
 			ctx.effect(function () {
 				reconcileLibraryTabTitles();
 				if (typeof ctx.betterSidebar.subscribeState !== "function") return;
@@ -1023,6 +1026,7 @@ window.__ModuleLoader__.load({
 		exports.removeTavernCardChats = removeTavernCardChats;
 		exports.groupTavernHistory = groupTavernHistory;
 		exports.groupTavernBranches = groupTavernBranches;
+		exports.tavernBranchLabel = tavernBranchLabel;
 		exports.createPlayWorkspaceResolver = createPlayWorkspaceResolver;
 		exports.createSessionListRecoveryModule = createSessionListRecoveryModule;
 		exports.createTavernFrameLifecycle = createTavernFrameLifecycle;
@@ -1045,6 +1049,8 @@ window.__ModuleLoader__.load({
 		exports.createWorldBookLibraryFeatureModule = createWorldBookLibraryFeatureModule;
 		exports.createCardLibraryFeatureModule = createCardLibraryFeatureModule;
 		exports.createPlayControlsFeatureModule = createPlayControlsFeatureModule;
+		exports.createGameMemoryReader = createGameMemoryReader;
+		exports.registerGameMemoryFeature = gameMemoryFeature.register;
 		exports.createTavernAssistantRendererFeatureModule = createTavernAssistantRendererFeatureModule;
 		exports.createTavernShellFeatureModule = createTavernShellFeatureModule;
 		exports.createTavernRuntimeGenerationMonitor = createTavernRuntimeGenerationMonitor;

@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { selectCandidate } from './domain/candidate-selection.js'
+import { normalizePlayPresetId } from './domain/dream-sike-mode.js'
 
 // A transport facade over the production conversation and native Session services.
 // No prompt construction, worldbook selection, settlement or model loop lives here.
@@ -39,12 +40,14 @@ export function createGameplayApi(deps) {
       const resolved = await llm.resolveCallConfig(args.model)
       const selected = { provider: resolved.provider, model: resolved.model, ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}) }
       const sessionId = 'test-' + randomUUID()
+      if (args.playPresetId !== undefined && !['tavern', 'dream-sike-dsh'].includes(args.playPresetId)) throw new Error('未知的酒馆 Agent 预设')
+      const playPresetId = args.mode === 'card' ? 'tavern' : args.playPresetId === undefined ? undefined : normalizePlayPresetId(args.playPresetId)
       await store.writeJson('automation/' + sessionId + '.json', { sessionId, createdAt: Date.now(), model: selected })
       try {
-        await host.create({ sessionId, cwd: path.join(deps.dataRoot, 'resources'), agentPreset: 'tavern' })
+        await host.create({ sessionId, cwd: path.join(deps.dataRoot, 'resources'), agentPreset: playPresetId || 'tavern' })
         host.agents.selectForNextRequest(registry.get(sessionId), selected)
         await dispatch('preparePlayStart', {})
-        await dispatch('startChat', { path: cardPath, sessionId, mode: args.mode || 'story', userName: args.userName || '你', requestMode: 'dsh', cardTask: args.mode === 'card' ? (cardPath ? 'edit' : 'create') : undefined })
+        await dispatch('startChat', { path: cardPath, sessionId, mode: args.mode || 'story', playPresetId, userName: args.userName || '你', requestMode: 'dsh', cardTask: args.mode === 'card' ? (cardPath ? 'edit' : 'create') : undefined })
         const chat = await chatForSession(sessionId)
         return { sessionId, chat, model: selected, requiresBrowser: chat.mode !== 'card' && await deps.requiresBrowser(chat) }
       } catch (error) {

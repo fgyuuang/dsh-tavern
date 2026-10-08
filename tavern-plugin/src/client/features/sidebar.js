@@ -899,7 +899,7 @@
 					} catch (err) { setError(String(err && err.message || err)); }
 				} },
 					h("div", { className: "dsh-tavern-side-row-name" }, title),
-					h("div", { className: "dsh-tavern-side-row-meta" }, h("span", null, item.forkedFrom ? ("分支 · 从第 " + (item.forkedFrom.turn || "初始") + " 回合") : (item.mode === "card" ? (item.cardPath ? ("已创建：" + item.cardName) : "尚未创建正式人物卡") : modeLabel(item.mode || "story"))), h("span", null, formatTime(item.createdAt || item.lastOpenedAt || (summary ? summary.updatedAt : item.updatedAt))))
+					h("div", { className: "dsh-tavern-side-row-meta" }, h("span", null, item.forkedFrom ? tavernBranchLabel(item) : (item.mode === "card" ? (item.cardPath ? ("已创建：" + item.cardName) : "尚未创建正式人物卡") : modeLabel(item.mode || "story"))), h("span", null, formatTime(item.createdAt || item.lastOpenedAt || (summary ? summary.updatedAt : item.updatedAt))))
 					),
 					!managing ? h("button", { className: "dsh-tavern-side-row-more", title: "对话操作", "aria-expanded": menuSession === item.sessionId ? "true" : "false", onClick: function () { setMenuSession(menuSession === item.sessionId ? null : item.sessionId); } }, "⋯") : null,
 					!managing && menuSession === item.sessionId ? h("div", { className: "dsh-tavern-side-row-menu" },

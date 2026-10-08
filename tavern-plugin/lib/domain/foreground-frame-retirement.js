@@ -9,12 +9,12 @@ export function retireForegroundFrames(session, { keepTurn } = {}) {
   let count = 0
   for (const seq of [...(session.surface?.nodes || [])]) {
     const event = bySeq.get(seq), data = event?.data, source = data?.source
-    if (event?.type !== 'user/message' || source?.kind !== 'plugin' || source.plugin !== 'dsh-tavern' || source.form !== 'foreground-frame') continue
+    if (event?.type !== 'user/message' || source?.kind !== 'plugin' || source.plugin !== 'dsh-tavern' || !['foreground-frame', 'game-memory'].includes(source.form)) continue
     if (Number.isSafeInteger(keepTurn) && Number(source.trace?.turn) === keepTurn) continue
     if (!Array.isArray(data.content) || !data.content.length) continue
     replaceSessionSurface(session, 'user/message', {
       id: randomUUID(), role: 'user', content: [],
-      source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'foreground-frame', ...(source.trace === undefined ? {} : { trace: source.trace }) }
+      source: { kind: 'plugin', plugin: 'dsh-tavern', form: source.form, ...(source.trace === undefined ? {} : { trace: source.trace }) }
     }, { start: seq, end: seq, sourceEventSeqs: [seq] })
     count++
   }

@@ -6,6 +6,10 @@ import { registerModelStreamHooks } from './hooks/model-stream.js'
 import { registerTurnLifecycleHooks } from './hooks/turn-lifecycle.js'
 import { registerGameplayTools } from './tools/gameplay.js'
 import { registerDreamSikeTools } from './tools/dream-sike.js'
+import { registerGameMemoryTools } from './tools/game-memory.js'
+import { createGameMemoryWorkspace } from './domain/game-memory-workspace.js'
+import { createCardProjects } from './domain/card-projects.js'
+import { createGameMemoryTask, gameMemoryEnabled, readGameMemory, GAME_MEMORY_READ_TOOL, GAME_MEMORY_SUBMIT_TOOL } from './domain/game-memory-task.js'
 import { dreamSikeDraftView, dreamSikeDraftStatus, dreamSikeDraftWorkTarget, dreamSikeExecutionTrace } from './domain/dream-sike-draft.js'
 import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts } from './domain/dream-sike-mode.js'
 import { registerUserProfileTools } from './tools/user-profile.js'
@@ -286,6 +290,8 @@ export async function apply(ctx) {
   const cardMemory = createCardMemory({ dataRoot })
   const stablePrefixStorage = createSessionStablePrefixStorage(dataRoot + '/session-prefixes')
   const profileData = createProfileDataStore({ dataRoot })
+  const gameMemory = createGameMemoryWorkspace({ store: profileData })
+  const cardProjects = createCardProjects({ store: profileData })
   const gameFootprint = createGameFootprint({ dataRoot })
   const deletedSessionIds = new Set()
   try { const removed = await gameFootprint.processDeferredDeletions(); if (removed) console.log('dsh-tavern: 已清理已删除游戏的原生会话', removed) }
@@ -817,6 +823,9 @@ export async function apply(ctx) {
   async function readChatRevision(chatId, revision) { return await chatPersistence.readRevision(chatId, revision) }
   async function rawWriteChat(chat, metadata) {
     if (deletedChatIds.has(chat.id)) throw new Error('对话已删除')
+    if (chat.cardPath && ['story', 'script'].includes(chat.mode || 'story') && !chat.projectId) {
+      chat.projectId = (await cardProjects.ensure(chat.cardPath, chat.cardName)).id
+    }
     return await chatPersistence.write(chat, metadata)
   }
   async function rawUpdateChat(chatId, mutation, metadata) {
@@ -901,6 +910,7 @@ export async function apply(ctx) {
       writeIndex,
       readChat,
       readChatState: id => chatPersistence.readSessionState(id, {scoped:true}),
+      readChatHeader: async id => (await chatPersistence.readSlice(id, [], ['id', 'projectId', 'createdAt', 'updatedAt', 'lastOpenedAt', 'cardPath', 'cardName', 'title', 'mode', 'requestMode', 'backgroundHistoryIds', 'forkedFrom', 'timeline.branchId']))?.chat,
       readBackgroundConfig: chatPersistence.readBackgroundConfig,
       readSceneImageState: chatPersistence.readSceneImageState,
       writeChat: rawWriteChat,
@@ -911,10 +921,11 @@ export async function apply(ctx) {
   const sessionChats = createSessionChatReader({
     registry: conversationRegistry,
     needsAdoption: chat => groupOfMode(chat.mode) === 'play'
-      && (chat.backgroundConfigVersion !== 1 || chat.conversationFeaturesVersion !== 1),
+      && (chat.backgroundConfigVersion !== 1 || chat.conversationFeaturesVersion !== 1 || chat.cardPath && !chat.projectId),
     adopt: async function (chat) {
       const legacyImageEnabled = sceneIllustrations ? (await sceneIllustrations.settings()).enabled === true : false
-      return updateChat(chat.id, current => adoptConversationFeatures(adoptConversationBackground(current, tavernSettingsDocument), tavernSettingsDocument, legacyImageEnabled), { source: 'background-config.adopt' })
+      const projectId = chat.projectId || (chat.cardPath ? (await cardProjects.ensure(chat.cardPath, chat.cardName)).id : '')
+      return updateChat(chat.id, current => ({ ...adoptConversationFeatures(adoptConversationBackground(current, tavernSettingsDocument), tavernSettingsDocument, legacyImageEnabled), ...(projectId ? { projectId } : {}) }), { source: 'background-config.adopt' })
     }
   })
   function chatForSession(sessionId) { return sessionChats.read(sessionId) }
@@ -952,15 +963,18 @@ export async function apply(ctx) {
     const mode = chat.mode || 'story'
     if (mode !== 'story' && mode !== 'script') throw new Error('历史正文只能在游玩模式中检索')
     let result
+    const recallSessionId = audience === 'background' ? scope?.persistentSessionId : sessionId
+    const recallSession = agentRegistry.get(recallSessionId)?.session || sessionStore.get(recallSessionId)
     await updateChat(chat.id, current => {
       const previousCooldowns = current.historyRecallCooldowns
-      result = historyRecall.recall(Object.assign({}, args || {}, { chat: current, scope, audience, trackCooldown: true }))
+      result = historyRecall.recall(Object.assign({}, args || {}, { chat: current, scope, audience, trackCooldown: !gameMemoryEnabled(current), contextEpoch: recallSession?.surface?.replaceGeneration }))
       return current.historyRecallCooldowns === previousCooldowns ? undefined : current
     }, { source: 'history-recall', touchUpdatedAt: false })
     return result
   }
   resourceGraph = createResourceGraph({
     cardOrganization,
+    cardProjects,
     resources: fileResources,
     presets: runtimePresets,
     chats: { readIndex, writeIndex, readChat, writeChat },
@@ -1014,7 +1028,7 @@ export async function apply(ctx) {
       }
     }))
     const gameCounts = countGamesByCard(await conversationRegistry.list().catch(() => []))
-    return await cardOrganization.project(orderCardsForLibrary(cards, { gameCounts }))
+    return await cardProjects.projectCards(await cardOrganization.project(orderCardsForLibrary(cards, { gameCounts })))
   }
   async function resourceBindingProjection() {
     const cards = await listCards()
@@ -1212,8 +1226,15 @@ export async function apply(ctx) {
     }
   }
   async function deleteCard(cardPath) {
+    const normalized = normalizeResourcePath(cardPath, 'card')
+    const references = (await conversationRegistry.list()).filter(item => item.cardPath === normalized && !item.projectId)
+    const project = await cardProjects.ensure(normalized, references[0]?.cardName)
+    for (const item of references) await updateChat(item.chatId, chat => { chat.projectId = project.id; return chat }, { source: 'card-project.adopt' })
     const result = await cardDeletion.remove(cardPath)
-    if (result.deleted) await cardOrganization.movePath(normalizeResourcePath(cardPath, 'card'), null)
+    if (result.deleted) {
+      await cardOrganization.movePath(normalized, null)
+      await cardProjects.movePath(normalized, null)
+    }
     return result
   }
   const sessionInventory = createSessionInventory({
@@ -1298,6 +1319,11 @@ export async function apply(ctx) {
     if (!chat || !['story', 'script'].includes(chat.mode || 'story')) throw new Error('只有游玩对话可以导出存档')
     assertConversationForkable(chat, { agentRunning: agentRegistry.get(chat.sessionId)?.phase?.kind === 'running' })
     const revisions = await collectSaveRevisions(chat, readChatRevision)
+    const memoryFiles = new Map()
+    for (const state of [chat, ...revisions.map(item => item.state)]) {
+      for (const file of await gameMemory.exportFiles(state)) memoryFiles.set(file.path, file)
+    }
+    gameMemory.validateArchive([...memoryFiles.values()], [chat, ...revisions.map(item => item.state)].map(state => state.gameMemory?.head).filter(Boolean))
     const live = sessionStore.get(chat.sessionId)
     if (live) await sessionStore.flush(live)
     const handle = await ctx.get('sessionPersistence').open(chat.sessionId, 'read')
@@ -1329,7 +1355,7 @@ export async function apply(ctx) {
     }
     if (scene) scene.attachments = attachments
     else if (attachments.length) scene = { files: [], worldbooks: [], attachments }
-    const buffer = buildGameSave({ chat, revisions, session, card: { path: chat.cardPath, payload: cardPayload }, script, scene,
+    const buffer = buildGameSave({ chat, revisions, session, card: { path: chat.cardPath, payload: cardPayload }, script, scene, memory: [...memoryFiles.values()],
       tavernVersion: TAVERN_PACKAGE_VERSION, exportedAt: Date.now() })
     const name = (sessionTitleOf(session.events) || str(chat.title) || str(chat.cardName) || 'game').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60)
     return { filename: name + '.dshsave', base64: buffer.toString('base64'), bytes: buffer.length, revisions: revisions.length, images: attachments.length }
@@ -1402,7 +1428,7 @@ export async function apply(ctx) {
         const next = renameJson(state)
         next.id = chatId; next.sessionId = sessionId; next.cardPath = cardPath
         // Background agents, candidates and undo points name the source install's sessions.
-        for (const key of ['forkedFrom', 'regenRecovery', 'regenInProgress', 'rollbackUndo', 'backgroundHistoryIds', 'candidateAgent']) delete next[key]
+        for (const key of ['projectId', 'forkedFrom', 'regenRecovery', 'regenInProgress', 'rollbackUndo', 'backgroundHistoryIds', 'candidateAgent']) delete next[key]
         const scrub = value => {
           if (Array.isArray(value)) { value.forEach(scrub); return }
           if (!value || typeof value !== 'object') return
@@ -1419,6 +1445,10 @@ export async function apply(ctx) {
       let written = false, created = false, saved
       const cwd = path.join(dataRoot, 'resources')
       try {
+        await gameMemory.importFiles({ id: chatId, gameMemory: save.chat.gameMemory }, save.memory || [])
+        for (const { state } of save.revisions) {
+          if (state.gameMemory?.head) await gameMemory.list({ id: chatId, gameMemory: state.gameMemory }, { limit: 1 })
+        }
         for (const { revision, state } of save.revisions) {
           const historyState = await rawWriteChat(prepare(state), { source: 'game-save.import.history' })
           written = true
@@ -1459,6 +1489,7 @@ export async function apply(ctx) {
         if (written) try { await conversationRegistry.remove(chatId) } catch {}
         if (importedCard) try { await fileResources.remove(importedCard) } catch {}
         try { await rm(path.join(dataRoot, 'scene-images', createHash('sha256').update(chatId).digest('hex')), { recursive: true, force: true }) } catch {}
+        try { await rm(path.join(dataRoot, 'game-memory', createHash('sha256').update(chatId).digest('hex')), { recursive: true, force: true }) } catch {}
         throw error
       }
       await conversationRegistry.publish(saved)
@@ -2270,8 +2301,10 @@ export async function apply(ctx) {
     const targetEnd = sessionEvents(target).findLast(event => event.type === 'turn/end')
     if (!targetEnd || targetEnd.seq !== atSeq) throw new Error('原生分叉没有停在指定回合，已拒绝绑定游戏状态')
     const fork = forkConversationChat(state, { chatId: uid('chat'), sessionId: targetId, id: uid, now: Date.now })
+    fork.projectId = (await cardProjects.projectSessions([{ ...source, chatId: source.id }]))[0].projectId
     fork.forkedFrom = { ...fork.forkedFrom, chatId: source.id, sessionId: source.sessionId, storageRevision: source._storageRevision,
       stateChatId: state.id, stateRevision: state._storageRevision, turn, atSeq }
+    if (state.gameMemory?.head) fork.gameMemory = await gameMemory.fork(state, fork)
     await conversationRegistry.publish(fork)
     return conversationForkReceipt(fork, { lastTurn: turn, messageCount: fork.messages.length })
   }
@@ -2285,8 +2318,13 @@ export async function apply(ctx) {
     imageSystemPrompt: () => runtimePrompt('scene-image-system'),
     resolveModelSelection: async input => backgroundModelSelection(await backgroundConfigForSession(input.sessionId)) || input.selection,
     resolveWebSearch: async input => (await backgroundConfigForSession(input.sessionId))?.webSearchEnabled === true,
-    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL],
-    sharedTools: [sharedWorldbookSearch(searchWorldbook), {
+    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL, GAME_MEMORY_SUBMIT_TOOL],
+    sharedTools: [{
+      tool: GAME_MEMORY_READ_TOOL,
+      async execute({ input, args }) {
+        return JSON.stringify(await readGameMemory(gameMemory, await chatHeaderForSession(input.sessionId, ['gameMemory']), args))
+      }
+    }, sharedWorldbookSearch(searchWorldbook), {
       tool: HISTORY_RECALL_TOOL,
       async execute({ input, args }) {
         return renderHistoryRecall(await recallHistoryForSession(input.sessionId, args, input, 'background'))
@@ -2959,6 +2997,7 @@ export async function apply(ctx) {
         signal?.throwIfAborted()
         const variableRetry = snapshot.messages?.some(message => message.mvu?.pending && message.mvu?.variableRetry === true)
         const backgroundTasksSettings = normalizeBackgroundTasks(variableRetry ? { variables: true, posture: false, characterDesign: false } : snapshot.backgroundTasks)
+        const memoryTask = variableRetry ? null : await createGameMemoryTask({ workspace: gameMemory, chat: snapshot, taskRun })
         const mvuTarget = snapshot.mvu && snapshot.mvu.enabled === true && snapshot.mvu.owner === 'official'
           ? pendingMvuTarget(snapshot)
           : null
@@ -2991,6 +3030,7 @@ export async function apply(ctx) {
             })
           }
           const settlementInput = {
+            extraTask: memoryTask,
             onSubmission: submission => saveDelivery(submission),
             onPrepared: prepared => saveDelivery(prepared.submission, prepared),
             guidance: mvuTarget.message.mvu.guidance || '',
@@ -3061,7 +3101,7 @@ export async function apply(ctx) {
             throw error
           }
           result = { posture: mvuResult.posture }
-        } else if (!backgroundTasksSettings.posture && !backgroundTasksSettings.characterDesign) {
+        } else if (!backgroundTasksSettings.posture && !backgroundTasksSettings.characterDesign && !memoryTask) {
           result = {}
         } else {
           const selection = backgroundModelSelection(snapshot)
@@ -3087,27 +3127,30 @@ export async function apply(ctx) {
               backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '本轮不生成或提交姿势。完成启用的后台任务后简短回复完成。',
               ...(backgroundTasksSettings.characterDesign ? ['若发现重要人物需要建立、补全或修订长期设计，在当前后台 Agent 内调用 skill 加载 character-design，并按 Skill 读取或保存人物档案；无需也不得创建另一个 Agent。',
               '人物设计保存独立于姿势结算；完成设计后继续当前任务。'] : []),
-              backgroundTasksSettings.posture ? 'posture_submit 是本任务最后一步。' : ''
+              backgroundTasksSettings.posture ? 'posture_submit 是本任务最后一步。' : '',
+              memoryTask?.system || ''
             ].join('\n\n'),
-            tools: [...(backgroundTasksSettings.posture ? [POSTURE_SUBMIT_TOOL] : []), ...(backgroundTasksSettings.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])],
+            tools: [...(memoryTask?.tools || []), ...(backgroundTasksSettings.posture ? [POSTURE_SUBMIT_TOOL] : []), ...(backgroundTasksSettings.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])],
             maxToolCalls: 12,
             temperature: 0.2,
             sessionId: snapshot.sessionId,
             webSearchEnabled: snapshot.webSearchEnabled === true,
             signal,
-            stopToolsWhen: function () { return submittedPosture !== null },
-            acceptWithoutText: function () { return submittedPosture !== null },
+            stopToolsWhen: function () { return (submittedPosture !== null || !backgroundTasksSettings.posture && memoryTask !== null) && (!memoryTask || memoryTask.complete()) },
+            acceptWithoutText: function () { return (submittedPosture !== null || !backgroundTasksSettings.posture && memoryTask !== null) && (!memoryTask || memoryTask.complete()) },
             onToolCall(call) {
               const pending = settlementToolTail.then(async function () {
+                if (memoryTask?.tools.some(tool => tool.name === call?.name)) return memoryTask.execute(call)
                 if (call && (call.name === CHARACTER_DESIGN_READ_TOOL.name || call.name === CHARACTER_DESIGN_SAVE_TOOL.name)) {
                   if (!backgroundTasksSettings.characterDesign) return JSON.stringify({ ok: false, error: '人物设计已关闭' })
                   if (submittedPosture !== null) return JSON.stringify({ ok: false, retryable: false, error: '姿势已经提交，本轮后台任务已结束' })
                   return await characterDesignDocuments.execute(snapshot.id, call)
                 }
                 if (!backgroundTasksSettings.posture || !call || call.name !== POSTURE_SUBMIT_TOOL_NAME) {
-                  return JSON.stringify({ ok: false, retryable: true, error: '当前任务只允许调用人物设计工具和 posture_submit' })
+                  return JSON.stringify({ ok: false, retryable: true, error: '请使用当前后台任务提供的提交工具' })
                 }
                 try {
+                  if (memoryTask && !memoryTask.complete()) throw new Error('请先提交本轮记忆更新')
                   submittedPosture = normalizePostureSubmission(call.arguments, {
                     charName: card && card.name,
                     macroState: snapshot.macroState
@@ -3123,6 +3166,7 @@ export async function apply(ctx) {
           })
           await settlementToolTail
           if (backgroundTasksSettings.posture && submittedPosture === null) throw new Error('后台 Agent 未调用 posture_submit 提交有效姿势')
+          if (memoryTask && !memoryTask.complete()) throw new Error('后台 Agent 尚未完成本局记忆更新')
           result = { ...(submittedPosture || {}) }
           text = str(run.text) || JSON.stringify(result)
           backgroundSessionId = str(run.traceSessionId)
@@ -3137,6 +3181,7 @@ export async function apply(ctx) {
             str(result && result.posture).trim() !== '',
           participant: taskRun.participant({ sessionId: backgroundSessionId, boundary: backgroundBoundary }),
           apply(draft, scope) {
+            if (memoryTask) memoryTask.apply(draft)
             if (mvuResult && mvuResult.effect) applyMvuSettlementEffect(draft, mvuResult.effect, scope)
             stat = applySettlement(draft, result)
             if (mvuTarget && mvuResult === null && backgroundTasksSettings.variables === false) {
@@ -3945,9 +3990,18 @@ export async function apply(ctx) {
         const document = { spec: current.spec, version: current.version, prompts: Object.fromEntries(current.prompts.map(function (item) { return [item.name, item.text] })) }
         return { name: 'dsh-tavern-system-prompts.json', text: JSON.stringify(document, null, 2) + '\n' }
       }
+      case 'listCardProjects': {
+        const sessions = await cardProjects.projectSessions(await listTavernSessions())
+        return { projects: await cardProjects.list(), sessions }
+      }
       case 'listSessions': {
         const settings = await readTavernSettings()
-        return { sessions: (await listTavernSessions()).filter(chat => chat.requestMode !== 'sillytavern'), capabilities: { compatibilityMode: false, trustedCardMode: settings.trustedCardMode } }
+        await conversationRegistry.backfillForks({ limit: 50 })
+        return { sessions: await cardProjects.projectSessions((await listTavernSessions()).filter(chat => chat.requestMode !== 'sillytavern')), capabilities: { compatibilityMode: false, trustedCardMode: settings.trustedCardMode } }
+      }
+      case 'getGameMemory': {
+        const chat = await chatHeaderForSession(str(args?.sessionId), ['gameMemory', 'playPresetId', 'timeline.branchId', 'timeline.revision'])
+        return { memory: { ...await readGameMemory(gameMemory, chat, args), branchId: chat.timeline?.branchId, revision: chat.timeline?.revision, enabled: gameMemoryEnabled(chat) } }
       }
       case 'renameConversation': {
         const chat = await chatForSession(args && args.sessionId)
@@ -4495,7 +4549,7 @@ export async function apply(ctx) {
     })
   }
 
-  const controlledToolNames = new Set(['tavern_read_variables', 'sike_read_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
+  const controlledToolNames = new Set(['tavern_memory', 'tavern_read_variables', 'sike_read_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
   const foregroundStrategies = createForegroundOrchestrationStrategies({
     compatibility: {
       beforeTurn: async function (input) {
@@ -4566,6 +4620,7 @@ export async function apply(ctx) {
   registerRequestHooks({
     backgroundAgentRunner,
     cardMemory,
+    gameMemory,
     chatForSession: hookChatForSession,
     ctx,
     foregroundStrategies,
@@ -4631,6 +4686,7 @@ export async function apply(ctx) {
       tools,
     })
     registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools })
+    registerGameMemoryTools({ tools, workspace: gameMemory, chatForSession: sessionId => chatHeaderForSession(sessionId, ['gameMemory']) })
     registerUserProfileTools({
       chatForSession,
       tools,

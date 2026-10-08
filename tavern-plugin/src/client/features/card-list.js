@@ -150,6 +150,7 @@
 		}
 
 		function tavernHistoryCardKey(item) {
+			if (item.projectId) return 'project:' + item.projectId;
 			return item.cardPath ? "card:" + item.cardPath : "unbound:" + (item.chatId || item.sessionId);
 		}
 
@@ -171,14 +172,30 @@
 		function groupTavernBranches(items) {
 			const nodes = items.map(item => Object.assign({}, item, { branches: [] }));
 			const byChatId = new Map(nodes.map(item => [item.chatId, item]));
+			const parents = new Map();
 			const roots = [];
 			for (const item of nodes) {
 				const parent = item.forkedFrom && byChatId.get(item.forkedFrom.chatId);
-				if (parent && parent !== item && parent.cardPath === item.cardPath && parent.createdAt <= item.createdAt) parent.branches.push(item);
-				else roots.push(item);
+				let valid = parent && parent.chatId !== item.chatId && parent.cardPath === item.cardPath && Number(parent.createdAt || 0) <= Number(item.createdAt || 0);
+				// Imported metadata can contain equal-time cycles. Follow only accepted
+				// parent edges so every conversation remains reachable exactly once.
+				for (let ancestor = parent; valid && ancestor; ancestor = parents.get(ancestor)) {
+					if (ancestor === item) valid = false;
+				}
+				if (valid) { parents.set(item, parent); parent.branches.push(item); }
+				else {
+					if (item.forkedFrom) item.branchSourceUnavailable = true;
+					roots.push(item);
+				}
 			}
-			const chronological = (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0);
-			function sortTree(item) { item.branches.sort(chronological); item.branches.forEach(sortTree); }
-			roots.sort(chronological).forEach(sortTree);
+			// Keep the existing list order for independent games and sibling branches.
 			return roots;
+		}
+
+		function tavernBranchLabel(item) {
+			const fork = item.forkedFrom;
+			if (!fork) return "";
+			const turn = fork.turn !== null && fork.turn !== undefined && fork.turn !== "" ? Number(fork.turn) : NaN;
+			const origin = !Number.isFinite(turn) || turn < 0 ? "分叉回合未记录" : (turn === 0 ? "从初始状态" : "从第 " + Math.floor(turn) + " 回合");
+			return "分支 · " + origin + (item.branchSourceUnavailable ? " · 来源对话不可用" : "");
 		}

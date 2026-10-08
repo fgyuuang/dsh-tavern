@@ -115,6 +115,7 @@ export function createStoryTimeline(options = {}) {
       runtimeInputs: chat.runtimeInputs === undefined ? null : chat.runtimeInputs,
       posture: str(chat.posture),
       ledger: chat.ledger || null,
+      gameMemory: chat.gameMemory || null,
       scriptState: chat.scriptState === undefined ? null : chat.scriptState,
       candidates: chat.candidates === undefined ? null : chat.candidates,
       settleStatus: str(chat.settleStatus) || 'idle',
@@ -143,6 +144,8 @@ export function createStoryTimeline(options = {}) {
     chat.tavernScriptPrompts = clone(source.tavernScriptPrompts || [])
     chat.posture = str(source.posture)
     chat.ledger = clone(source.ledger || null)
+    if (source.gameMemory) chat.gameMemory = clone(source.gameMemory)
+    else delete chat.gameMemory
     chat.scriptState = clone(source.scriptState === undefined ? null : source.scriptState)
     chat.candidates = clone(source.candidates === undefined ? null : source.candidates)
     chat.settleStatus = str(source.settleStatus) || 'idle'

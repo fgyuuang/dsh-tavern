@@ -50,3 +50,13 @@ test('完整正文冷却持续十轮并可从存档恢复，摘要不触发冷�
   restored.messages.push({role:'assistant', turn:14, text:'冷却结束'})
   assert.equal(read(restored, { turn: 2, radius: 0 }).rounds.length, 1)
 })
+
+test('原生记忆模式忽略传统持久冷却，压缩后允许重读且不重置调用预算', () => {
+  const source = chat(), recall = createHistoryRecall(), scope = {}
+  recall.recall({ chat: source, turn: 2, radius: 0, trackCooldown: true })
+  assert.equal(recall.recall({ chat: source, turn: 2, radius: 0, trackCooldown: false, scope, contextEpoch: 1 }).rounds.length, 1)
+  assert.equal(recall.recall({ chat: source, turn: 2, radius: 0, trackCooldown: false, scope, contextEpoch: 1 }).rounds.length, 0)
+  assert.equal(recall.recall({ chat: source, turn: 2, radius: 0, trackCooldown: false, scope, contextEpoch: 2 }).rounds.length, 1)
+  for (let epoch = 3; epoch <= 6; epoch++) recall.recall({ chat: source, turn: 2, scope, contextEpoch: epoch })
+  assert.match(recall.recall({ chat: source, turn: 2, scope, contextEpoch: 7 }).notice, /预算已用尽/)
+})

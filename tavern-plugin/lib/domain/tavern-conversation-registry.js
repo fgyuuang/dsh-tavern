@@ -24,16 +24,19 @@ function chatSummary(chat, preservedLastOpenedAt = 0) {
   const updatedAt = Math.max(0, Number(chat && (chat.updatedAt || chat.createdAt)) || 0)
   const createdAt = Math.max(0, Number(chat && chat.createdAt) || 0) || createdAtFromId(chat && chat.id) || updatedAt
   const fork = chat && chat.forkedFrom && typeof chat.forkedFrom === 'object' ? chat.forkedFrom : null
-  const branchId = str(chat && chat.timeline && chat.timeline.branchId)
+  const branchId = str(chat && (chat.timeline?.branchId || chat.branchId))
+  const forkTurn = fork && fork.turn !== null && fork.turn !== undefined && fork.turn !== '' ? Number(fork.turn) : NaN
   return {
     id: str(chat && chat.id),
+    ...(str(chat?.projectId) ? { projectId: str(chat.projectId) } : {}),
     cardPath: str(chat && chat.cardPath),
     cardName: str(chat && chat.cardName) || '未命名角色',
     title: str(chat && chat.title),
     mode: str(chat && chat.mode) || 'story',
     requestMode: chat && chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
+    relationshipVersion: 1,
     ...(branchId ? { branchId } : {}),
-    ...(fork && str(fork.chatId) ? { forkedFrom: { chatId: str(fork.chatId), turn: Math.max(0, Number(fork.turn) || 0) } } : {}),
+    ...(fork && str(fork.chatId) ? { forkedFrom: { chatId: str(fork.chatId), ...(Number.isFinite(forkTurn) && forkTurn >= 0 ? { turn: Math.floor(forkTurn) } : {}) } } : {}),
     ...(currentBackgroundSessionId(chat) === null ? {} : { backgroundSessionId: currentBackgroundSessionId(chat) }),
     ...(Array.isArray(chat?.backgroundHistoryIds) ? { backgroundHistoryIds: chat.backgroundHistoryIds } : {}),
     createdAt,
@@ -45,7 +48,7 @@ function chatSummary(chat, preservedLastOpenedAt = 0) {
 function sameSummary(left, right) {
   return left && right && JSON.stringify(left.backgroundHistoryIds || []) === JSON.stringify(right.backgroundHistoryIds || [])
     && JSON.stringify(left.forkedFrom || null) === JSON.stringify(right.forkedFrom || null)
-    && ['id', 'cardPath', 'cardName', 'title', 'mode', 'requestMode', 'branchId', 'createdAt', 'updatedAt', 'lastOpenedAt', 'backgroundSessionId'].every(function (key) { return left[key] === right[key] })
+    && ['id', 'projectId', 'cardPath', 'cardName', 'title', 'mode', 'requestMode', 'relationshipVersion', 'branchId', 'createdAt', 'updatedAt', 'lastOpenedAt', 'backgroundSessionId'].every(function (key) { return left[key] === right[key] })
 }
 
 /**
@@ -166,7 +169,8 @@ export function createTavernConversationRegistry(options = {}) {
     const index = await store.readIndex()
     const rows = chatRows(index)
     const current = rows.find(function (item) { return item && item.id === str(chat.id) })
-    const summary = chatSummary(chat, current && current.lastOpenedAt)
+    // Header-only task commits omit immutable ownership/lineage fields.
+    const summary = chatSummary(Object.assign({}, current || {}, chat), current && current.lastOpenedAt)
     const previousIds = [...(current?.backgroundHistoryIds || []), current?.backgroundSessionId, ...referencedBackgroundSessionIds(chat)].filter(id => typeof id === 'string' && id && id !== summary.backgroundSessionId)
     if (previousIds.length) summary.backgroundHistoryIds = [...new Set(previousIds)].slice(-200)
     if (sameSummary(current, summary)) return summary
@@ -192,9 +196,39 @@ export function createTavernConversationRegistry(options = {}) {
       const normalized = chatSummary(summary)
       rows.push({ sessionId, chatId, ...(normalized.backgroundHistoryIds ? { backgroundHistoryIds: normalized.backgroundHistoryIds } : {}), ...(typeof normalized.backgroundSessionId === 'string' ? { backgroundSessionId: normalized.backgroundSessionId } : {}), ...(normalized.branchId ? { branchId: normalized.branchId } : {}), ...(normalized.forkedFrom ? { forkedFrom: normalized.forkedFrom } : {}), cardPath: normalized.cardPath, cardName: normalized.cardName, title: normalized.title, mode: normalized.mode, requestMode: normalized.requestMode, createdAt: normalized.createdAt, updatedAt: normalized.updatedAt, lastOpenedAt: normalized.lastOpenedAt })
     }
+    // Stable project ownership is separate from the card's current path.
+    for (const row of rows) {
+      const projectId = summaries.get(row.chatId)?.projectId
+      if (projectId) row.projectId = projectId
+    }
     // Conversations keep a fixed place: opening or continuing one must not move it.
     rows.sort(function (left, right) { return right.createdAt - left.createdAt || right.lastOpenedAt - left.lastOpenedAt })
     return rows
+  }
+
+  // Explicit bounded migration: only an adapter that promises a header projection
+  // may recover old relationships. Never fall back to loading historical messages.
+  async function backfillForks({ limit = 50 } = {}) {
+    const pending = chatRows(await store.readIndex()).filter(item => item && item.relationshipVersion !== 1)
+    if (typeof store.readChatHeader !== 'function') return { updated: 0, remaining: pending.length, skipped: true }
+    const requested = Number(limit)
+    const count = Number.isFinite(requested) ? Math.max(0, Math.min(200, Math.floor(requested))) : 50
+    let updated = 0
+    const failures = []
+    for (const item of pending.slice(0, count)) {
+      try {
+        const header = await store.readChatHeader(item.id)
+        if (!header) { failures.push({ chatId: item.id, error: '对话头不存在' }); continue }
+        // Header projections may omit card/title/background fields. Preserve the
+        // latest published summary rather than replacing it with a partial record.
+        const current = chatRows(await store.readIndex()).find(row => row && row.id === item.id)
+        if (!current || current.relationshipVersion === 1) continue
+        await sync(Object.assign({}, current, header, { id: current.id }))
+        updated += 1
+      } catch (error) { failures.push({ chatId: item.id, error: str(error?.message || error) }) }
+    }
+    const remaining = chatRows(await store.readIndex()).filter(item => item && item.relationshipVersion !== 1).length
+    return { updated, remaining, ...(failures.length ? { failures } : {}) }
   }
 
   async function touch(sessionId, openedAt = Date.now()) {
@@ -234,5 +268,5 @@ export function createTavernConversationRegistry(options = {}) {
     return { deleted: true }
   }
 
-  return { links, resolve, resolveState, resolveSceneImageState, resolveBackgroundConfig, publish, sync, list, touch, remove }
+  return { links, resolve, resolveState, resolveSceneImageState, resolveBackgroundConfig, publish, sync, list, backfillForks, touch, remove }
 }

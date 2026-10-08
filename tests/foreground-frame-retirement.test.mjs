@@ -14,3 +14,13 @@ test('旧存档无 trace 的指引可清理，其他插件内容不受影响', (
   assert.doesNotMatch(text, /legacy/)
   assert.match(text, /foreign/); assert.match(text, /snapshot/)
 })
+
+test('每局记忆目录随回合脚手架清理，当前回合目录和原始事件保留', () => {
+  const session = Session.create('memory-frames')
+  for (const turn of [1, 2]) session.append('user/message', { id: 'memory-' + turn, role: 'user', content: [{ type: 'text', text: '目录-' + turn }], source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'game-memory', trace: { turn } } }, { surfaceOp: 'append' })
+  assert.equal(retireForegroundFrames(session, { keepTurn: 2 }), 1)
+  const text = JSON.stringify(session.deriveMessages().map(message => message.content))
+  assert.doesNotMatch(text, /目录-1/)
+  assert.match(text, /目录-2/)
+  assert.equal(session.eventAt(0).data.content[0].text, '目录-1')
+})

@@ -221,15 +221,30 @@ export function createBackgroundTaskCoordinator(options = {}) {
           return store.updateChat(chatId, source => timeline.apply({ chat: source, intent }).chat, metadata)
         })
       },
-      async checkpoint(apply) {
-        const saved = await serialize(chatId, () => store.updateChat(chatId, latest => {
+      async checkpoint(apply, { headerOnly = false } = {}) {
+        const mutate = latest => {
           const state = timeline.inspect({ chat: latest })
           const operation = state.operations[begun.value.operationId]
           if (operation?.status !== 'running' || state.branchId !== begun.value.basedOn.branchId
             || state.revision !== begun.value.basedOn.revision) throw new Error('后台任务保存点已过期')
           apply(latest)
           return latest
-        }, { source: 'background.' + str(role) + '.checkpoint', operationId: begun.value.operationId }))
+        }
+        const metadata = { source: 'background.' + str(role) + '.checkpoint', operationId: begun.value.operationId }
+        const saved = await serialize(chatId, async () => {
+          if (headerOnly && store.readSlice && store.patchChat) {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const before = (await store.readSlice(chatId, [], taskStateFields))?.chat
+              if (!before || before.timeline?.schemaVersion !== 1) break
+              const after = mutate(structuredClone(before))
+              const changes = diffJson(before, after)
+              if (changes.some(change => change.path[0] !== 'timeline' || change.path[1] === 'checkpoints')) throw new Error('后台文档保存点只能更新任务元数据')
+              const patched = await store.patchChat(chatId, before._storageRevision, changes, { ...metadata, returnProjection: taskStateFields })
+              if (patched) return patched
+            }
+          }
+          return store.updateChat(chatId, mutate, metadata)
+        })
         if (!saved) throw new Error('后台任务对话已不存在，保存点未写入')
         return saved
       },

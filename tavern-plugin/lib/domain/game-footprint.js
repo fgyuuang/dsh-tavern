@@ -60,6 +60,7 @@ export function createGameFootprint({ dataRoot, sessionsRoot = path.join(path.di
     const items = []
     const add = (category, relative, kind = 'file') => items.push({ category, kind, path: file(relative) })
     add('product', 'scene-images/' + sha(chatId), 'dir')
+    add('product', 'game-memory/' + sha(chatId), 'dir')
     add('log', 'model-requests/' + chatId, 'dir')
     add('log', 'worldbook-recalls/' + chatId, 'dir')
     add('log', 'diagnostics/scene-' + sha(chatId) + '.json')

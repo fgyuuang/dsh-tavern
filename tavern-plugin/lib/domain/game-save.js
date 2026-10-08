@@ -5,7 +5,7 @@ import { readZipEntries, writeZipEntries } from './zip-entries.js'
 // rollback and regeneration need, the native session, the card it was started from and,
 // optionally, its scene images. Importing always creates a new game.
 export const GAME_SAVE_FORMAT = 'dsh-tavern-save'
-export const GAME_SAVE_FORMAT_VERSION = 1
+export const GAME_SAVE_FORMAT_VERSION = 2
 const MAX_REVISIONS = 400
 const BLOB_MIN_CHARS = 64 * 1024
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -70,6 +70,10 @@ export function buildGameSave(input) {
   json('session/foreground.json', input.session)
   if (input.card?.payload) json('card/payload.json', input.card.payload)
   if (input.script) json('script/script.json', input.script)
+  for (const file of input.memory || []) {
+    if (!/^(?:snapshots\/[a-f0-9]{64}\.json|objects\/[a-f0-9]{64}\.txt)$/.test(file.path)) throw new Error('存档记忆文件路径无效')
+    entries.push({ path: 'memory/' + file.path, content: file.content })
+  }
   const scene = input.scene
   if (scene) {
     for (const file of scene.files) entries.push({ path: 'scene/files/' + safeSegment(file.path), content: file.content })
@@ -82,7 +86,7 @@ export function buildGameSave(input) {
   entries.unshift({ path: 'manifest.json', content: JSON.stringify({
     format: GAME_SAVE_FORMAT, formatVersion: GAME_SAVE_FORMAT_VERSION, tavernVersion: input.tavernVersion, exportedAt: input.exportedAt,
     source: { chatId: chat.id, sessionId: chat.sessionId, cardPath: chat.cardPath, cardName: chat.cardName, title: chat.title || '', mode: chat.mode || 'story', turns: assistantTurns },
-    contents: { revisions: input.revisions.map(item => item.revision), card: Boolean(input.card?.payload), script: Boolean(input.script), sceneImages: Boolean(scene), attachments: scene ? scene.attachments.length : 0 }
+    contents: { revisions: input.revisions.map(item => item.revision), card: Boolean(input.card?.payload), script: Boolean(input.script), sceneImages: Boolean(scene), attachments: scene ? scene.attachments.length : 0, memoryFiles: (input.memory || []).length }
   }, null, 2) })
   return writeZipEntries(entries)
 }
@@ -114,7 +118,12 @@ export function readGameSave(buffer, { tavernVersion } = {}) {
     session: parse(text('session/foreground.json'), 'session/foreground.json'),
     card: files.has('card/payload.json') ? { path: manifest.source.cardPath, payload: JSON.parse(text('card/payload.json')) } : null,
     script: files.has('script/script.json') ? JSON.parse(text('script/script.json')) : null,
-    scene
+    scene,
+    memory: [...files].filter(([path]) => path.startsWith('memory/')).map(([path, data]) => {
+      const relative = path.slice(7)
+      if (!/^(?:snapshots\/[a-f0-9]{64}\.json|objects\/[a-f0-9]{64}\.txt)$/.test(relative)) throw new Error('存档记忆文件路径无效')
+      return { path: relative, content: data.toString('utf8') }
+    })
   }
 }
 
