@@ -66,7 +66,7 @@ export async function playControls({ page, step, savedChat, inspectRound, output
     const before = await savedChat()
     await page.getByRole('button', { name: '导出', exact: true }).click()
     const downloading = page.waitForEvent('download')
-    await page.getByRole('menuitem', { name: '纯对话 TXT', exact: true }).click()
+    await page.getByRole('menuitem', { name: '故事正文（TXT）', exact: true }).click()
     const download = await downloading
     assert.equal(await download.failure(), null)
     const path = join(output, 'conversation.txt')
