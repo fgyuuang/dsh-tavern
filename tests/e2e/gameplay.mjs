@@ -452,7 +452,7 @@ try {
       const button=page.getByRole('button',{name:'导出 ▾',exact:true})
       await button.waitFor({timeout:5000})
       await button.click()
-      await page.getByRole('menuitem',{name:'故事正文（TXT）',exact:true}).waitFor({timeout:1000})
+      await page.getByRole('menuitem',{name:'故事正文',exact:true}).waitFor({timeout:1000})
       await page.keyboard.press('Escape')
       report.exportReadiness={visibleBeforeSessionView:true}
     }finally{release();await page.unrouteAll({behavior:'wait'})}

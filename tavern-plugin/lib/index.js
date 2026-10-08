@@ -122,7 +122,7 @@ import { normalizeBackgroundModel, resolveChatBackgroundModel, readBackgroundMod
 import { createPlayCardSnapshots } from './domain/play-card-snapshots.js'
 import { createUserPreferenceProfile } from './domain/user-preference-profile.js'
 import { createContextPlanner } from './domain/context-planner.js'
-import { createConversationTextExport } from './domain/conversation-text-export.js'
+import { createConversationMarkdownExport, conversationStoryTurns } from './domain/conversation-text-export.js'
 import { createCoordinationEventPublisher } from './domain/coordination-event-publisher.js'
 import { createSessionSignalTransport } from './domain/session-signal-transport.js'
 import { createCandidateTasks } from './domain/candidate-tasks.js'
@@ -181,7 +181,7 @@ import { resolveTavernDataRoot } from './domain/tavern-data.js'
 import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
 import { createTavernSkillProvider } from './domain/tavern-skill-provider.js'
 import { canonicalTavernSkillName, createTavernSkillModule } from './domain/tavern-skills.js'
-import { readZipEntries } from './domain/zip-entries.js'
+import { readZipEntries, writeZipEntries } from './domain/zip-entries.js'
 import { createGameFootprint } from './domain/game-footprint.js'
 import { buildGameSave, collectSaveRevisions, readGameSave } from './domain/game-save.js'
 import { readFileSync } from 'node:fs'
@@ -1271,9 +1271,17 @@ export async function apply(ctx) {
   async function exportConversation(chatId, sessionId, title) {
     const chat = str(chatId) === '' ? await chatForSession(str(sessionId)) : await readChat(str(chatId))
     if (chat === undefined) throw new Error('当前 Session 没有绑定 Tavern 对话')
-    const exported = createConversationTextExport(chat, { title: str(title) })
+    const full = (await readChat(chat.id)) || chat
+    const pictures = sceneIllustrations && chat.sessionId ? await sceneIllustrations.exportImages(chat.sessionId, conversationStoryTurns(full)) : []
+    const extension = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
+    const images = new Map(pictures.map(image => [image.turn, 'images/' + String(image.turn).padStart(3, '0') + '.' + (extension[image.mediaType] || 'png')]))
+    const exported = createConversationMarkdownExport(full, { title: str(title), images })
     if (exported.messageCount === 0) throw new Error('暂无可导出的对话')
-    return exported
+    if (!pictures.length) return { filename: exported.filename, text: exported.text }
+    // Pictures are linked from the Markdown, so the story and its images travel as one zip.
+    const zip = writeZipEntries([{ path: exported.filename, content: exported.text },
+      ...pictures.map(image => ({ path: images.get(image.turn), content: Buffer.from(image.data) }))])
+    return { filename: exported.title + '.zip', base64: zip.toString('base64'), images: pictures.length }
   }
   // Attachment references inside saved JSON (scene image versions, images in messages).
   function attachmentRefs(value, found = new Map(), skip = new Set()) {

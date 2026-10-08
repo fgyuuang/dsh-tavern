@@ -600,6 +600,20 @@ export function createSceneIllustrations(deps) {
     if (!version?.attachment) throw new Error('图片尚未就绪或已删除')
     return deps.attachments().readImage(version.attachment)
   }
+  // The picture a reader sees for each turn (its latest version); turns without one are skipped.
+  async function exportImages(sessionId, turns) {
+    const images = []
+    for (const turn of turns) {
+      try {
+        const { path } = await resolve(sessionId, turn)
+        const version = versionsOf(await deps.store.readJson(path)).at(-1)
+        if (!version?.attachment) continue
+        const image = await deps.attachments().readImage(version.attachment)
+        images.push({ turn: Number(turn), mediaType: String(image.mediaType || version.attachment.mediaType || ""), data: image.data })
+      } catch { /* A missing picture must not block exporting the story. */ }
+    }
+    return images
+  }
   async function removeImage(sessionId, turn, key, versionId) {
     const { target, path } = await resolve(sessionId, turn)
     if (target.key !== key) throw new Error('正文版本已变化')
@@ -616,7 +630,7 @@ export function createSceneIllustrations(deps) {
     })
     return present(target, next)
   }
-  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, removeImage, setReference,
+  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, exportImages, removeImage, setReference,
     async dispose() { for (const job of jobs.values()) job.controller.abort(); await Promise.allSettled([...jobs.values()].map(job => job.promise)); imageHosts.delete(ownerId); imageAborters.delete(ownerId) }
   }
 }
