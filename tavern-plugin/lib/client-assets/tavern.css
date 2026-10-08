@@ -2665,3 +2665,6 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 .dsh-tavern-recall-notes { margin: 10px 14px 0; padding: 10px 12px; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 10px; }
 .dsh-tavern-recall-notes > b { color: var(--dsw-alias-label-primary); font-size: 12px; font-weight: 650; }
 .dsh-tavern-recall-notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.7; }
+
+/* 侧边卡片是 better-sidebar 的开发者设置，玩家无需看到。 */
+[data-dsh-better-sidebar-settings-nav] { display: none !important; }
