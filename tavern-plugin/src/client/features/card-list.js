@@ -156,11 +156,14 @@
 		function groupTavernHistory(history, summaries = {}) {
 			function timestamp(value) { const n = Number(value); return Number.isFinite(n) ? n : (Date.parse(value) || 0); }
 			function activity(item) { return Math.max(timestamp(item.lastOpenedAt), timestamp(item.updatedAt), timestamp(summaries[item.sessionId]?.updatedAt)); }
+			// Groups follow the latest activity; conversations inside keep their creation order.
 			const groups = new Map();
-			for (const item of history.slice().sort((a, b) => activity(b) - activity(a))) {
+			for (const item of history.slice().sort((a, b) => timestamp(b.createdAt) - timestamp(a.createdAt))) {
 				const key = tavernHistoryCardKey(item);
-				if (!groups.has(key)) groups.set(key, { key, name: item.cardName || "未命名人物卡", path: item.cardPath || "", items: [] });
-				groups.get(key).items.push(item);
+				if (!groups.has(key)) groups.set(key, { key, name: item.cardName || "未命名人物卡", path: item.cardPath || "", items: [], activity: 0 });
+				const group = groups.get(key);
+				group.items.push(item);
+				group.activity = Math.max(group.activity, activity(item));
 			}
-			return Array.from(groups.values());
+			return Array.from(groups.values()).sort((a, b) => b.activity - a.activity);
 		}

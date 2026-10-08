@@ -85,3 +85,20 @@ test('自动化拥有的会话不进入日常列表，但仍能解析且不删�
   assert.deepEqual(await registry.resolve(id), chat)
   assert.equal(store.snapshot().links[id], chat.id)
 })
+
+test('对话按创建时间固定排序，打开不会改变位置；旧索引从 id 推出创建时间', async () => {
+  const older = 'chat-' + Date.UTC(2026, 7, 1).toString(36) + '-aaaaaa'
+  const store = memoryStore({
+    links: { 'session-old': older, 'session-new': 'chat-new' },
+    index: { chats: [
+      { id: older, cardName: 'A', updatedAt: Date.UTC(2026, 8, 1) },
+      { id: 'chat-new', cardName: 'B', createdAt: Date.UTC(2026, 7, 2), updatedAt: Date.UTC(2026, 7, 2) }
+    ] }
+  })
+  const registry = createTavernConversationRegistry({ store: store.adapter })
+  assert.deepEqual((await registry.list()).map(row => row.sessionId), ['session-new', 'session-old'])
+  await registry.touch('session-old', Date.UTC(2026, 9, 1))
+  const rows = await registry.list()
+  assert.deepEqual(rows.map(row => row.sessionId), ['session-new', 'session-old'])
+  assert.equal(rows[1].createdAt, Date.UTC(2026, 7, 1))
+})
