@@ -283,7 +283,7 @@ test('卡片工作台可按路径修改任意人物卡，无需挂载；不改�
   assert.equal(result.path, 'cards/角色 v2.json')
   // The changed card gets the Tavern credit once, in a follow-up save.
   assert.deepEqual(run.updatedCardPaths, ['cards/角色 v2.json', 'cards/角色 v2.json'])
-  assert.match(run.card().creator_notes, /本卡由 DSH Tavern 修改：https:\/\/github\.com\/flizzywine\/dsh-tavern$/)
+  assert.match(run.card().creator_notes, /(^|\n\n)Co-authored-by: DSH Tavern <https:\/\/github\.com\/flizzywine\/dsh-tavern>$/)
   assert.equal(run.chat().cardPath, bound)
   await run.orchestrator.saveChanges({ sessionId: 'session-1', turn: 1, fields: { description: '当前卡' } })
   assert.equal(run.updatedCardPaths.at(-1), bound)

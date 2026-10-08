@@ -408,7 +408,7 @@ export function createCardPreparation(options = {}) {
       data.tags = normalizedList(draft.tags, 30)
       data.alternate_greetings = normalizedGreetings(draft.alternate_greetings, 20)
       if (object(draft.character_book)) data.character_book = clone(draft.character_book)
-      data.creator_notes = withTavernCredit(data.creator_notes, '创作')
+      data.creator_notes = withTavernCredit(data.creator_notes)
       return makeWorkspace({ spec: 'chara_card_v3', spec_version: '3.0', data }, { id: nextId(), importedAt: now(), revisionHistory: [] })
     }
     throw new Error('未知人物卡准备类型: ' + str(request.kind))

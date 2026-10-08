@@ -479,7 +479,7 @@ export function createTurnOrchestrator(options) {
     async function updateWithCredit(path) {
       const change = await store.updateCard(path, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
       if (!change.changed || hasTavernCredit(change.card?.creator_notes)) return change
-      await store.updateCard(path, { creator_notes: withTavernCredit(change.card?.creator_notes, '修改') }, { ts: now(), summary: '标注 DSH Tavern 修改' }, [])
+      await store.updateCard(path, { creator_notes: withTavernCredit(change.card?.creator_notes) }, { ts: now(), summary: '标注 DSH Tavern 合著' }, [])
       return change
     }
     if (target !== '' && target !== cardPath) {
