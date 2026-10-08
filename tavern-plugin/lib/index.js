@@ -1732,12 +1732,6 @@ export async function apply(ctx) {
   }
 
   const readBackgroundSuppression = createBackgroundSuppressionReader(id => sessionDebugEvidence(id, true))
-  // The parent game of a loaded scene-image agent Session, or '' for any other Session.
-  function imageAgentParent(sessionId) {
-    const evidence = sessionDebugEvidence(sessionId, true)
-    const descriptor = evidence.events.find(event => event.type === 'subagent/descriptor')?.data
-    return descriptor?.provider === 'dsh-tavern-image' ? str(evidence.session?.header?.parentSession) : ''
-  }
 
   // ---------- 聊天 ----------
   function cardViewOf(card, chat) {
@@ -4051,13 +4045,15 @@ export async function apply(ctx) {
       case 'getBackgroundSuppressedTurns': {
         const id = str(args && args.sessionId)
         if (!id.startsWith('background-')) return { turns: [] }
-        return { ...readBackgroundSuppression(id), imageAgent: imageAgentParent(id) !== '' }
+        return readBackgroundSuppression(id)
+      }
+      case 'getImageAgentUndo': {
+        const available = sceneIllustrations !== null && await sceneIllustrations.isAgentSession(str(args && args.parentSessionId), str(args && args.agentSessionId))
+        return { available }
       }
       case 'undoImageAgentTurn': {
-        const id = str(args && args.agentSessionId)
-        const parent = imageAgentParent(id)
-        if (parent === '' || sceneIllustrations === null) throw new Error('这不是文生图对话，未撤销')
-        return await sceneIllustrations.undoAgentTurn(parent, id)
+        if (sceneIllustrations === null) throw new Error('场景生图不可用')
+        return await sceneIllustrations.undoAgentTurn(str(args && args.parentSessionId), str(args && args.agentSessionId))
       }
       case 'applyUpdatedCard': {
         const sessionId = str(args && args.sessionId)

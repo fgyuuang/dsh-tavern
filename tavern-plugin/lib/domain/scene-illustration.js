@@ -600,12 +600,16 @@ export function createSceneIllustrations(deps) {
     if (!version?.attachment) throw new Error('图片尚未就绪或已删除')
     return deps.attachments().readImage(version.attachment)
   }
+  // Whether agentSessionId is this game's scene-image agent, from its durable binding.
+  async function isAgentSession(sessionId, agentSessionId) {
+    const chat = await deps.chatForSession(sessionId).catch(() => undefined)
+    if (!chat) return false
+    const saved = await deps.store.readJson('scene-images/' + hash(String(chat.id)) + '/agent.json')
+    return Boolean(agentSessionId) && saved?.parentSessionId === sessionId && saved.sessionId === agentSessionId
+  }
   // Undo the image agent's latest drawing conversation in its own Session. Pictures stay.
   async function undoAgentTurn(sessionId, agentSessionId) {
-    const chat = await deps.chatForSession(sessionId)
-    if (!chat) throw new Error('找不到这局游戏')
-    const saved = await deps.store.readJson('scene-images/' + hash(String(chat.id)) + '/agent.json')
-    if (saved?.parentSessionId !== sessionId || saved.sessionId !== agentSessionId) throw new Error('这不是当前游戏的文生图对话，未撤销')
+    if (!await isAgentSession(sessionId, agentSessionId)) throw new Error('这不是当前游戏的文生图对话，未撤销')
     const selection = deps.selection(sessionId)
     if (!selection) throw new Error('请先为当前对话选择模型')
     const result = await deps.runAgent({ sessionId, task: 'image', persistent: true, persistentSessionId: agentSessionId, undoLastTask: true, selection, messages: [] })
@@ -641,7 +645,7 @@ export function createSceneIllustrations(deps) {
     })
     return present(target, next)
   }
-  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, exportImages, undoAgentTurn, removeImage, setReference,
+  return { settings, configure, readArtistPreview: setup.readArtistPreview, testConnection: connection.test, listModels: connection.models, status, start, cancel, retrySave, readImage, exportImages, isAgentSession, undoAgentTurn, removeImage, setReference,
     async dispose() { for (const job of jobs.values()) job.controller.abort(); await Promise.allSettled([...jobs.values()].map(job => job.promise)); imageHosts.delete(ownerId); imageAborters.delete(ownerId) }
   }
 }
