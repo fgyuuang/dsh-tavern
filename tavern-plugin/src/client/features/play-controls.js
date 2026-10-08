@@ -1154,7 +1154,7 @@
 			const sessionMode = useTavernSessionMode(props.sessionId);
 			const running = props.useSession(function (snapshot) { return snapshot.running; });
 			const latestMessageId = props.useChat(latestTavernAssistantMessageId);
-			const [selected, setSelected] = React.useState(-1);
+			const [added, setAdded] = React.useState([]);
             const expanded = Boolean(panel && panel.expanded);
             function setExpanded(value) {
                 if (panel) setCandidatePanel(Object.assign({}, panel, { expanded: value }));
@@ -1170,8 +1170,8 @@
 				return function () { document.removeEventListener("focusin", onComposerFocus); };
 			}, [panel]);
 			React.useEffect(function () {
-				setSelected(sessionMode === "script" && panel && Array.isArray(panel.choices) && panel.choices.length === 1 ? 0 : -1);
-			}, [panel, sessionMode]);
+				setAdded([]);
+			}, [panel?.choices]);
 
 			if (panel && panel.sessionId === props.sessionId && panel.phase === "error") {
 				return React.createElement("div", { className: "dsh-tavern-choice-error dsh-tavern-candidate-error-banner" },
@@ -1192,29 +1192,22 @@
 				expanded && panel.error ? h("div", { className: "dsh-tavern-choice-error" }, "候选项生成失败，请点回复下方的“生成候选项”重试") : null,
 				expanded ? h("div", { className: "dsh-tavern-question-body" }, (panel.choices || []).map(function (choice, index) {
 					const item = choice !== null && typeof choice === "object" ? choice : { type: "action", text: String(choice) };
-					return h("button", { key: index, className: "dsh-tavern-question-option" + (selected === index ? " selected" : ""), onClick: function () { setSelected(index); } },
-						h("span", { className: "dsh-tavern-question-radio" }),
+					// 点选项即追加到输入框；多次点击可组合多个选项，发送前仍可修改。
+					return h("button", { key: index, className: "dsh-tavern-question-option" + (added.includes(index) ? " selected" : ""), title: "追加到输入框", onClick: function () {
+						const marked = item.type === "scene" ? "【场景变化】" + item.text : item.text;
+						const current = String(draftRef.current || "");
+						const next = current + (current && !current.endsWith("\n") ? "\n" : "") + marked;
+						draftRef.current = next;
+						props.inputActions.setDraft(next);
+						if (dismissMode !== "after-send") setCandidatePanel(null);
+						else setAdded(list => list.includes(index) ? list : list.concat(index));
+					} },
 						h("span", { className: "dsh-tavern-question-text" },
 							item.type === "scene" ? h("span", { className: "dsh-tavern-question-tag dsh-tavern-question-tag-scene" }, "场景变化") : null,
 							h("span", null, item.text)
 						)
 					);
-				})) : null,
-				expanded && panel.phase === "ready" ? h("div", { className: "dsh-tavern-question-foot" },
-					panel.choices && panel.choices.length ? h("button", { className: "dsh-tavern-question-primary", disabled: selected < 0, onClick: function () {
-						if (selected < 0) return;
-						const item = panel.choices[selected];
-						const choice = item !== null && typeof item === "object" ? item : { type: "action", text: String(item) };
-						const marked = choice.type === "scene" ? "【场景变化】" + choice.text : choice.text;
-						const current = String(draftRef.current || "");
-                        const next = current + (current && !current.endsWith("\n") ? "\n" : "") + marked;
-                        draftRef.current = next;
-                        props.inputActions.setDraft(next);
-                        if (dismissMode !== "after-send") setCandidatePanel(null);
-                        setSelected(-1);
-
-					} }, "追加到输入框") : null
-				) : null
+				})) : null
 			);
 		}
 
