@@ -6,7 +6,7 @@ import { registerModelStreamHooks } from './hooks/model-stream.js'
 import { registerTurnLifecycleHooks } from './hooks/turn-lifecycle.js'
 import { registerGameplayTools } from './tools/gameplay.js'
 import { registerDreamSikeTools } from './tools/dream-sike.js'
-import { dreamSikeDraftView, dreamSikeDraftStatus } from './domain/dream-sike-draft.js'
+import { dreamSikeDraftView, dreamSikeDraftStatus, dreamSikeDraftWorkTarget, dreamSikeExecutionTrace } from './domain/dream-sike-draft.js'
 import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts } from './domain/dream-sike-mode.js'
 import { registerUserProfileTools } from './tools/user-profile.js'
 import { registerSkillTools } from './tools/skills.js'
@@ -4137,11 +4137,14 @@ export async function apply(ctx) {
       case 'getDraftView': {
         const sessionId = str(args?.sessionId)
         const chat = await chatHeaderForSession(sessionId, ['dreamSikeDraft', 'dreamSikeResume', 'timeline.branchId', 'timeline.revision', 'timeline.operations', 'playPresetId', 'suppressedDshTurns'])
-        const draft = chat ? dreamSikeDraftView(chat) : null
+        const { draft, traceTarget } = dreamSikeDraftWorkTarget(chat)
+        const nativeSession = agentRegistry.get(sessionId)?.session || sessionStore.get(sessionId)
+        const executionTrace = chat?.playPresetId === DREAM_SIKE_AGENT_PRESET
+          ? dreamSikeExecutionTrace(nativeSession, traceTarget) : []
         if (draft) {
           draft.resumable = false
           const agent = agentRegistry.get(sessionId)
-          const session = agent?.session || sessionStore.get(sessionId)
+          const session = nativeSession
           if (chat.playPresetId === DREAM_SIKE_AGENT_PRESET && ['draft', 'ready'].includes(draft.status)
             && (!agent || agent.status === 'idle')) {
             if (session) {
@@ -4165,7 +4168,7 @@ export async function apply(ctx) {
             }
           }
         }
-        return { draft }
+        return { draft, executionTrace }
       }
       case 'resumeDreamSikeDraft': {
         const sessionId = str(args?.sessionId)

@@ -2696,3 +2696,11 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 .dsh-sike-draft-trace { padding-top: 11px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .dsh-sike-draft-trace summary { color: var(--dsw-alias-label-primary); font-size: 13px; cursor: pointer; }
 .dsh-sike-draft-trace[open] .dsh-sike-draft-list { margin-top: 10px; }
+.dsh-sike-native-trace { margin-bottom: 12px; }
+.dsh-sike-native-trace-item { padding: 6px 0; }
+.dsh-sike-native-trace-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; }
+.dsh-sike-native-trace-head strong { color: var(--dsw-alias-label-primary); font-weight: 600; overflow-wrap: anywhere; }
+.dsh-sike-native-trace-head span { display: inline; }
+.dsh-sike-native-trace-step, .dsh-sike-native-trace-time { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+.dsh-sike-native-trace-status { color: var(--dsh-tavern-accent-active); }
+.dsh-sike-native-trace-item p { margin: 3px 0 0; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }

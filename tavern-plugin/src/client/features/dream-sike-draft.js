@@ -26,6 +26,16 @@
 				if (!entry || typeof entry !== "object") return "";
 				return brief(entry.summary || entry.message || entry.resultSummary || entry.detail || "", 240);
 			}
+			function nativeToolStatus(status) {
+				switch (status) {
+					case "running": case "started": return "运行中";
+					case "completed": case "success": case "ok": return "已完成";
+					case "failed": case "error": return "失败";
+					case "cancelled": return "已取消";
+					case "interrupted": return "已中断";
+					default: return "已记录";
+				}
+			}
 			function DreamSikeDraftTab(props) {
 				const h = React.createElement;
 				const sessionId = props.sessionId;
@@ -33,6 +43,7 @@
 				const modeView = useLiveTavernView(sessionId, "dream-sike-window-mode", [["playPresetId"]]);
 				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh";
 				const [draft, setDraft] = React.useState(null);
+				const [executionTrace, setExecutionTrace] = React.useState([]);
 				const [loading, setLoading] = React.useState(true);
 				const [error, setError] = React.useState("");
 				const [resuming, setResuming] = React.useState(false);
@@ -58,6 +69,7 @@
 				}, [sessionId, dreamMode]);
 				React.useEffect(function () {
 					setDraft(null);
+					setExecutionTrace([]);
 					setLoading(true);
 					setError("");
 					if (!props.visible || !sessionId || !isPlayMode(mode) || !dreamMode) return;
@@ -68,7 +80,11 @@
 						pending = true;
 						try {
 							const result = await rpcWithTimeout("getDraftView", { sessionId: sessionId }, sessionId);
-							if (active) { setDraft(result.draft && typeof result.draft === "object" ? result.draft : null); setError(""); }
+							if (active) {
+								setDraft(result.draft && typeof result.draft === "object" ? result.draft : null);
+								setExecutionTrace(Array.isArray(result.executionTrace) ? result.executionTrace : []);
+								setError("");
+							}
 						} catch (failure) {
 							if (active) setError(String(failure && failure.message || failure));
 						} finally { pending = false; if (active) setLoading(false); }
@@ -119,16 +135,37 @@
 				const trace = draft && Array.isArray(draft.trace) ? draft.trace : [];
 				const text = draft && typeof draft.text === "string" ? draft.text : "";
 				const revisions = Math.max(0, Number(draft && draft.revisionCount) || 0);
+				function renderExecutionTrace() {
+					if (!executionTrace.length) return null;
+					return h("details", { className: "dsh-sike-draft-trace dsh-sike-native-trace", "aria-label": "Agent 工具调用" },
+						h("summary", null, "Agent 工具调用 · " + executionTrace.length + " 次"),
+						h("ol", { className: "dsh-sike-draft-list" }, executionTrace.slice(-24).map(function (entry, index) {
+							const item = entry && typeof entry === "object" ? entry : {};
+							const step = Number(item.step);
+							const elapsedMs = item.elapsedMs;
+							const tool = brief(item.tool, 80) || "工具调用";
+							const summary = brief(item.summary, 180);
+							return h("li", { key: index, className: "dsh-sike-native-trace-item" },
+								h("div", { className: "dsh-sike-native-trace-head" },
+									Number.isSafeInteger(step) && step > 0 ? h("span", { className: "dsh-sike-native-trace-step" }, "第 " + step + " 步") : null,
+									h("strong", null, tool),
+									h("span", { className: "dsh-sike-native-trace-status" }, nativeToolStatus(item.status)),
+									Number.isFinite(elapsedMs) && elapsedMs >= 0 ? h("span", { className: "dsh-sike-native-trace-time" }, Math.round(elapsedMs) + " ms") : null),
+								summary ? h("p", null, summary) : null);
+						})));
+				}
 				return h("aside", { className: "dsh-tavern-status dsh-sike-draft", "aria-label": "正文工作窗" },
 					h("header", { className: "dsh-tavern-status-head dsh-sike-draft-head" },
 						h("div", null, h("div", { className: "dsh-tavern-status-title" }, "正文工作窗"), h("div", { className: "dsh-tavern-question-sub" }, "当前回合的草稿与 Agent 执行进度")),
-						h("span", { className: "dsh-sike-draft-phase", role: "status" }, draftPhaseLabel(draft)),
+						h("span", { className: "dsh-sike-draft-phase", role: "status" }, draft ? draftPhaseLabel(draft) : executionTrace.length ? "处理中" : "尚未开始"),
 						h("button", { type: "button", className: "dsh-tavern-btn", onClick: closeWindow, "aria-label": "关闭正文工作窗" }, "关闭")),
 				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用梦境思客DSH。") :
 					h("div", { className: "dsh-sike-draft-body" },
 						error ? h("div", { className: "dsh-card-error", role: "alert" }, "读取工作窗失败：" + error) : null,
 						loading && !draft ? h("div", { className: "dsh-tavern-empty" }, "正在读取当前回合…") :
-						!draft ? h("div", { className: "dsh-tavern-empty" }, "当前没有正文草稿。开始新回合后，这里会显示 Agent 的工作进度。") :
+						!draft ? h(React.Fragment, null,
+							h("div", { className: "dsh-tavern-empty" }, executionTrace.length ? "Agent 正在准备本回合正文。" : "当前没有正文草稿。开始新回合后，这里会显示 Agent 的工作进度。"),
+							renderExecutionTrace()) :
 						h(React.Fragment, null,
 							h("div", { className: "dsh-sike-draft-meta" }, h("span", null, "版本 " + (Math.max(0, Number(draft.version) || 0) || 1)), h("span", null, "已修订 " + revisions + " 次")),
 							draft.resumable ? h("button", { type: "button", className: "dsh-tavern-btn dsh-sike-draft-resume", disabled: resuming, onClick: resume }, resuming ? "正在继续…" : "继续处理本回合") : null,
@@ -145,8 +182,9 @@
 								})) : h("p", { className: "dsh-sike-draft-muted" }, "尚无修订。"),
 								checked ? h("div", { className: "dsh-sike-draft-checks" }, checks.length ? h(React.Fragment, null,
 									"检查反馈：" + checks.length + " 条", h("ul", { className: "dsh-sike-draft-list" }, checks.slice(0, 8).map(function (issue, index) { return h("li", { key: index }, brief(issue && issue.message || issue, 180)); }))) : "当前版本检查通过") : null),
+							renderExecutionTrace(),
 							trace.length ? h("details", { className: "dsh-sike-draft-trace" },
-								h("summary", null, "执行记录 · " + trace.length + " 步"),
+								h("summary", null, "草稿处理记录 · " + trace.length + " 步"),
 								h("ol", { className: "dsh-sike-draft-list" }, trace.slice(-12).map(function (entry, index) {
 									return h("li", { key: index }, h("b", null, traceLabel(entry)), traceDetail(entry) ? h("span", null, traceDetail(entry)) : null);
 								}))) : null)));

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  checkDreamSikeDraft, dreamSikeDraftView, dreamSikeTurnIdentity,
+  checkDreamSikeDraft, dreamSikeDraftView, dreamSikeDraftWorkTarget, dreamSikeExecutionTrace, dreamSikeTurnIdentity,
   inspectDreamSikeDraft, markDreamSikeDraftCommitted,
   patchDreamSikeDraft, putDreamSikeDraft, readyDreamSikeDraft,
   updateDreamSikeDraftProgress
@@ -80,6 +80,89 @@ test('进度轨迹只保存简短摘要，可供正文工作窗读取', () => {
   assert.equal(view.phase, 'planning')
   assert.equal(view.trace.at(-1).action, '检索门后人物设定')
   assert.equal(view.text, '门开了。')
+})
+
+test('原生执行轨迹按当前回合配对工具结果，只暴露安全摘要和耗时', () => {
+  const secret = 'private-payload-must-not-appear'
+  const events = [
+    { type: 'turn/start', time: 1, data: { turn: 4 } },
+    { type: 'tool/call', time: 2, data: { turn: 4, step: 1, callId: 'old', name: 'worldbook_search', arguments: secret } },
+    { type: 'turn/start', time: 10, data: { turn: 5 } },
+    { type: 'tool/call', time: 20, data: { turn: 5, step: 1, callId: 'read', name: 'worldbook_search', arguments: secret } },
+    { type: 'tool/result', time: 45, data: { turn: 5, step: 1, message: { source: { callId: 'read' }, content: [{ type: 'tool-result', toolCallId: 'read', content: [{ type: 'text', text: secret }] }] } } },
+    { type: 'tool/call', time: 50, data: { turn: 5, step: 2, callId: 'check', name: 'sike_check_draft', arguments: secret } },
+    { type: 'tool/result', time: 61, data: { turn: 5, step: 2, message: { source: { callId: 'check' }, content: [{ type: 'tool-result', toolCallId: 'check', isError: true, content: [{ type: 'text', text: secret }] }] } } },
+    { type: 'tool/call', time: 70, data: { turn: 5, step: 3, callId: 'pending', name: 'sike_ready_draft', arguments: secret } },
+    { type: 'tool/result', time: 75, data: { turn: 6, step: 1, message: { source: { callId: 'pending' }, content: [] } } }
+  ]
+  const session = { seq: events.length, eventAt(seq) { return events[seq] }, snapshotEvents() { throw Error('whole history must not be read') } }
+  const trace = dreamSikeExecutionTrace(session, { turn: 5, status: 'draft' })
+  assert.deepEqual(trace, [
+    { tool: 'worldbook_search', status: 'completed', step: 1, elapsedMs: 25, summary: '工具已完成' },
+    { tool: 'sike_check_draft', status: 'error', step: 2, elapsedMs: 11, summary: '工具执行失败' },
+    { tool: 'sike_ready_draft', status: 'running', step: 3, elapsedMs: null, summary: '工具执行中' }
+  ])
+  assert.equal(JSON.stringify(trace).includes(secret), false)
+  assert.deepEqual(dreamSikeExecutionTrace(session, { turn: 5, status: 'stale' }), [])
+  assert.deepEqual(dreamSikeExecutionTrace(null, { turn: 5, status: 'draft' }), [])
+})
+
+test('原生执行轨迹在不同步骤复用调用 ID 时仍逐次配对', () => {
+  const events = [
+    { type: 'turn/start', time: 1, data: { turn: 5 } },
+    { type: 'tool/call', time: 10, data: { turn: 5, step: 1, callId: 'reused', name: 'sike_read_turn' } },
+    { type: 'tool/result', time: 20, data: { turn: 5, step: 1, message: { source: { callId: 'reused' }, content: [] } } },
+    { type: 'tool/call', time: 30, data: { turn: 5, step: 2, callId: 'reused', name: 'sike_check_draft' } },
+    { type: 'tool/result', time: 45, data: { turn: 5, step: 2, message: { source: { callId: 'reused' }, content: [{ type: 'tool-result', isError: true }] } } }
+  ]
+  const session = { seq: events.length, eventAt(seq) { return events[seq] } }
+  assert.deepEqual(dreamSikeExecutionTrace(session, { turn: 5, status: 'draft' }), [
+    { tool: 'sike_read_turn', status: 'completed', step: 1, elapsedMs: 10, summary: '工具已完成' },
+    { tool: 'sike_check_draft', status: 'error', step: 2, elapsedMs: 15, summary: '工具执行失败' }
+  ])
+})
+
+test('正文尚未起草时追踪运行中回合，下一回合不会展示上轮已提交草稿', () => {
+  const { chat, identity } = fixture()
+  const beforeDraft = dreamSikeDraftWorkTarget(chat)
+  assert.deepEqual(beforeDraft, {
+    draft: null, traceTarget: { turn: 5, status: 'running' }
+  })
+  const events = [
+    { type: 'turn/start', data: { turn: 5 } },
+    { type: 'tool/call', time: 1, data: { turn: 5, step: 1, callId: 'read', name: 'worldbook_search' } },
+    { type: 'tool/result', time: 3, data: { turn: 5, step: 1, message: { source: { callId: 'read' }, content: [] } } }
+  ]
+  assert.equal(dreamSikeExecutionTrace({ seq: events.length, eventAt: seq => events[seq] }, beforeDraft.traceTarget)[0].status, 'completed')
+  putDreamSikeDraft(chat, identity, '上一回合正文', 10)
+  checkDreamSikeDraft(chat, identity, 1, 20)
+  readyDreamSikeDraft(chat, identity, 1, 30)
+  markDreamSikeDraftCommitted(chat, { turn: 5, operationId: 'operation-1' }, 40)
+  chat.timeline.operations['operation-1'].status = 'completed'
+  chat.timeline.revision = 5
+  chat.timeline.operations['operation-2'] = {
+    id: 'operation-2', kind: 'body', status: 'running', turn: 6,
+    basedOn: { branchId: 'branch-1', revision: 5 }
+  }
+  assert.deepEqual(dreamSikeDraftWorkTarget(chat), {
+    draft: null, traceTarget: { turn: 6, status: 'running' }
+  })
+  chat.timeline.operations['operation-2'].basedOn.branchId = 'older-branch'
+  assert.equal(dreamSikeDraftWorkTarget(chat).draft.status, 'committed')
+  assert.equal(dreamSikeDraftWorkTarget(chat).traceTarget.turn, 5)
+})
+
+test('原生执行轨迹对已结束但缺结果的调用标记中断并限制扫描', () => {
+  const events = Array.from({ length: 4000 }, (_, index) => ({ type: 'turn/start', data: { turn: index + 1 } }))
+  events.push({ type: 'turn/start', data: { turn: 4001 } })
+  events.push({ type: 'tool/call', time: 10, data: { turn: 4001, step: 1, callId: 'missing', name: 'sike_put_draft' } })
+  events.push({ type: 'turn/end', time: 20, data: { turn: 4001 } })
+  let reads = 0
+  const session = { seq: events.length, eventAt(seq) { reads++; return events[seq] } }
+  assert.deepEqual(dreamSikeExecutionTrace(session, { turn: 4001, status: 'draft' }), [
+    { tool: 'sike_put_draft', status: 'interrupted', step: 1, elapsedMs: null, summary: '工具结果未记录' }
+  ])
+  assert.ok(reads < 20)
 })
 
 test('原生 defineTool 注册五个草稿工具，读取、起草、检查、修订、确认只改草稿', async () => {

@@ -136,6 +136,89 @@ export function dreamSikeDraftView(chat) {
   }
 }
 
+/** Choose the current body operation before showing an older turn's draft. */
+export function dreamSikeDraftWorkTarget(chat) {
+  const savedDraft = chat ? dreamSikeDraftView(chat) : null
+  const timeline = object(chat?.timeline)
+  const runningBody = Object.values(object(timeline.operations)).filter(operation =>
+    operation?.kind === 'body' && operation.status === 'running'
+    && operation.basedOn?.branchId === timeline.branchId
+    && operation.basedOn?.revision === timeline.revision
+    && Number.isSafeInteger(operation.turn) && operation.turn > 0
+  ).sort((left, right) => left.turn - right.turn || (left.createdAt || 0) - (right.createdAt || 0)).at(-1)
+  return {
+    draft: runningBody && savedDraft?.operationId !== runningBody.id ? null : savedDraft,
+    traceTarget: runningBody ? { turn: runningBody.turn, status: 'running' } : savedDraft
+  }
+}
+
+// Read only the recent native log for the draft's turn. The work window is
+// polled, so never materialize a whole long-running Session on each refresh.
+const MAX_EXECUTION_EVENTS = 2048
+const MAX_EXECUTION_CALLS = 64
+
+export function dreamSikeExecutionTrace(session, draft) {
+  if (!session || !draft || draft.status === 'stale' || !Number.isSafeInteger(draft.turn) || draft.turn < 1) return []
+  let recent
+  try {
+    const end = Number(session.seq)
+    if (Number.isSafeInteger(end) && end >= 0 && typeof session.eventAt === 'function') {
+      recent = []
+      for (let seq = end - 1; seq >= Math.max(0, end - MAX_EXECUTION_EVENTS); seq--) {
+        const event = session.eventAt(seq)
+        if (!event) continue
+        recent.push(event)
+        if (event.type === 'turn/start' && event.data?.turn === draft.turn) break
+      }
+      recent.reverse()
+    } else if (Number.isSafeInteger(end) && end >= 0 && typeof session.snapshotEvents === 'function') {
+      recent = session.snapshotEvents(Math.max(0, end - MAX_EXECUTION_EVENTS), end)
+    } else if (Array.isArray(session.events)) {
+      recent = session.events.slice(-MAX_EXECUTION_EVENTS)
+    } else return []
+  } catch { return [] }
+
+  const calls = new Map()
+  const rows = []
+  for (const event of recent) {
+    if (event?.data?.turn !== draft.turn) continue
+    if (event.type === 'tool/call') {
+      const id = event.data.callId
+      const step = event.data.step
+      if (typeof id !== 'string' || !id || !Number.isSafeInteger(step)) continue
+      const key = JSON.stringify([step, id])
+      if (calls.has(key)) continue
+      const rawName = event.data.name
+      const tool = typeof rawName === 'string' && /^[\w.-]{1,80}$/.test(rawName) ? rawName : '工具'
+      const row = {
+        tool, status: 'running', step,
+        elapsedMs: null, summary: '工具执行中'
+      }
+      calls.set(key, { row, time: event.time })
+      rows.push(row)
+    } else if (event.type === 'tool/result') {
+      const message = event.data.message
+      const id = message?.source?.callId || message?.content?.find(block => block?.type === 'tool-result')?.toolCallId
+      const call = calls.get(JSON.stringify([event.data.step, id]))
+      if (!call || call.row.status !== 'running') continue
+      const error = Boolean(event.data.error || message?.content?.some(block => block?.type === 'tool-result' && block.isError === true))
+      call.row.status = error ? 'error' : 'completed'
+      call.row.summary = error ? '工具执行失败' : '工具已完成'
+      if (Number.isSafeInteger(call.time) && Number.isSafeInteger(event.time) && event.time >= call.time) {
+        call.row.elapsedMs = event.time - call.time
+      }
+    } else if (event.type === 'turn/end') {
+      for (const call of calls.values()) {
+        if (call.row.status === 'running') {
+          call.row.status = 'interrupted'
+          call.row.summary = '工具结果未记录'
+        }
+      }
+    }
+  }
+  return rows.slice(-MAX_EXECUTION_CALLS)
+}
+
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
   const previous = readDreamSikeDraft(chat)
