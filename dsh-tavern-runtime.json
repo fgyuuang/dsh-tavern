@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "revision": "4ca6f6e0e3f44823be1f8bc7cb32e183176da9a2",
-  "releaseSequence": 549,
+  "revision": "460488a7f9e3884df60f417d44f13fb854cb2e8d",
+  "releaseSequence": 550,
   "version": "2.5.0",
   "files": [
     {
@@ -456,8 +456,8 @@
     },
     {
       "path": "tavern-plugin/lib/client.js",
-      "sha256": "574eac928f00a50eb6874f626b91197bf0d8e2b6f1169ea4ecedee57efb96b9c",
-      "size": 1621138
+      "sha256": "84b5c12220c3fb06d687986c9b7fa9dccce9d03c93692c66dd31a12eee4b01a5",
+      "size": 1621957
     },
     {
       "path": "tavern-plugin/lib/cordis-inspect.js",
@@ -581,8 +581,8 @@
     },
     {
       "path": "tavern-plugin/lib/domain/card-list-order.js",
-      "sha256": "257990e62dff66d82cce6631c5f781150872a9a55d6c8e6e19af7d504bf91dfa",
-      "size": 568
+      "sha256": "153a74a0dbccd1aadbf37b11f068b22a073ff34b91da62a7f841128865d4c13d",
+      "size": 1549
     },
     {
       "path": "tavern-plugin/lib/domain/card-opening-previews.js",
@@ -1656,8 +1656,8 @@
     },
     {
       "path": "tavern-plugin/lib/domain/tavern-conversation-registry.js",
-      "sha256": "7c8ebd874fed38bd1d6f6ce0a57a72ee40017ff2e5a07ba087fc7764ce20f188",
-      "size": 10455
+      "sha256": "5f46d421a91e8065f594f1f0511f88dfced2b13a6ad4151aa2a2e68852ba8a75",
+      "size": 11095
     },
     {
       "path": "tavern-plugin/lib/domain/tavern-data.js",
@@ -1746,8 +1746,8 @@
     },
     {
       "path": "tavern-plugin/lib/domain/tavern-settings.js",
-      "sha256": "30315dd31e9d39bc04d97fa5e126edf8e6d0e1c1759dac8b49ed94974a7c9959",
-      "size": 9369
+      "sha256": "3fc069ceeb2a2fa6e00e18641899fd79926750aa690fcaea0d1d2eeee32b33f6",
+      "size": 9370
     },
     {
       "path": "tavern-plugin/lib/domain/tavern-skill-provider.js",
@@ -1946,8 +1946,8 @@
     },
     {
       "path": "tavern-plugin/lib/index.js",
-      "sha256": "03b31766de37530849842b082c1ce728bcbd8fc4bee632f9c19f35782f124270",
-      "size": 291740
+      "sha256": "f3faa4bc858cb6f42fea2f68b30644daf20f9c7fdeba2524ab8eea0981a07514",
+      "size": 291857
     },
     {
       "path": "tavern-plugin/lib/plugin-api.js",
@@ -4436,8 +4436,8 @@
     },
     {
       "path": "tavern-plugin/src/client/features/card-list.js",
-      "sha256": "e4268f0fbc61605005c47aa85be30350bdca2f066cb2837681b9324777b7b2a8",
-      "size": 10862
+      "sha256": "dc49268ba4991720e9f9b6be077b484073902eb7298943b815f0b089390b2d7d",
+      "size": 11114
     },
     {
       "path": "tavern-plugin/src/client/features/guide-library.js",
@@ -4481,13 +4481,13 @@
     },
     {
       "path": "tavern-plugin/src/client/features/settings.js",
-      "sha256": "74a685e6b59fa5ba74a95d9a701d1d583a53a546a772d2cb9c54c7d0045a597d",
-      "size": 19972
+      "sha256": "52f239953e4303c5b738500abebb50dc29ec97a3b03c3b1113fc1bb514fd918d",
+      "size": 20302
     },
     {
       "path": "tavern-plugin/src/client/features/sidebar.js",
-      "sha256": "0688ab4d14ecb2846c16d0b0272ea46388cd0299186788e8afd0369e753595e3",
-      "size": 88544
+      "sha256": "94f8a00683c44bad5228079a071f132037847201a63efb2acd4171693cccadd9",
+      "size": 88562
     },
     {
       "path": "tavern-plugin/src/client/features/skills.js",
@@ -4611,8 +4611,8 @@
     },
     {
       "path": "tavern-plugin/src/client/modules/global-settings.js",
-      "sha256": "fc1972f2134c713a9ecc550fcf2a53866f79e46dcd2def58b5613fe2b0066c26",
-      "size": 9797
+      "sha256": "8e733d2d2b9173d067d10432a5965e1c6692449465af38eb1d1c847fa7eee380",
+      "size": 10016
     },
     {
       "path": "tavern-plugin/src/client/modules/host-compatibility.js",
