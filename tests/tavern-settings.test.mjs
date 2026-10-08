@@ -79,7 +79,7 @@ test('候选项默认填入后隐藏，保存后持久化且不覆盖其他设�
 
 test('全局隐藏注入与思考设置可持久化和恢复，不改动其他配置', async t => {
   const h = await settingsHarness(t)
-  assert.equal((await h.read()).hideContextAndReasoning, false)
+  assert.equal((await h.read()).hideContextAndReasoning, true)
   await h.update({ hideContextAndReasoning: true, candidateDismissMode: 'after-send' })
   assert.equal((await h.read()).hideContextAndReasoning, true)
   await h.update({ hideContextAndReasoning: false })

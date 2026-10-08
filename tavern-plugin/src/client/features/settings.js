@@ -160,6 +160,8 @@
                     try { window.localStorage.setItem(key, String(Date.now())); } catch (_) {}
                 },
                 start() {
+                    // Hidden is the default; keep process details out of view until the setting loads.
+                    if (value === null) document.documentElement.classList.add("dsh-tavern-hide-process");
                     refresh();
                     const onStorage = event => { if (event.key === key) refresh(); };
                     window.addEventListener("focus", refresh);
