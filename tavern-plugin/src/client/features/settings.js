@@ -99,7 +99,8 @@
             const efforts = reasoning.key === key ? reasoning.value?.efforts || [] : [];
             const known = !selection || props.catalog.some(group => group.provider === selection.provider && group.models.some(model => model.id === selection.model));
             return h("div", { className: "dsh-tavern-model-row" },
-                h("span", { className: "dsh-tavern-model-row-label" }, props.title || props.label),
+                h("div", { className: "dsh-tavern-model-row-label" }, props.title || props.label,
+                    props.description ? h("span", { className: "dsh-tavern-settings-desc" }, props.description) : null),
                 h("div", { className: "dsh-tavern-model-row-controls" },
                 h("select", { className: "dsh-tavern-settings-select", "aria-label": props.label, value: key, disabled: props.disabled,
                     onChange: event => props.onChange(event.target.value ? JSON.parse(event.target.value) : null) },

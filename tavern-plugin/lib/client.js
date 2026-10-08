@@ -14279,7 +14279,8 @@ function bindTavernFontZoom(node, win) {
             const efforts = reasoning.key === key ? reasoning.value?.efforts || [] : [];
             const known = !selection || props.catalog.some(group => group.provider === selection.provider && group.models.some(model => model.id === selection.model));
             return h("div", { className: "dsh-tavern-model-row" },
-                h("span", { className: "dsh-tavern-model-row-label" }, props.title || props.label),
+                h("div", { className: "dsh-tavern-model-row-label" }, props.title || props.label,
+                    props.description ? h("span", { className: "dsh-tavern-settings-desc" }, props.description) : null),
                 h("div", { className: "dsh-tavern-model-row-controls" },
                 h("select", { className: "dsh-tavern-settings-select", "aria-label": props.label, value: key, disabled: props.disabled,
                     onChange: event => props.onChange(event.target.value ? JSON.parse(event.target.value) : null) },
@@ -14483,9 +14484,9 @@ function bindTavernFontZoom(node, win) {
                 return h("div", { className: "dsh-tavern-settings-section dsh-tavern-global-settings" },
                     group("默认模型", "用于新游戏和新的卡片工作台对话，已有对话保持当前配置。建议使用 High 推理强度；Max 容易过度思考、增加等待。",
                     h("div", { className: "dsh-tavern-gs-card" },
-                    React.createElement(TavernDefaultModelSetting, { label: "默认前台模型", title: "前台模型", fallback: "使用 DSH 默认模型", selection: state.defaultForegroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultForegroundModel", selection) }),
-                    React.createElement(TavernDefaultModelSetting, { label: "默认后台模型", title: "后台模型", fallback: "跟随前台", selection: state.defaultBackgroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultBackgroundModel", selection) }),
-                    React.createElement(TavernDefaultModelSetting, { label: "卡片工作台默认模型", title: "工作台模型", fallback: "跟随前台", selection: state.defaultWorkbenchModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultWorkbenchModel", selection) })),
+                    React.createElement(TavernDefaultModelSetting, { label: "默认前台模型", title: "前台模型", description: "写正文、扮演角色，直接决定剧情质量", fallback: "使用 DSH 默认模型", selection: state.defaultForegroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultForegroundModel", selection) }),
+                    React.createElement(TavernDefaultModelSetting, { label: "默认后台模型", title: "后台模型", description: "变量结算、世界书筛选、候选回复、手机消息等幕后任务", fallback: "跟随前台", selection: state.defaultBackgroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultBackgroundModel", selection) }),
+                    React.createElement(TavernDefaultModelSetting, { label: "卡片工作台默认模型", title: "工作台模型", description: "卡片工作台里创建和修改人物卡", fallback: "跟随前台", selection: state.defaultWorkbenchModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultWorkbenchModel", selection) })),
                     state.notice ? h("p", { className: "dsh-tavern-gs-notice", role: "status" }, state.notice) : null),
                     group("新游戏默认", "开局时继承，开局后可在本局设置中单独修改。",
                         state.settings ? h(GlobalPlayDefaults, { settings: state.settings }) : null,
