@@ -98,3 +98,11 @@ for (const spec of ['flat', 'chara_card_v2', 'chara_card_v3']) test('变量编�
   assert.equal(rawNamed.nameChanged, true)
   assert.equal(cards.update({ kind: 'card', card: workspace, patch: { name: '原名' } }).nameChanged, false)
 })
+
+test('卡片工作台新建的人物卡在创作者备注署名 DSH Tavern，不写入本机路径', () => {
+  const cards = createCardPreparation({ id: () => 'card-1', now: () => 1 })
+  const created = cards.create({ kind: 'draft', draft: { name: '阿青', description: '剑客', creator_notes: '作者说明' }, player: '旅人', sourcePaths: ['/Users/me/secret.json'] })
+  const notes = cards.project(created).creator_notes
+  assert.equal(notes, '作者说明\n\n本卡由 DSH Tavern 创作：https://github.com/flizzywine/dsh-tavern')
+  assert.doesNotMatch(notes, /secret|旅人/)
+})

@@ -9,6 +9,7 @@ import { lastTavernHelperVariables } from './tavern-helper-context.js'
 import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeResourcePath } from './file-resources.js'
 import { diffJson } from './json-mutation.js'
+import { hasTavernCredit, withTavernCredit } from './card-credit.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -474,8 +475,15 @@ export function createTurnOrchestrator(options) {
     // Like editing code: any card file can be targeted by path; the workbench's own
     // card is only the default.
     const target = str(input.path).trim() === '' ? '' : normalizeResourcePath(str(input.path).trim(), 'card')
+    // A card the Agent actually changed gets the Tavern credit once, in a follow-up save.
+    async function updateWithCredit(path) {
+      const change = await store.updateCard(path, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      if (!change.changed || hasTavernCredit(change.card?.creator_notes)) return change
+      await store.updateCard(path, { creator_notes: withTavernCredit(change.card?.creator_notes, '修改') }, { ts: now(), summary: '标注 DSH Tavern 修改' }, [])
+      return change
+    }
     if (target !== '' && target !== cardPath) {
-      const other = await store.updateCard(target, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      const other = await updateWithCredit(target)
       return { saved: true, mode: 'card', path: target, changed: other.changed, createsCard: false, changedFields: other.changedFields || [] }
     }
     let result
@@ -489,7 +497,7 @@ export function createTurnOrchestrator(options) {
       chat.cardPath = created.path; chat.cardName = created.card.name
       result = { changed: true, changedFields: change.changedFields }
     } else {
-      result = await store.updateCard(cardPath, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      result = await updateWithCredit(cardPath)
       chat.cardName = result.card.name
     }
     if (chat.pendingCardChanges) delete chat.pendingCardChanges[String(input.turn)]

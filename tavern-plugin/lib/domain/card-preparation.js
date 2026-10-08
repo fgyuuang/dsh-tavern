@@ -1,3 +1,4 @@
+import { withTavernCredit } from './card-credit.js'
 import { inspectCardExtensions } from './card-extension-reading.js'
 
 const TEXT_FIELDS = Object.freeze([
@@ -407,9 +408,7 @@ export function createCardPreparation(options = {}) {
       data.tags = normalizedList(draft.tags, 30)
       data.alternate_greetings = normalizedGreetings(draft.alternate_greetings, 20)
       if (object(draft.character_book)) data.character_book = clone(draft.character_book)
-      const notes = str(data.creator_notes).trim()
-      const provenance = '[卡片工作台] ' + (Array.isArray(request.sourcePaths) ? request.sourcePaths.join(',') : (Array.isArray(request.sourceIds) ? request.sourceIds.join(',') : '')) + '\n[玩家] ' + (player || '未确认（旧会话）')
-      data.creator_notes = notes === '' ? provenance : notes + '\n' + provenance
+      data.creator_notes = withTavernCredit(data.creator_notes, '创作')
       return makeWorkspace({ spec: 'chara_card_v3', spec_version: '3.0', data }, { id: nextId(), importedAt: now(), revisionHistory: [] })
     }
     throw new Error('未知人物卡准备类型: ' + str(request.kind))

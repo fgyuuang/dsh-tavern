@@ -281,10 +281,13 @@ test('卡片工作台可按路径修改任意人物卡，无需挂载；不改�
   const bound = run.chat().cardPath
   const result = await run.orchestrator.saveChanges({ sessionId: 'session-1', turn: 1, path: 'cards/角色 v2.json', fields: { description: '第二版' } })
   assert.equal(result.path, 'cards/角色 v2.json')
-  assert.deepEqual(run.updatedCardPaths, ['cards/角色 v2.json'])
+  // The changed card gets the Tavern credit once, in a follow-up save.
+  assert.deepEqual(run.updatedCardPaths, ['cards/角色 v2.json', 'cards/角色 v2.json'])
+  assert.match(run.card().creator_notes, /本卡由 DSH Tavern 修改：https:\/\/github\.com\/flizzywine\/dsh-tavern$/)
   assert.equal(run.chat().cardPath, bound)
   await run.orchestrator.saveChanges({ sessionId: 'session-1', turn: 1, fields: { description: '当前卡' } })
   assert.equal(run.updatedCardPaths.at(-1), bound)
+  assert.equal(run.updatedCardPaths.length, 3, '已有署名不重复添加')
 })
 
 test('玩家模板先于本轮召回，重试不重复执行；提交后只产生一条玩家消息', async () => {
