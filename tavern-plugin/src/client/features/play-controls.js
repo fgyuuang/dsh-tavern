@@ -68,7 +68,7 @@
                     React.createElement("div", { className: "dsh-tavern-more-menu", role: "menu", "aria-label": "导出", hidden: !open, onClick: function (event) { if (event.target.closest("button:not(:disabled)")) setOpen(false); } },
                         React.createElement("button", { type: "button", role: "menuitem", disabled: busy, title: "导出这一局的存档（含回退历史与配图），可在其他电脑的酒馆里导入继续玩", onClick: function () { exportSave(true); } }, "存档"),
                         React.createElement("button", { type: "button", role: "menuitem", disabled: busy, title: "导出存档但不带场景配图，文件更小", onClick: function () { exportSave(false); } }, "存档（不含配图）"),
-                        React.createElement("button", { type: "button", role: "menuitem", "data-tavern-log-export": "", disabled: busy, "aria-label": "日志", title: "下载 Session、MVU、生图与更新日志；含私人剧情，分享前请检查隐私", onClick: exportLogs }, "日志"),
+                        React.createElement("button", { type: "button", role: "menuitem", "data-tavern-log-export": "", disabled: busy, "aria-label": "日志", title: "下载 Session、MVU、生图与更新日志；含私人剧情，分享前请检查隐私", onClick: exportLogs }, "日志（用于排查错误）"),
                         React.createElement("button", { type: "button", role: "menuitem", disabled: busy, title: "导出只包含玩家与角色正文的 TXT", onClick: exportText }, "纯对话 TXT")
                     ));
             }
@@ -1185,32 +1185,22 @@
 			const count = (panel.choices || []).length;
 			const isScript = sessionMode === "script";
 			const heading = "接下来的行动";
-			const summary = panel.phase === "loading" ? "正在生成…" : (panel.error ? "生成失败" : (isScript ? "1 个候选 · 跟随剧本，只有一个推荐候选项" : count + " 个候选项"));
+			const summary = panel.phase === "loading" ? "正在生成…" : (panel.error ? "生成失败" : (isScript ? "跟随剧本" : count + " 个"));
 			return h("div", { className: "dsh-tavern-question dsh-tavern-candidate-question" + (expanded ? "" : " collapsed") },
-				h("div", { className: "dsh-tavern-question-head", role: "button", tabIndex: 0, "aria-expanded": expanded ? "true" : "false", onClick: function () { setExpanded(!expanded); }, onKeyDown: function (event) { if (event.target === event.currentTarget && !event.isComposing && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setExpanded(!expanded); } } }, h("span", null, heading), h("span", { className: "dsh-tavern-question-sub" }, summary), h("button", { type: "button", className: "dsh-tavern-question-close", title: expanded ? "收起行动列表" : "展开行动列表", "aria-label": expanded ? "收起行动列表" : "展开行动列表", onClick: function (event) { event.stopPropagation(); setExpanded(!expanded); } }, expanded ? "收起" : "展开")),
+				h("div", { className: "dsh-tavern-question-head", role: "button", tabIndex: 0, "aria-expanded": expanded ? "true" : "false", onClick: function () { setExpanded(!expanded); }, onKeyDown: function (event) { if (event.target === event.currentTarget && !event.isComposing && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setExpanded(!expanded); } } }, h("span", null, heading), h("span", { className: "dsh-tavern-question-sub" }, summary), h("button", { type: "button", className: "dsh-tavern-question-close", title: expanded ? "收起行动列表" : "展开行动列表", "aria-label": expanded ? "收起行动列表" : "展开行动列表", onClick: function (event) { event.stopPropagation(); setExpanded(!expanded); } }, expanded ? "⌃" : "⌄")),
 				expanded && panel.phase === "loading" ? h("div", { className: "dsh-tavern-question-sub" }, "正在生成候选项…") : null,
 				expanded && panel.error ? h("div", { className: "dsh-tavern-choice-error" }, "候选项生成失败，请点回复下方的“生成候选项”重试") : null,
 				expanded ? h("div", { className: "dsh-tavern-question-body" }, (panel.choices || []).map(function (choice, index) {
 					const item = choice !== null && typeof choice === "object" ? choice : { type: "action", text: String(choice) };
-					const label = item.type === "scene" ? "场景变化" : "人物行为";
 					return h("button", { key: index, className: "dsh-tavern-question-option" + (selected === index ? " selected" : ""), onClick: function () { setSelected(index); } },
 						h("span", { className: "dsh-tavern-question-radio" }),
 						h("span", { className: "dsh-tavern-question-text" },
-							h("span", { className: "dsh-tavern-question-tag dsh-tavern-question-tag-" + item.type }, label),
+							item.type === "scene" ? h("span", { className: "dsh-tavern-question-tag dsh-tavern-question-tag-scene" }, "场景变化") : null,
 							h("span", null, item.text)
 						)
 					);
 				})) : null,
 				expanded && panel.phase === "ready" ? h("div", { className: "dsh-tavern-question-foot" },
-					h("div", { className: "dsh-tavern-question-aux" },
-						h("button", { className: "dsh-tavern-question-free", onClick: function () {
-							// iOS 只在当前点击调用栈内唤起键盘；异步 focus 会丢失用户手势。
-							const input = document.querySelector(inputSelector);
-							if (input) input.focus({ preventScroll: true });
-							setExpanded(false);
-						} }, "✎ 自由行动（直接在下方输入）")
-
-					),
 					panel.choices && panel.choices.length ? h("button", { className: "dsh-tavern-question-primary", disabled: selected < 0, onClick: function () {
 						if (selected < 0) return;
 						const item = panel.choices[selected];
