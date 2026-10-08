@@ -13,6 +13,8 @@ function str(value) {
 /** Own the preset library's reads, source mappings, selection and legacy migrations.
  * Editors/compilers still own their existing formats; raw documents are never rewritten here.
  */
+const PLANS_RETIRED_AT = Date.parse('2026-08-28T00:00:00+08:00')
+
 export function createPresetLibrary({ resources: fileResources, state: profileData, prepareImport: prepareTextImport, logger = console }) {
   const readJson = function (path) { return profileData.readJson(path) }
   async function readPreset(presetPath) {
@@ -131,48 +133,20 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
     await bypassPlans.activate('')
   }
 
-  async function migrateLegacyChatPreset(chat) {
-    if (!chat || str(chat.bypassPlanId) !== '') return false
-    const path = str(chat.runtimePresetPath) || str(chat.runtimePresetSnapshot && chat.runtimePresetSnapshot.presetPath)
-    if (path === '') return false
-    const snapshot = chat.runtimePresetSnapshot && typeof chat.runtimePresetSnapshot === 'object' ? chat.runtimePresetSnapshot : {}
-    const selectedKeys = Array.from(new Set((snapshot.sources || []).map(function (source) { return str(source && source.entryKey) }).filter(Boolean)))
-    let plan = null
-    const existingPlans = await bypassPlans.list()
-    plan = existingPlans.find(function (item) {
-      if (str(item.source && item.source.presetPath) !== path) return false
-      const keys = item.entries.filter(function (entry) { return entry.enabled && !entry.systemManaged }).map(function (entry) { return entry.entryKey })
-      return JSON.stringify(keys.slice().sort()) === JSON.stringify(selectedKeys.slice().sort())
-    }) || null
-    if (plan === null) {
-      const name = '旧对话 · ' + (str(chat.cardName) || '未命名') + ' · ' + str(chat.id).slice(-6)
-      const preset = await readPreset(path)
-      const document = await readPresetDocument(path)
-      if (preset && document) {
-        const selectedRegexKeys = Array.from(new Set((snapshot.regexSources || []).map(function (source) { return str(source && source.regexKey) }).filter(Boolean)))
-        plan = await bypassPlans.extract({ name, sourcePresetPath: path, entryKeys: selectedKeys, regexKeys: selectedRegexKeys })
-      } else {
-        const entries = []
-        for (const phase of ['front', 'middle', 'back']) {
-          for (const entry of (snapshot[phase] && snapshot[phase].entries || [])) {
-            entries.push(Object.assign({}, entry, {
-              entryKey: str(entry.id || entry.entryKey), identifier: str(entry.source && entry.source.identifier),
-              enabled: true, injectable: str(entry.content).trim() !== '', phase
-            }))
-          }
-        }
-        plan = await bypassPlans.importPlan({
-          name,
-          source: { presetName: (path.split('/').pop() || path).replace(/\.json$/i, ''), presetPath: path, presetDigest: '' },
-          entries,
-          regexScripts: snapshot.regexScripts || [],
-          compatibilitySettings: {}
-        })
-      }
-    }
-    chat.bypassPlanId = plan.id
-    chat.runtimePresetPath = ''
-    chat.runtimePresetSnapshot = await bypassPlans.snapshot(plan.id)
+  // Games started after bypass plans were retired never chose a plan. A startup
+  // migration used to bind them to an old plan anyway, freezing them on stale preset
+  // text that no longer followed edits (#166); return them to their source preset.
+  async function restoreRetiredPlanChat(chat) {
+    if (!chat || str(chat.bypassPlanId) === '' || !(Number(chat.createdAt) >= PLANS_RETIRED_AT)) return false
+    const plan = (await bypassPlans.list()).find(function (item) { return item.id === chat.bypassPlanId })
+    const path = str(plan && plan.source && plan.source.presetPath)
+    if (path === '' || !await readPreset(path)) return false
+    let snapshot = null
+    try { snapshot = await runtimePresets.fullSnapshot(path) } catch (error) { logger.warn('dsh-tavern: 对话预设恢复失败', chat.id, error) }
+    if (!snapshot) return false
+    chat.bypassPlanId = ''
+    chat.runtimePresetSnapshot = snapshot
+    chat.runtimePresetPath = str(snapshot.presetPath) || path
     return true
   }
   // Inspecting, converting and parsing a multi-MB preset dominates the catalog; the
@@ -280,6 +254,6 @@ export function createPresetLibrary({ resources: fileResources, state: profileDa
   }
   return Object.freeze({ read: readPreset, readDocument: readPresetDocument, detail,
     catalog, select, import: importPreset, export: exportPreset, preview: previewPreset,
-    updateEntry, updateRegex, moveEntry, migrate, migrateChat: migrateLegacyChatPreset,
+    updateEntry, updateRegex, moveEntry, migrate, restoreChat: restoreRetiredPlanChat,
     editor: presetEditor, runtime: runtimePresets, plans: bypassPlans })
 }

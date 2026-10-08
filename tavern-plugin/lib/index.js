@@ -3483,18 +3483,18 @@ export async function apply(ctx) {
       try { await recoverRegeneration(row.id) }
       catch (error) { console.error('dsh-tavern: 恢复正文重新生成失败', row.id, error?.message || error) }
       // Startup needs header metadata, not every historical message. The window
-      // is read-only: only materialize a writable Chat when legacy migration is
-      // actually eligible. Never write this partial projection back to storage.
+      // is read-only: only materialize a writable Chat when it is bound to a
+      // retired bypass plan. Never write this partial projection back to storage.
       const window = await chatPersistence.readWindow(row.id, { limit: 1, includeCheckpoints: true })
       let chat = window ? window.chat : await readChat(row.id)
       if (chat === undefined) continue
       activeChatIds.push(row.id)
       try {
-        if (str(chat.bypassPlanId) === '' && (str(chat.runtimePresetPath) || str(chat.runtimePresetSnapshot?.presetPath))) {
+        if (str(chat.bypassPlanId) !== '') {
           if (window) chat = await readChat(row.id)
-          if (await presetLibrary.migrateChat(chat)) await writeChat(chat)
+          if (await presetLibrary.restoreChat(chat)) await writeChat(chat)
         }
-      } catch (error) { console.warn('dsh-tavern: 旧对话预设条目配置迁移失败', chat.id, error) }
+      } catch (error) { console.warn('dsh-tavern: 对话预设恢复失败', chat.id, error) }
       await syncChatSummary(chat)
     }
     await foregroundHandoff.recover(activeChatIds)

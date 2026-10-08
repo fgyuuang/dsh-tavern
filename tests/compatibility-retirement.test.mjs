@@ -11,9 +11,9 @@ test('启动恢复包含兼容与普通会话', async () => {
   const calls = []
   const context = {
     recoverRegeneration: async () => {}, str: value => String(value || ''),
-    chatPersistence: { readWindow: async id => ({ chat: { ...chats.find(chat => chat.id === id), runtimePresetPath: 'preset' } }) },
+    chatPersistence: { readWindow: async id => ({ chat: { ...chats.find(chat => chat.id === id), bypassPlanId: 'plan' } }) },
     readChat: async id => chats.find(chat => chat.id === id),
-    presetLibrary: { migrateChat: async chat => { calls.push(chat.id); return false } },
+    presetLibrary: { restoreChat: async chat => { calls.push(chat.id); return false } },
     syncChatSummary: async () => {},
     foregroundHandoff: { recover: async ids => { context.foreground = ids } },
     candidateTasks: { recover: async ids => { context.background = ids } },
