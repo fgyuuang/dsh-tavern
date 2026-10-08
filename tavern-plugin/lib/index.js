@@ -112,7 +112,7 @@ import { createSessionStablePrefixStorage, ensureSessionStablePrefix, readSessio
 import { waitForWritableSession } from './domain/agent-readiness.js'
 import { createCardDeletion } from './domain/card-deletion.js'
 import { createCardOrganization } from './domain/card-organization.js'
-import { orderCardsByNewestImport } from './domain/card-list-order.js'
+import { countGamesByCard, orderCardsForLibrary } from './domain/card-list-order.js'
 import { createCardPreparation } from './domain/card-preparation.js'
 import { withGlobalRegexScripts, composeTavernRegexScripts } from './domain/card-extension-reading.js'
 import { projectCardOpeningPreviews } from './domain/card-opening-previews.js'
@@ -1004,7 +1004,8 @@ export async function apply(ctx) {
         }
       }
     }))
-    return await cardOrganization.project(orderCardsByNewestImport(cards))
+    const gameCounts = countGamesByCard(await conversationRegistry.list().catch(() => []))
+    return await cardOrganization.project(orderCardsForLibrary(cards, { gameCounts }))
   }
   async function resourceBindingProjection() {
     const cards = await listCards()
