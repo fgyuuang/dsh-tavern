@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "revision": "460488a7f9e3884df60f417d44f13fb854cb2e8d",
-  "releaseSequence": 550,
+  "revision": "1d41305030185447a3138d598e74ba42f7a05092",
+  "releaseSequence": 551,
   "version": "2.5.0",
   "files": [
     {
@@ -451,13 +451,13 @@
     },
     {
       "path": "tavern-plugin/lib/client-assets/tavern.css",
-      "sha256": "43912c63a732c6a667134a3aebd0a0dcd195424af83e472b11058cb2fafb00b6",
-      "size": 244654
+      "sha256": "d4a3909832407923ad910864f5cae892d1af43cbf3162a9dab42d3f753370e17",
+      "size": 245941
     },
     {
       "path": "tavern-plugin/lib/client.js",
-      "sha256": "84b5c12220c3fb06d687986c9b7fa9dccce9d03c93692c66dd31a12eee4b01a5",
-      "size": 1621957
+      "sha256": "6ba36365e111cfe4f1e6f3ea2f1c4d717ea53adeac0baf52b17aaac11e1c5692",
+      "size": 1623187
     },
     {
       "path": "tavern-plugin/lib/cordis-inspect.js",
@@ -1451,8 +1451,8 @@
     },
     {
       "path": "tavern-plugin/lib/domain/script-continuity.js",
-      "sha256": "92f068c1462e0875a14c31e8f4f5db154f2d2a35377ddd5385da12841eab2368",
-      "size": 19087
+      "sha256": "55d3f3d3b10716bcbb966ea42eaad570f44ab4a649c5f109f09388f436c7629f",
+      "size": 19120
     },
     {
       "path": "tavern-plugin/lib/domain/script-layout.js",
@@ -4446,8 +4446,8 @@
     },
     {
       "path": "tavern-plugin/src/client/features/play-controls.js",
-      "sha256": "bb862e1fd5cc6caa8511f56b8ae21effd21e84800896c67a78c3045d74c3fc38",
-      "size": 105257
+      "sha256": "85001f05592c7dbade12d5d4d7a83a836979eec78c2dbf1e04578869133d07c4",
+      "size": 104766
     },
     {
       "path": "tavern-plugin/src/client/features/plugin-extensions.js",
@@ -4786,8 +4786,8 @@
     },
     {
       "path": "tavern-plugin/src/client/script-navigation.js",
-      "sha256": "a70e72531128fd18169281f5d6fabcf59efcacd96f9d54fde86c1ac939e52f53",
-      "size": 7966
+      "sha256": "3837441ef0ec8fda9e34e821561452f17ffab348c8edadf0919d00bb4623f157",
+      "size": 8343
     },
     {
       "path": "tavern-plugin/src/client/stylesheet.js",
