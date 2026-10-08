@@ -14,17 +14,32 @@ const output = {
 
 function str(value) { return typeof value === 'string' ? value : '' }
 function clip(value, limit) { return str(value).slice(0, limit) }
+const DRAFT_READ_CHARS = 8000
 
-function turnReport(chat, identity) {
+function turnReport(chat, identity, draftOffset = 0) {
   const operation = chat.timeline.operations[identity.operationId]
   const recent = (Array.isArray(chat.messages) ? chat.messages : []).slice(-6).map(message => ({
     role: str(message.role), text: clip(message.sourceText || message.text, 1000)
   }))
+  const draft = dreamSikeDraftView(chat)
+  const currentDraft = draft?.operationId === identity.operationId && draft.branchId === identity.branchId
+    && draft.turn === identity.turn && draft.status !== 'stale' ? draft : null
+  if (!Number.isSafeInteger(draftOffset) || draftOffset < 0 || draftOffset > (currentDraft?.text.length || 0)) {
+    throw new Error('草稿读取位置已超出当前正文，请从 0 重新读取')
+  }
+  const draftEnd = Math.min((currentDraft?.text.length || 0), draftOffset + DRAFT_READ_CHARS)
   return JSON.stringify({
     turn: identity.turn, card: str(chat.cardName), playerAction: clip(operation.userText, 3000),
     posture: clip(chat.posture, 1000), recent,
     worldBook: clip(chat.preparedWorldBookContext, 4000),
     state: clip(JSON.stringify(chat.variables || {}), 2500),
+    draft: currentDraft ? {
+      status: currentDraft.status, phase: currentDraft.phase, version: currentDraft.version,
+      revisionCount: currentDraft.revisionCount, checks: currentDraft.checks,
+      textLength: currentDraft.text.length, textOffset: draftOffset,
+      text: currentDraft.text.slice(draftOffset, draftEnd),
+      nextOffset: draftEnd < currentDraft.text.length ? draftEnd : null
+    } : null,
     next: '需要更多细节时调用世界书搜索和历史召回工具；草稿提交前使用检查工具。'
   })
 }
@@ -60,11 +75,11 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   tools.register(defineTool({
     name: 'sike_read_turn',
-    description: '读取当前回合的玩家行动、最近正文、场景与小型状态摘要。需要深入资料时再使用世界书和历史召回工具。',
-    parameters: {}, output, isConcurrencySafe: () => false,
-    async execute(_args, exec) {
+    description: '读取当前回合的玩家行动、最近正文、场景和已保存草稿。长草稿按 nextOffset 继续读取；需要深入资料时再使用世界书和历史召回工具。',
+    parameters: { draftOffset: { type: 'integer', description: '长草稿续读位置；首次读取省略或填 0' } }, output, isConcurrencySafe: () => false,
+    async execute(args, exec) {
       const { chat, identity } = await resolve(exec)
-      return { report: turnReport(chat, identity), draft: dreamSikeDraftView(chat) }
+      return { report: turnReport(chat, identity, args.draftOffset || 0), draft: dreamSikeDraftView(chat) }
     }
   }))
 

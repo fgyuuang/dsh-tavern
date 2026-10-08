@@ -122,6 +122,10 @@ test('原生 defineTool 注册五个草稿工具，读取、起草、检查、�
 
   const put = await registered.get('sike_put_draft').execute({ text: '门向内开了。' }, exec)
   assert.equal(put.draft.version, 1)
+  const modelRead = await registered.get('sike_read_turn').execute({}, exec)
+  const visibleDraft = JSON.parse(registered.get('sike_read_turn').output.render({}, modelRead)[0].text).draft
+  assert.deepEqual({ status: visibleDraft.status, version: visibleDraft.version, text: visibleDraft.text },
+    { status: 'draft', version: 1, text: '门向内开了。' })
   const firstCheck = await registered.get('sike_check_draft').execute({ expectedVersion: 1 }, exec)
   assert.deepEqual(firstCheck.draft.checks.issues, [])
   const patch = await registered.get('sike_patch_draft').execute({ expectedVersion: 1, find: '向内', replacement: '悄然' }, exec)
@@ -143,4 +147,29 @@ test('原生 defineTool 注册五个草稿工具，读取、起草、检查、�
   ])
   assert.equal(published.length, writes.length)
   assert.equal(registered.get('sike_ready_draft').output.render({}, ready)[0].type, 'text')
+})
+
+test('失败回合恢复后模型能读取草稿版本、检查状态和分页正文', async () => {
+  const { chat, identity } = fixture()
+  const text = '甲'.repeat(8200)
+  putDreamSikeDraft(chat, identity, text, 10)
+  checkDreamSikeDraft(chat, identity, 1, 20)
+  const registered = new Map()
+  registerDreamSikeTools({
+    tools: { register(tool) { registered.set(tool.name, tool) } },
+    async chatForSession() { return chat },
+    async updateChat() { throw new Error('读取不应写入草稿') },
+    activeTurnOf(exec) { return exec.agent.phase.turn }
+  })
+  const exec = { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 5 } } }
+  const tool = registered.get('sike_read_turn')
+  const first = JSON.parse(tool.output.render({}, await tool.execute({}, exec))[0].text).draft
+  assert.equal(first.version, 1)
+  assert.equal(first.status, 'draft')
+  assert.deepEqual(first.checks.issues, [])
+  assert.equal(first.text.length, 8000)
+  assert.equal(first.nextOffset, 8000)
+  const last = JSON.parse(tool.output.render({}, await tool.execute({ draftOffset: first.nextOffset }, exec))[0].text).draft
+  assert.equal(last.text, '甲'.repeat(200))
+  assert.equal(last.nextOffset, null)
 })
