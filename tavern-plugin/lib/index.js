@@ -735,7 +735,7 @@ export async function apply(ctx) {
   }
   const presetLibrary = createPresetLibrary({ resources: fileResources, state: profileData, prepareImport: prepareTextImport })
   const { read: readPreset, readDocument: readPresetDocument, preview: previewPreset,
-    import: importPreset, editor: presetEditor, runtime: runtimePresets, plans: bypassPlans } = presetLibrary
+    import: importPreset, editor: presetEditor, runtime: runtimePresets } = presetLibrary
   let resourceGraph
   async function renameResource(resourcePath, name) { return await resourceGraph.rename(resourcePath, name) }
   async function deleteLibraryResource(resourcePath, expectedKind) {
@@ -3753,49 +3753,6 @@ export async function apply(ctx) {
         const preview = await previewPreset(args && args.path, args && args.orderGroupIndex)
         if (preview === undefined) throw new Error('预设不存在: ' + (args && args.path))
         return { preview }
-      }
-      case 'extractBypassPlan': {
-        return { plan: await bypassPlans.extract({
-          id: args && args.id,
-          name: args && args.name,
-          sourcePresetPath: args && args.sourcePresetPath,
-          entryKeys: args && args.entryKeys,
-          regexKeys: args && args.regexKeys,
-          compatibleModels: args && args.compatibleModels
-        }) }
-      }
-      case 'activateBypassPlan': {
-        await bypassPlans.activate(args && args.id || '')
-        return { activePlanId: args && args.id || '' }
-      }
-      case 'getBypassPlan': return { plan: await bypassPlans.get(args && args.id) }
-      case 'importBypassPlan': {
-        const payload = args && args.payload && typeof args.payload === 'object' ? args.payload : {}
-        const text = str(payload.text)
-        if (text.trim() === '') throw new Error('旧版预设条目配置文件为空')
-        let document
-        try { document = JSON.parse(text) } catch { throw new Error('旧版预设条目配置文件不是有效的 JSON') }
-        return { plan: await bypassPlans.importPackage(document) }
-      }
-      case 'exportBypassPlan': {
-        const document = await bypassPlans.exportPlan(args && args.id)
-        const safeName = str(document.plan && document.plan.name || '预设条目配置').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || '预设条目配置'
-        return { name: safeName + '.dsh-bypass-plan.json', text: JSON.stringify(document, null, 2) }
-      }
-      case 'toggleBypassPlanEntry': {
-        await bypassPlans.toggleEntry({ id: args && args.id, entryKey: args && args.entryKey, enabled: args && args.enabled === true })
-        return { plan: await bypassPlans.get(args && args.id) }
-      }
-      case 'toggleBypassPlanRegex': {
-        await bypassPlans.toggleRegex({ id: args && args.id, regexKey: args && args.regexKey, enabled: args && args.enabled === true })
-        return { plan: await bypassPlans.get(args && args.id) }
-      }
-      case 'setBypassPlanCompatibleModels': return { plan: await bypassPlans.setCompatibleModels({ id: args && args.id, compatibleModels: args && args.compatibleModels }) }
-      case 'renameBypassPlan': return { plan: await bypassPlans.rename(args && args.id, args && args.name) }
-      case 'copyBypassPlan': return { plan: await bypassPlans.copy(args && args.id, args && args.name) }
-      case 'deleteBypassPlan': {
-        await bypassPlans.remove(args && args.id)
-        return { deleted: true }
       }
       case 'renameResource': return { resource: await renameResource(args && args.path, args && args.name) }
       case 'deleteResource': return await deleteResource(args && args.path)
