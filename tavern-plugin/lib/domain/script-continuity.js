@@ -260,7 +260,7 @@ export function createScriptContinuity() {
     }
 
     if (event.kind === 'manual-focus') {
-      if (state.prepared !== null) throw new Error('当前剧本回合尚未提交，不能调整下一轮游标')
+      if (state.prepared !== null) throw new Error('这一轮还没写完，请稍后再更改起点')
       if (!Number.isSafeInteger(event.cursor) || event.cursor < 1 || event.cursor > chunks.length) throw new Error('请选择有效的剧本块号')
       const next = event.cursor - 1
       const changed = next !== state.cursor || state.sourceOffset !== chunkOffsets(chunks)[next]
@@ -270,7 +270,7 @@ export function createScriptContinuity() {
     }
 
     if (event.kind === 'focus') {
-      if (state.prepared !== null) throw new Error('当前剧本回合尚未提交，不能调整下一轮游标')
+      if (state.prepared !== null) throw new Error('这一轮还没写完，请稍后再更改起点')
       if (chunks.length === 0) return { state, changed: false }
       const raw = Number(event.cursor)
       if (!Number.isFinite(raw) || raw < 1) return { state, changed: false }
@@ -283,7 +283,7 @@ export function createScriptContinuity() {
     }
 
     if (event.kind === 'end') {
-      if (state.prepared !== null) throw new Error('当前剧本回合尚未提交，不能结束剧本游标')
+      if (state.prepared !== null) throw new Error('这一轮还没写完，请稍后再结束剧本')
       const changed = state.cursor !== chunks.length
       state.cursor = chunks.length
       state.sourceOffset = chunkOffsets(chunks).at(-1)
