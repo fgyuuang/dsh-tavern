@@ -13892,7 +13892,8 @@ function bindTavernFontZoom(node, win) {
 			return React.createElement(React.Fragment, null,
 				React.createElement("button", { type: "button", className: "dsh-tavern-choice-trigger", title: unavailable || (!props.turn ? "请先生成一段正文" : !state ? "正在读取生图状态…" : state.error || undefined), disabled: Boolean(unavailable) || !state || !state.key || props.running || busy || working || state.recovery === "save" || state.versions && state.versions.length > 0, onClick: generate }, busy ? "整理画面…" : working ? sceneImageStageLabel(state) : state && state.recovery === "save" ? "图片待保存" : state && state.outcome === "unconfirmed" ? state.providerTask ? "查询原任务" : "重新生图" : state && state.status === "failed" && !state.versions.length ? "重试生图" : "生图"),
 				unavailable ? React.createElement("span", { role: "status", className: "dsh-tavern-settings-desc" }, unavailable) : null,
-				(error || state && state.error) ? React.createElement("span", { role: "alert", className: "dsh-tavern-settings-error" }, error || state.error) : null
+				// The saved failure already shows under the illustration; only report this click's own error here.
+				error && error !== (state && state.error) ? React.createElement("span", { role: "alert", className: "dsh-tavern-settings-error" }, error) : null
 			);
 		}
 		function SceneImageSettings() {
