@@ -103,7 +103,9 @@ foreach ($line in $changes) {
     if ($inBase) {
         if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or -not $inventorySet.Contains($relative)) { throw "基线文件缺失或不在安装清单：$relative" }
         $baseBlob = [string](@(Invoke-RepoGit @('rev-parse', "${base}:$relative"))[0])
-        $actualBlob = [string](@(Invoke-RepoGit @('hash-object', '--no-filters', '--', $target))[0])
+        # Compare with repository text attributes; Windows installs can retain CRLF.
+        # The original byte hash below still guards backup, replacement and rollback.
+        $actualBlob = [string](@(Invoke-RepoGit @('hash-object', '--path', $relative, '--', $target))[0])
         if ($actualBlob -ne $baseBlob) { throw "安装文件已偏离指定基线：$relative" }
         $originalSha = Get-Sha $target
     } elseif ((Test-Path -LiteralPath $target) -or $inventorySet.Contains($relative)) { throw "新增路径已经存在或列入安装清单：$relative" }
