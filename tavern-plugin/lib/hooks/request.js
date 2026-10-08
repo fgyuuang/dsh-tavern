@@ -27,6 +27,12 @@ export function registerRequestHooks({
   ctx.on('agent/request', async function (payload, next) {
     const sessionId = payload.agent && payload.agent.session ? payload.agent.session.id : ''
     if (sessionId !== '') requestCoordinates.set(sessionId, { turn: payload.turn, step: payload.step })
+    if (sessionId !== '' && Number(payload.step) > 12 && !backgroundAgentRunner.owns(sessionId)) {
+      const chat = await chatForSession(sessionId)
+      if (chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')) {
+        throw new Error('梦境思客DSH本回合已达到 12 个模型执行步骤，草稿已保留')
+      }
+    }
     return await next()
   })
 

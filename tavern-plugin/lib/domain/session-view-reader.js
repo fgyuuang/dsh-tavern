@@ -3,10 +3,13 @@ import { projectSceneImageState, projectChatBackgroundConfig } from './chat-sess
 function identity(chat) {
   const mode = chat.mode || 'story'
   return { revision: Number(chat._storageRevision) || 0, cardPath: String(chat.cardPath ?? ''),
-    cardContextRevision: Number(chat.cardContextRevision) || 0, mode, isCard: mode === 'card' }
+    cardContextRevision: Number(chat.cardContextRevision) || 0,
+    playPresetRevision: Number(chat.playPresetRevision) || 0,
+    helperLifecycleRevision: Number(chat.tavernHelperLifecycleRevision) || 0,
+    mode, isCard: mode === 'card' }
 }
 function matches(cached, next) {
-  return cached && ['cardPath', 'cardContextRevision', 'mode', 'isCard', 'resourceVersion'].every(key => cached[key] === next[key])
+  return cached && ['cardPath', 'cardContextRevision', 'playPresetRevision', 'helperLifecycleRevision', 'mode', 'isCard', 'resourceVersion'].every(key => cached[key] === next[key])
 }
 function canProjectDirty(previous, chat, indices, changedHeaderFields) {
   // A deferred resource must never retain a capability for an outdated snapshot.

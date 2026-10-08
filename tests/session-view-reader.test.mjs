@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createSessionViewReader } from '../tavern-plugin/lib/domain/session-view-reader.js'
+import { projectChatSessionState } from '../tavern-plugin/lib/domain/chat-session-state.js'
 const gate=()=>{let resolve;const promise=new Promise(done=>{resolve=done});return {promise,resolve}}
 function fixture() {
   let chat={id:'c',sessionId:'s',mode:'story',cardPath:'card',_storageRevision:1,messages:[{role:'assistant',text:'one'}]}
@@ -88,4 +89,41 @@ test('a browser that scrolled into older floors gets a longer window, not a comp
  await reader.response({sessionId:'s',viewSync:1,openingWindow:1,historyFrom:360})
  await reader.response({sessionId:'s',viewSync:1,openingWindow:1})
  assert.deepEqual(requested,[360,undefined])
+})
+
+for (const changedField of ['playPresetRevision', 'tavernHelperLifecycleRevision']) {
+  test(`${changedField} change rebuilds the complete view and drops scripts from the old preset`, async () => {
+    const f = fixture()
+    f.chat = { ...f.chat, playPresetRevision: 0, tavernHelperLifecycleRevision: 1, scriptIds: ['card-script', 'old-preset-script'] }
+    f.deps.project.full = async chat => {
+      f.calls.full++
+      return { chatId: chat.id, tavernHelper: { messages: structuredClone(chat.messages) }, tavernHelperScripts: chat.scriptIds.slice() }
+    }
+    f.deps.project.dirty = async (_chat, previous) => {
+      f.calls.dirty++
+      return previous
+    }
+    const first = await f.reader.read('s')
+    assert.deepEqual(first.tavernHelperScripts, ['card-script', 'old-preset-script'])
+    f.chat = { ...f.chat, _storageRevision: 2, [changedField]: f.chat[changedField] + 1, scriptIds: ['card-script'] }
+    f.deps.readViewDelta = async () => ({
+      baseRevision: 1, revision: 2, indices: [], changedHeaderFields: [changedField], chat: structuredClone(f.chat)
+    })
+    const switched = await f.reader.read('s')
+    assert.deepEqual(switched.tavernHelperScripts, ['card-script'])
+    assert.equal(f.calls.full, 2)
+    assert.equal(f.calls.dirty, 0)
+    assert.equal(f.states.at(-1).viewRebuild, 'full')
+    // Repeated reads of the same revision may now reuse the new, correct view.
+    const repeated = await f.reader.read('s')
+    assert.deepEqual(repeated.tavernHelperScripts, ['card-script'])
+    assert.equal(f.calls.cached, 1)
+  })
+}
+
+test('the lightweight state retains both preset and helper lifecycle revisions', () => {
+  const state = projectChatSessionState({ id: 'c', sessionId: 's', mode: 'story', cardPath: 'card',
+    _storageRevision: 2, playPresetRevision: 3, tavernHelperLifecycleRevision: 4, messages: [] })
+  assert.equal(state.playPresetRevision, 3)
+  assert.equal(state.tavernHelperLifecycleRevision, 4)
 })

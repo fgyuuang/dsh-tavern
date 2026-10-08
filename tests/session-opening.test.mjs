@@ -10,7 +10,9 @@ const card = { name: '测试卡', first_mes: '【首页】', alternate_greetings
 const initial = () => ({ id: 'old-chat', sessionId: 'old-session', cardPath: 'card', mode: 'story', messages: [{ role: 'assistant', text: '【首页】', sourceText: '【首页】', greeting: true }], macroState: { userName: '玩家' } })
 
 for (const method of ['saveChat', 'setChatMessage', 'swipe.to']) test('正式首页开场切换进入原生新会话：' + method, async () => {
-  const chat = initial(), original = structuredClone(chat)
+  const chat = initial()
+  chat.playPresetId = 'dream-sike-dsh'
+  const original = structuredClone(chat)
   const sourceBook = { name: '本局世界书', entries: [{ id: 1, name: '选中的核心', content: '规则', enabled: true }] }
   const preparation = createOpeningPreparation({ readCard: async () => card, worldBooks: { bound: async (_path, _card, source) => {
     assert.equal(source.sessionId, 'old-session')
@@ -20,7 +22,7 @@ for (const method of ['saveChat', 'setChatMessage', 'swipe.to']) test('正式首
   const lifecycle = helperClient.createConversationLifecycleModule({
     archiveCurrent: async () => {}, resolveWorkspace: async () => 'workspace', connectWorkspace: async () => { starts++; return 'new-session' },
     waitForSession: async () => {}, ensurePreset: async () => {}, rememberPending: () => {},
-    createChat: async (request, sessionId) => { created = { sessionId, preparation: preparation.resolve(request.preparationId, request.card.path, request.openingId) } },
+    createChat: async (request, sessionId) => { created = { sessionId, playPresetId: request.playPresetId, preparation: preparation.resolve(request.preparationId, request.card.path, request.openingId) } },
     finishOpen: async pending => { opened = pending.sessionId }
   })
   const parent = { postMessage(data) {
@@ -53,6 +55,7 @@ for (const method of ['saveChat', 'setChatMessage', 'swipe.to']) test('正式首
   assert.equal(starts, 1)
   assert.equal(opened, 'new-session')
   assert.equal(created.preparation.openingId, 'alternate:0')
+  assert.equal(created.playPresetId, 'dream-sike-dsh')
   assert.equal(created.preparation.worldbookSnapshot.document.entries[0].enabled, true)
   assert.equal(created.preparation.sourceSessionId, 'old-session')
   assert.deepEqual(chat, original)

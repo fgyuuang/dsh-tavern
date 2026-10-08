@@ -6,6 +6,7 @@ import { rollbackAvailability, hasRollbackMessages, failedTurnReplayAvailability
 import { isRescuedHistoryMessage } from './chat-history-rescue.js'
 import { canUndoRollback } from './surface-restoration.js'
 import { failedErrorTurnStates } from './failed-error-visibility.js'
+import { dreamSikeDraftStatus } from './dream-sike-draft.js'
 
 export function pendingMvuSettlementState(chat) {
   if (Object.hasOwn(chat, 'pendingMvuSettlement')) return chat.pendingMvuSettlement
@@ -26,8 +27,8 @@ export function projectChatSessionState(chat, options = {}) {
   // Legacy timeline inspection migrates a foreground body using its full text.
   if (Object.values(chat.timeline?.operations || {}).some(operation =>
     operation?.kind === 'body' && operation.status === 'foreground-completed')) return { ...copyJsonTree(chat), pendingMvuSettlement }
-  const selected = { pendingMvuSettlement }
-  for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision',
+  const selected = { pendingMvuSettlement, dreamSikeDraftState: dreamSikeDraftStatus(chat) }
+  for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision', 'playPresetId', 'playPresetRevision',
     'backgroundConfigVersion', 'conversationFeaturesVersion', 'disabledWritingSkills', 'contextCompaction', 'updatedAt', 'timeline', 'candidateAgent',
     'cardName', 'requestMode', 'statusBarPlacement', 'webSearchEnabled', 'candidates', 'taskMailbox', 'regenInProgress',
     'settleError', 'scriptState', 'hiddenDshErrorTurns', 'suppressedDshTurns', 'regeneratedDshTurns', 'tavernHelperLifecycleRevision']) {

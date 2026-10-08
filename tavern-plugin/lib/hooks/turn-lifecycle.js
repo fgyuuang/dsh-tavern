@@ -4,9 +4,12 @@ import { prependSystemInstruction } from '../domain/system-append.js'
 import { sessionStablePrefixSections, withCurrentWorldbook } from '../domain/session-stable-prefix.js'
 import { synchronizeBodyEdits } from '../domain/body-editor.js'
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
+import { readDreamSikeDraft } from '../domain/dream-sike-draft.js'
+import { randomUUID } from 'node:crypto'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
+  chatForSession,
   hookChatForSession,
   clearRuntimePresetRequestState,
   contentText,
@@ -41,6 +44,28 @@ export function registerTurnLifecycleHooks({
     if (userText === '' && !inputAttachments(userContent).length) return
     const requestId = requestIdForTurn(session, payload.turn)
     const assistant = assistantResultForTurn(session, payload.turn)
+    const chat = await chatForSession(sessionId)
+    const dreamMode = chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')
+    const draft = dreamMode ? readDreamSikeDraft(chat) : null
+    const ready = draft?.status === 'ready' && draft.turn === payload.turn && draft.sessionId === sessionId
+      && draft.branchId === chat.timeline?.branchId && draft.storyRevision === chat.timeline?.revision
+    if (dreamMode && (!ready || !assistant?.text)) {
+      const step = Math.max(0, Number(payload.agent?.phase?.step) || 0)
+      if (step < 12 && typeof payload.agent?.steer === 'function') {
+        payload.agent.steer({
+          id: randomUUID(), role: 'user',
+          content: [{ type: 'text', text: ready
+            ? '草稿已确认。请结束本回合，输出一句简短的完成提示；正式正文由酒馆从已确认草稿提交。'
+            : '本回合尚未确认正文草稿。请继续使用 sike_put_draft、sike_check_draft 和 sike_ready_draft；必要时用 sike_patch_draft 修订。不要直接结束。' }],
+          source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'dream-sike-continue' }
+        })
+        return
+      }
+      const message = ready ? '草稿已确认，但模型没有结束回复；草稿已保留，请继续处理。'
+        : '梦境思客DSH未在 12 个执行步骤内确认正文；草稿已保留，请继续处理。'
+      await turnOrchestrator.recordFailure({ sessionId, turn: payload.turn, requestId, code: 'dream-sike-incomplete', message })
+      throw new Error(message)
+    }
     if (assistant === null || assistant.text === '') {
       const reasoningOnly = assistant !== null && assistant.reasoningOnly === true
       const message = reasoningOnly
@@ -61,7 +86,7 @@ export function registerTurnLifecycleHooks({
       requestId,
       userText,
       userContent,
-      assistantText: assistant === null ? '' : assistant.text
+      assistantText: dreamMode ? draft.text : (assistant === null ? '' : assistant.text)
     })
     if (saved.reply) replaceAssistantReply(session, assistant, saved.reply.sessionText)
   })

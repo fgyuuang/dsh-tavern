@@ -1,4 +1,5 @@
 import { cardOpeningSwipes } from './card-openings.js'
+import { normalizePlayPresetId } from './dream-sike-mode.js'
 
 /** Only an untouched greeting may hand off to a new native play session. */
 export function sessionOpeningDescriptor(chat, card) {
@@ -20,5 +21,6 @@ export async function prepareSessionOpening({ chat, card, swipeId, message, prep
   const openingId = descriptor.openingIds[swipeId]
   preparation.select(draft.id, openingId)
   return { card: { path: chat.cardPath, name: card.name }, targetMode: chat.mode,
-    preparationId: draft.id, openingId, userName: chat.macroState?.userName || '你', requestMode: chat.requestMode || 'dsh' }
+    preparationId: draft.id, openingId, userName: chat.macroState?.userName || '你', requestMode: chat.requestMode || 'dsh',
+    playPresetId: normalizePlayPresetId(chat.playPresetId) }
 }

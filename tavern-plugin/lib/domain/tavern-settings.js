@@ -1,5 +1,6 @@
 import { compactionPolicy } from './auto-compaction.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
+import { normalizePlayPresetId, setDefaultPlayPreset } from './dream-sike-mode.js'
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -42,6 +43,7 @@ export function applyTavernSettingsPatch(current, patch) {
     const disabled = Array.isArray(next.defaultDisabledWritingSkills) ? next.defaultDisabledWritingSkills : []
     next.defaultDisabledWritingSkills = enabled ? disabled.filter(value => value !== name) : [...new Set([...disabled, name])]
   }
+  if (Object.hasOwn(input, 'defaultPlayPresetId')) Object.assign(next, setDefaultPlayPreset(next, input.defaultPlayPresetId))
   for (const name of ['defaultForegroundModel', 'defaultBackgroundModel', 'defaultWorkbenchModel']) {
     if (!Object.hasOwn(input, name)) continue
     const selection = normalizeBackgroundModel(input[name])
@@ -117,6 +119,7 @@ export function presentTavernSettings(document, defaults) {
   })
   const story = prompts.find(function (item) { return item.name === 'story' }) || { text: '', customized: false }
   return {
+    defaultPlayPresetId: normalizePlayPresetId(object(document).defaultPlayPresetId),
     defaultPlaySettings: normalizePlayDefaults(object(document).defaultPlaySettings),
     defaultDisabledWritingSkills: Array.isArray(object(document).defaultDisabledWritingSkills) ? object(document).defaultDisabledWritingSkills.filter(name => typeof name === 'string') : [],
     defaultForegroundModel: normalizeBackgroundModel(object(document).defaultForegroundModel),

@@ -10,6 +10,7 @@ import { createTurnOrchestrator } from '../tavern-plugin/lib/domain/turn-orchest
 import { createForegroundFrameBuilder, foregroundFrameText } from '../tavern-plugin/lib/domain/agent-input-frame.js'
 import { createContextPlanner } from '../tavern-plugin/lib/domain/context-planner.js'
 import { createForegroundFrameSessionAdapter } from '../tavern-plugin/lib/domain/foreground-frame-session-adapter.js'
+import { checkDreamSikeDraft, dreamSikeTurnIdentity, putDreamSikeDraft, readyDreamSikeDraft } from '../tavern-plugin/lib/domain/dream-sike-draft.js'
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value)
@@ -32,6 +33,7 @@ function harness(mode, options = {}) {
   let card = cards.project(cardWorkspace)
   let chat = {
     id: 'chat-1', cardPath: options.draft ? '' : 'cards/阿芙拉.json', cardName: options.draft ? '卡片工作台' : card.name, mode,
+    sessionId: 'session-1', ...(options.playPresetId ? { playPresetId: options.playPresetId } : {}),
     messages: [], posture: '站在窗边', guides: [], nativeCommits: {},
     ledger: options.ledger || null,
     preparedWorldBookContext: options.preparedWorldBookContext || '',
@@ -212,6 +214,56 @@ test('同一 DSH rpcId 即使被重放到新回合也不会再次推进酒馆状
   assert.equal(Object.values(run.timeline.inspect({ chat: run.chat() }).operations).some(function (item) {
     return Number(item.turn) === 3
   }), false)
+})
+
+test('梦境思客DSH仅提交已确认草稿一次，并标记草稿完成', async () => {
+  const run = harness('story', { playPresetId: 'dream-sike-dsh' })
+  const input = { sessionId: 'session-1', turn: 2, requestId: 'sike-rpc-1', userText: '推开窗' }
+  await run.orchestrator.prepare(input)
+  const chat = run.chat()
+  const identity = dreamSikeTurnIdentity(chat, input.sessionId, input.turn)
+  putDreamSikeDraft(chat, identity, '雨水扑进房间。', 10)
+  checkDreamSikeDraft(chat, identity, 1, 20)
+  readyDreamSikeDraft(chat, identity, 1, 30)
+  assert.equal(chat.messages.length, 0)
+  run.replaceChat(chat)
+
+  const first = await run.orchestrator.finalize({ ...input, assistantText: '雨水扑进房间。' })
+  const duplicate = await run.orchestrator.finalize({ ...input, assistantText: '雨水扑进房间。' })
+  const saved = run.chat()
+  const operations = Object.values(run.timeline.inspect({ chat: saved }).operations)
+  assert.equal(first.saved, true)
+  assert.equal(duplicate.duplicate, true)
+  assert.equal(saved.messages.filter(message => message.role === 'assistant').length, 1)
+  assert.equal(saved.messages.at(-1).text, '雨水扑进房间。')
+  assert.equal(saved.dreamSikeDraft.status, 'committed')
+  assert.equal(operations.filter(item => item.kind === 'body' && item.status === 'completed').length, 1)
+  assert.equal(operations.filter(item => item.kind === 'agent' && item.role === 'settlement').length, 1)
+})
+
+test('梦境思客DSH未确认、过期或与模型末尾文字不符的草稿不提交，也不结算', async () => {
+  for (const state of ['unready', 'stale', 'mismatch']) {
+    const run = harness('story', { playPresetId: 'dream-sike-dsh' })
+    const input = { sessionId: 'session-1', turn: 2, requestId: 'sike-rpc-' + state, userText: '推开窗' }
+    await run.orchestrator.prepare(input)
+    const chat = run.chat()
+    const identity = dreamSikeTurnIdentity(chat, input.sessionId, input.turn)
+    putDreamSikeDraft(chat, identity, '雨水扑进房间。', 10)
+    if (state !== 'unready') {
+      checkDreamSikeDraft(chat, identity, 1, 20)
+      readyDreamSikeDraft(chat, identity, 1, 30)
+      if (state === 'stale') chat.dreamSikeDraft.storyRevision++
+    }
+    run.replaceChat(chat)
+
+    await assert.rejects(run.orchestrator.finalize({ ...input, assistantText: state === 'mismatch' ? '模型另写的结尾。' : '雨水扑进房间。' }), /草稿未确认或已过期/)
+    const saved = run.chat()
+    const operations = Object.values(run.timeline.inspect({ chat: saved }).operations)
+    assert.equal(saved.messages.length, 0, state)
+    assert.equal(Object.keys(saved.nativeCommits).length, 0, state)
+    assert.equal(operations.some(item => item.kind === 'agent' && item.role === 'settlement'), false, state)
+    assert.equal(operations.some(item => item.kind === 'body' && item.status === 'completed'), false, state)
+  }
 })
 
 test('预设中段渲染后进入真实 Frame，并保留存档中的原始宏', async () => {

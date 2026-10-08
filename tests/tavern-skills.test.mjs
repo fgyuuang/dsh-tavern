@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { createTavernSkillModule } from '../tavern-plugin/lib/domain/tavern-skills.js'
 
@@ -13,6 +14,26 @@ async function harness(t) {
   const builtin = path.join(root, 'builtin')
   return { root, user, builtin, skills: createTavernSkillModule({ directory: user, builtInDirectory: builtin }) }
 }
+
+test('extraBuiltInDirectories indexes Dream Sike writing Skills and keeps ordinary builtins on the card role', async t => {
+  const { user, builtin } = await harness(t)
+  const ordinary = path.join(builtin, 'ordinary', 'SKILL.md')
+  await mkdir(path.dirname(ordinary), { recursive: true })
+  await writeFile(ordinary, '---\nname: ordinary\ndescription: ordinary built-in\n---\n\nCard work\n')
+  const dreamRoot = fileURLToPath(new URL('../presets/dream-sike-dsh/skills/', import.meta.url))
+  const skills = createTavernSkillModule({ directory: user, builtInDirectory: builtin, extraBuiltInDirectories: [dreamRoot] })
+  const catalog = await skills.list()
+  assert.ok(catalog.some(skill => skill.name === 'dream-sike-director'))
+  assert.ok(catalog.some(skill => skill.name === 'ordinary'))
+  const director = await skills.read('dream-sike-director')
+  assert.equal(director.source, 'builtin')
+  assert.equal(director.purpose, 'writing')
+  assert.deepEqual(director.agents, ['foreground'])
+  assert.match(director.content, /sike_read_turn/)
+  const cardSkill = await skills.read('ordinary')
+  assert.equal(cardSkill.source, 'builtin')
+  assert.deepEqual(cardSkill.agents, ['card'])
+})
 
 test('写作与后台用途默认分配，旧 Skill 保留卡片用途，停用与重新分配可持久化', async t => {
   const { skills, user, builtin } = await harness(t)

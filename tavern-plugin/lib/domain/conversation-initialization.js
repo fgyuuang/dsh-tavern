@@ -8,6 +8,7 @@ import { createScriptContinuity } from './script-continuity.js'
 import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
 import { normalizeBackgroundTasks, normalizePlayDefaults } from './tavern-settings.js'
+import { normalizePlayPresetId } from './dream-sike-mode.js'
 import { ensureSessionSeedTrajectory } from './session-seed-trajectory.js'
 import { defaultUserPreferenceProfile } from './user-preference-profile.js'
 
@@ -51,6 +52,8 @@ export function createConversationInitialization(options) {
       guides: [],
       bypassPlanId: '',
       runtimePresetSnapshot: null,
+      playPresetId: 'tavern',
+      playPresetRevision: 0,
       cardContextSnapshot: '',
       cardContextSnapshotVersion: 0,
       userProfileEnabled: false,
@@ -82,7 +85,7 @@ export function createConversationInitialization(options) {
     return prepared === undefined ? await presets.fullSnapshot() : prepared
   }
 
-  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, importDraft = false }) {
+  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, importDraft = false }) {
     if (requestMode === 'sillytavern') throw new Error('silly 模式已停用')
     const currentSettings = await settings()
     const defaults = normalizePlayDefaults(currentSettings.defaultPlaySettings)
@@ -146,6 +149,7 @@ export function createConversationInitialization(options) {
     // 再落盘 Tavern 对话，避免失败时留下只有映射、没有原生开场白的半初始化记录。
     const openingTarget = typeof sessionId === 'string' && sessionId !== '' ? await native.wait(sessionId) : undefined
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
+    chat.playPresetId = groupOfMode(chatMode) === 'play' ? normalizePlayPresetId(playPresetId || currentSettings.defaultPlayPresetId) : 'tavern'
     chat.bypassPlanId = runtimePresetSnapshot && runtimePresetSnapshot.planId || ''
     chat.runtimePresetSnapshot = runtimePresetSnapshot
     chat.runtimePresetPath = str(runtimePresetSnapshot && runtimePresetSnapshot.presetPath)

@@ -4,6 +4,7 @@ import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { createEphemeralCompatibilityRequest, isCompatibilityConversationRequest } from './compatibility-request.js'
 import { projectRuntimePresetRequest } from './runtime-preset-lifecycle.js'
 import { markRequestHandled, requestHandledBy } from './request-lineage.js'
+import { DREAM_SIKE_AGENT_PRESET, DREAM_SIKE_AGENT_INSTRUCTION } from './dream-sike-mode.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 
@@ -392,6 +393,7 @@ export function createNativePlayOrchestrationStrategy(options) {
       if (workspace !== '') sections.push({ name: 'tavern:resource-workspace', text: workspace })
     }
     if (mode === 'story' || mode === 'script') {
+      if (input.chat?.playPresetId === DREAM_SIKE_AGENT_PRESET) sections.unshift({ name: 'tavern:dream-sike-agent', text: DREAM_SIKE_AGENT_INSTRUCTION })
       const raw = await options.resolvePreset(input.chat)
       const front = presetFrontSections(resolveRuntimePresetMacros(raw, { charName: input.chat?.cardName, macroState: input.chat?.macroState }).snapshot)
       sections.unshift(...front)

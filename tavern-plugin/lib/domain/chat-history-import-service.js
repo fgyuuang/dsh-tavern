@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { parse as parseYaml } from 'yaml'
 import { parseChatHistory, chatHistoryPreview } from './chat-history-import.js'
 import { buildImportedConversation, appendImportedEvents } from './chat-history-session.js'
+import { normalizePlayPresetId } from './dream-sike-mode.js'
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 // Static initial values only. Executable templates remain the card runtime's responsibility.
@@ -69,13 +70,15 @@ export function createChatHistoryImportService({ initialization, cards, worldBoo
     const path = 'chat-imports/' + input.operationId + '.json'
     let journal = await store.readJson(path)
     if (journal && (journal.identity !== identity || journal.sessionId !== input.sessionId)) throw new Error('同一导入操作不能更换人物卡、内容或 Session')
+    if (journal?.plan?.chat && input.playPresetId && normalizePlayPresetId(journal.plan.chat.playPresetId) !== input.playPresetId) throw new Error('导入使用的 Agent 预设已变化，请沿用原选择')
     const existing = await chats.resolve(input.sessionId)
     if (existing) {
       if (existing.importHistory?.operationId !== input.operationId) throw new Error('导入目标必须是新 Session')
+      if (input.playPresetId && normalizePlayPresetId(existing.playPresetId) !== input.playPresetId) throw new Error('导入使用的 Agent 预设已变化，请沿用原选择')
       return { sessionId: input.sessionId, mode: existing.mode || 'story' }
     }
     if (!journal) {
-      const chat = await initialization.prepareImport({ cardPath: input.cardPath, sessionId: input.sessionId, userName: input.userName || parsed.userName })
+      const chat = await initialization.prepareImport({ cardPath: input.cardPath, sessionId: input.sessionId, userName: input.userName || parsed.userName, playPresetId: input.playPresetId })
       if (input.rescue) {
         chat.mvu = input.rescue.mvuSnapshot ? { ...chat.mvu, enabled: true, owner: 'official', runtime: 'magvarupdate' } : { enabled: false }
         chat.variables = {}
@@ -172,7 +175,7 @@ export function createChatHistoryImportService({ initialization, cards, worldBoo
     async rescue(input) {
       const source = await chats.read(input.sourceChatId)
       if (source?.sessionId === input.sessionId) throw new Error('救援必须使用新的对话')
-      return importPrepared({ ...rescueHistoryInput(source), operationId: input.operationId, sessionId: input.sessionId })
+      return importPrepared({ ...rescueHistoryInput(source), operationId: input.operationId, sessionId: input.sessionId, playPresetId: input.playPresetId })
     }
   }
 }

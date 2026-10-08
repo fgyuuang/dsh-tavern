@@ -5,6 +5,9 @@ import { registerRequestHooks } from './hooks/request.js'
 import { registerModelStreamHooks } from './hooks/model-stream.js'
 import { registerTurnLifecycleHooks } from './hooks/turn-lifecycle.js'
 import { registerGameplayTools } from './tools/gameplay.js'
+import { registerDreamSikeTools } from './tools/dream-sike.js'
+import { dreamSikeDraftView, dreamSikeDraftStatus } from './domain/dream-sike-draft.js'
+import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts } from './domain/dream-sike-mode.js'
 import { registerUserProfileTools } from './tools/user-profile.js'
 import { registerSkillTools } from './tools/skills.js'
 import { registerCardReadingTools } from './tools/card-reading.js'
@@ -157,7 +160,7 @@ import { createPlayChatDebugReference, readPlayChatDebugTurn } from './domain/pl
 import { createPhoneChat } from './domain/phone-chat.js'
 import { createPresetLibrary } from './domain/preset-library.js'
 import { createForegroundOrchestrationStrategies } from './domain/foreground-orchestration-strategies.js'
-import { clearFailedTurnSurface } from './domain/rollback-surface.js'
+import { clearFailedTurnSurface, failedTurnReplayAvailability, replayableFailedTurn } from './domain/rollback-surface.js'
 import { assistantResultForTurn } from './domain/session-turn-result.js'
 import { forkTurnsByMessageId as forkTargetsFromSession } from './domain/conversation-fork-targets.js'
 import { createTavernRetryLimiter } from './domain/tavern-retry-limiter.js'
@@ -429,7 +432,8 @@ export async function apply(ctx) {
   const tavernSkills = createTavernSkillModule({
     directory: dataRoot + '/skills',
     builtInDirectory: sourceRoot + '/presets/tavern/skills',
-    backgroundDirectory: sourceRoot + '/presets/tavern-background/skills'
+    backgroundDirectory: sourceRoot + '/presets/tavern-background/skills',
+    extraBuiltInDirectories: [sourceRoot + '/presets/dream-sike-dsh/skills']
   })
 
   async function skillRoleFor(agent) {
@@ -441,7 +445,8 @@ export async function apply(ctx) {
   }
   async function skillEnabledFor(skill, agent) {
     if (await skillRoleFor(agent) !== 'foreground') return true
-    const chat = await chatHeaderForSession(agent?.session?.id, ['disabledWritingSkills'])
+    const chat = await chatHeaderForSession(agent?.session?.id, ['disabledWritingSkills', 'playPresetId'])
+    if (skill.name.startsWith('dream-sike-') && chat?.playPresetId !== DREAM_SIKE_AGENT_PRESET) return false
     return !(chat?.disabledWritingSkills || []).map(canonicalTavernSkillName).includes(skill.name)
   }
   let invalidateTavernSkills = () => {}
@@ -454,7 +459,8 @@ export async function apply(ctx) {
     invalidateTavernSkills = () => control.invalidate()
     const providers = [
       new FileSystemSkillProvider(ctx, control, { providerName: 'tavern-interactive-files', includeDefaultRoots: false, customSkillDirs: [dataRoot + '/skills'], bundledSkillDir: sourceRoot + '/presets/tavern/skills' }),
-      new FileSystemSkillProvider(ctx, control, { providerName: 'tavern-background-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/tavern-background/skills' })
+      new FileSystemSkillProvider(ctx, control, { providerName: 'tavern-background-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/tavern-background/skills' }),
+      new FileSystemSkillProvider(ctx, control, { providerName: 'dream-sike-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/dream-sike-dsh/skills' })
     ]
     ctx.effect(() => tavernSkills.subscribe(control.invalidate))
     ctx.effect(() => () => Promise.all(providers.map(provider => provider.dispose())))
@@ -665,7 +671,10 @@ export async function apply(ctx) {
     const workspace = chat?.cardDefinitionSnapshot || await readCardWorkspace(cardPath)
     if (workspace === undefined) return undefined
     const extensions = cardPreparation.present({ card: workspace, as: 'card-extensions' })
-    return withGlobalRegexScripts(extensions, await tavernExtensionSettings.read())
+    const result = withGlobalRegexScripts(extensions, await tavernExtensionSettings.read())
+    if (!chat || groupOfMode(chat.mode) !== 'play') return result
+    const presetScripts = resolvePresetHelperScripts(chat.runtimePresetSnapshot, chat.playPresetId)
+    return presetScripts.length ? { ...result, helperScripts: [...(result.helperScripts || []), ...presetScripts] } : result
   }
   async function readScript(scriptOrCardPath) {
     if (str(scriptOrCardPath) === '') return undefined
@@ -1854,6 +1863,8 @@ export async function apply(ctx) {
       chatId: chat.id,
       contextCompaction: chat.contextCompaction || null,
       mode: chat.mode || 'story',
+      playPresetId: normalizePlayPresetId(chat.playPresetId),
+      dreamSikeDraftState: dreamSikeDraftStatus(chat),
       requestMode: chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
       playerName: str(chat.macroState && chat.macroState.userName).trim() || '你',
       userProfile: {
@@ -1960,7 +1971,7 @@ export async function apply(ctx) {
     })
     return result.sort(function (left, right) { return Number(left.turn) - Number(right.turn) })
   }
-  async function startChat(cardPath, sessionId, mode, openingId, userName, requestMode, preparationId, cardTask) {
+  async function startChat(cardPath, sessionId, mode, openingId, userName, requestMode, preparationId, cardTask, playPresetId) {
     // Plain greetings have no interactive preview draft, but need the same
     // game-local worldbook snapshot as scripted openings.
     if (!preparationId && groupOfMode(mode || 'story') === 'play') {
@@ -1971,7 +1982,7 @@ export async function apply(ctx) {
       const source = await chatForSession(preparation.sourceSessionId)
       if (!source || !sessionOpeningDescriptor(source, await readChatCard(source)) || Number(source.tavernHelperLifecycleRevision || 0) !== preparation.sourceLifecycleRevision) throw new Error('原对话已变化，请重新选择开场')
     }
-    return await requestPerformance.stage('initializeConversation', () => conversationInitialization.start({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask }))
+    return await requestPerformance.stage('initializeConversation', () => conversationInitialization.start({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId }))
   }
 
   async function scriptPreviewOf(chat) {
@@ -2008,7 +2019,10 @@ export async function apply(ctx) {
     return forkTargetsFromSession(session, chat?.regeneratedDshTurns)
   }
   function volatileSessionViewFields(chat, activity, changes) {
-    return { ...sessionStateView.volatile(chat, activity, changes), forkTurnsByMessageId: forkTurnsForChat(chat) }
+    return { ...sessionStateView.volatile(chat, activity, changes),
+      playPresetId: normalizePlayPresetId(chat.playPresetId),
+      dreamSikeDraftState: chat.dreamSikeDraftState || dreamSikeDraftStatus(chat),
+      forkTurnsByMessageId: forkTurnsForChat(chat) }
   }
 
   async function projectCachedSessionView(chat, previous, activity) {
@@ -3503,7 +3517,7 @@ export async function apply(ctx) {
     void mvuSettlementReconciler.scan()
   }
   // ---------- 重新生成正文（生成即替换，无确认） ----------
-  const { regenerate: regenBody, replayFailed: replayFailedTurn, recover: recoverRegeneration, rollback: rollbackTurn, undoRollback: undoRollbackTurn } = createRoundHistory({
+  const { regenerate: regenBody, replayFailed: replayFailedTurn, replayActive: replayFailedTurnActive, recover: recoverRegeneration, rollback: rollbackTurn, undoRollback: undoRollbackTurn } = createRoundHistory({
     diagnostics: mvuDiagnostics,
     chats: { read: readChat, readState: taskStateReader.read, stateForSession: taskStateReader.forSession, forSession: chatForSession, readCard: readChatCard,
       readRevision: readChatRevision, write: writeChat, update: updateChat, patch: patchChat,
@@ -3730,18 +3744,58 @@ export async function apply(ctx) {
       case 'deleteWorldBook': return await worldBooks.remove(args && (args.source || args.path))
       case 'listPresets': return await presetLibrary.catalog()
       case 'selectPreset': return await presetLibrary.select(args && args.path)
+      case 'listPlayPresets': {
+        const sessionId = str(args?.sessionId)
+        const chat = sessionId ? await chatForSession(sessionId) : null
+        const settings = await readTavernSettings()
+        return {
+          presets: listPlayPresets({ chat, settings, legacyPresetTitle: chat?.runtimePresetSnapshot?.presetName }),
+          currentPlayPresetId: chat ? normalizePlayPresetId(chat.playPresetId) : null,
+          defaultPlayPresetId: normalizePlayPresetId(settings.defaultPlayPresetId)
+        }
+      }
+      case 'applyPlayPreset': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
+        const foregroundIdle = agentRegistry.get(sessionId)?.phase?.kind !== 'running'
+        const backgroundIdle = !(await sessionActivity(sessionId))?.busy && !tavernScriptDispatch.status(sessionId).busy
+          && !['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) && !chat.regenInProgress
+        const selection = selectPlayPreset(chat, args?.presetId, { foregroundIdle, backgroundIdle, replayIdle: !replayFailedTurnActive(chat.id) })
+        if (!selection.changed) return { playPresetId: selection.presetId, changed: false }
+        const saved = await updateChat(chat.id, current => {
+          if (current.id !== selection.expectedChatId || current._storageRevision !== selection.expectedStorageRevision
+            || agentRegistry.get(sessionId)?.phase?.kind === 'running'
+            || backgroundTasks.activity(current).busy || tavernScriptDispatch.status(sessionId).busy
+             || ['pending', 'running', 'waiting-runtime'].includes(current.settleStatus) || current.regenInProgress
+             || replayFailedTurnActive(current.id)) {
+            throw new Error('本局状态已变化，请等待前后台空闲后重试')
+          }
+          Object.assign(current, selection.patch)
+          return current
+        }, { source: 'play-preset.switch' })
+        tavernScriptDispatch.dispose(sessionId)
+        return { playPresetId: saved.playPresetId, changed: true, nextTurn: true }
+      }
+      case 'setDefaultPlayPreset': {
+        const settings = await updateTavernSettings({ defaultPlayPresetId: args?.presetId })
+        return { defaultPlayPresetId: settings.defaultPlayPresetId }
+      }
       case 'applyConversationPreset': {
         const sessionId = str(args?.sessionId)
         const chat = await chatForSession(sessionId)
         if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
         if (typeof args.path !== 'string') throw new Error('请选择预设')
-        if ((await sessionActivity(sessionId))?.busy || agentRegistry.get(sessionId)?.phase?.kind === 'running') throw new Error('请等待当前生成和后台任务完成后再应用预设')
+        if ((await sessionActivity(sessionId))?.busy || tavernScriptDispatch.status(sessionId).busy || agentRegistry.get(sessionId)?.phase?.kind === 'running') throw new Error('请等待当前生成和后台任务完成后再应用预设')
         const snapshot = args.path === '' ? null : await runtimePresets.fullSnapshot(args.path)
         const saved = await updateChat(chat.id, current => {
           if (current._storageRevision !== chat._storageRevision) throw new Error('当前游戏已变化，请刷新后重试')
           current.runtimePresetSnapshot = snapshot
+          current.runtimePresetPath = snapshot?.presetPath || ''
+          current.tavernHelperLifecycleRevision = (Number(current.tavernHelperLifecycleRevision) || 0) + 1
           return current
         }, { source: 'preset.apply-conversation' })
+        tavernScriptDispatch.dispose(sessionId)
         return { runtimePreset: saved.runtimePresetSnapshot === null ? null : { id: saved.runtimePresetSnapshot.presetPath, name: saved.runtimePresetSnapshot.presetName } }
       }
       case 'getPreset': return { preset: await presetLibrary.detail(args && args.path) }
@@ -3759,7 +3813,9 @@ export async function apply(ctx) {
       case 'deletePreset': return await deletePreset(args && args.path)
       case 'getDefaultWritingSkills': {
         const settings = await readTavernSettings()
-        return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')).map(skill => ({ name: skill.name, description: skill.description, enabled: !settings.defaultDisabledWritingSkills.includes(skill.name) })) }
+        return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')
+          && (settings.defaultPlayPresetId === DREAM_SIKE_AGENT_PRESET || !skill.name.startsWith('dream-sike-')))
+          .map(skill => ({ name: skill.name, description: skill.description, enabled: !settings.defaultDisabledWritingSkills.includes(skill.name) })) }
       }
       case 'setDefaultWritingSkill': {
         const skill = await tavernSkills.read(args?.name)
@@ -3768,9 +3824,11 @@ export async function apply(ctx) {
         return { saved: true }
       }
       case 'getConversationWritingSkills': {
-        const chat = await chatHeaderForSession(str(args?.sessionId), ['disabledWritingSkills'])
+        const chat = await chatHeaderForSession(str(args?.sessionId), ['disabledWritingSkills', 'playPresetId'])
         if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
-        return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')).map(skill => ({ name: skill.name, description: skill.description, enabled: !(chat.disabledWritingSkills || []).map(canonicalTavernSkillName).includes(skill.name) })) }
+        return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')
+          && (chat.playPresetId === DREAM_SIKE_AGENT_PRESET || !skill.name.startsWith('dream-sike-')))
+          .map(skill => ({ name: skill.name, description: skill.description, enabled: !(chat.disabledWritingSkills || []).map(canonicalTavernSkillName).includes(skill.name) })) }
       }
       case 'setConversationWritingSkill': {
         const chat = await chatHeaderForSession(str(args?.sessionId), ['disabledWritingSkills'])
@@ -4022,7 +4080,7 @@ export async function apply(ctx) {
       case 'importChatHistory': return await chatHistoryImporter.import(args || {})
       case 'startChat': {
         try {
-          return { view: await startChat(args && args.path, args && args.sessionId, args && args.mode, args && args.openingId, args && args.userName, args && args.requestMode, args && args.preparationId, args && args.cardTask) }
+          return { view: await startChat(args && args.path, args && args.sessionId, args && args.mode, args && args.openingId, args && args.userName, args && args.requestMode, args && args.preparationId, args && args.cardTask, args && args.playPresetId) }
         } catch (error) {
           console.error('dsh-tavern: 创建对话失败', {
             cardPath: str(args && args.path),
@@ -4075,6 +4133,48 @@ export async function apply(ctx) {
         if(args?.fullView === true)templateHistoryFrom.set(args.sessionId,0)
         else if(Number.isSafeInteger(args?.historyFrom) && args.historyFrom >= 0)templateHistoryFrom.set(args.sessionId,args.historyFrom)
         return sessionViews.response(args || {})
+      }
+      case 'getDraftView': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatHeaderForSession(sessionId, ['dreamSikeDraft', 'dreamSikeResume', 'timeline.branchId', 'timeline.revision', 'timeline.operations', 'playPresetId', 'suppressedDshTurns'])
+        const draft = chat ? dreamSikeDraftView(chat) : null
+        if (draft) {
+          draft.resumable = false
+          const agent = agentRegistry.get(sessionId)
+          const session = agent?.session || sessionStore.get(sessionId)
+          if (chat.playPresetId === DREAM_SIKE_AGENT_PRESET && ['draft', 'ready'].includes(draft.status)
+            && (!agent || agent.status === 'idle')) {
+            if (session) {
+              const events = sessionEvents(session)
+              const replay = failedTurnReplayAvailability({
+                events, nodes: session.surface?.nodes || [], cleared: chat.suppressedDshTurns || []
+              })
+              const pending = chat.dreamSikeResume
+              const crashRetry = !replay.target && pending && replayableFailedTurn({ events })?.turn === draft.turn
+                && pending.failedTurn === draft.turn && pending.sourceOperationId === draft.operationId
+                && pending.sourceVersion === draft.version && pending.branchId === chat.timeline?.branchId
+                && pending.storyRevision === chat.timeline?.revision
+              draft.resumable = (replay.target?.turn === draft.turn || crashRetry)
+                && !agent?.inbox?.hasPending
+            } else {
+              // After restart the native Session may not be mounted yet. The RPC
+              // resumes it and performs the full append-only replay validation.
+              draft.resumable = chat.timeline?.operations?.[draft.operationId]?.status === 'failed'
+                && (!(chat.suppressedDshTurns || []).map(Number).includes(draft.turn)
+                  || chat.dreamSikeResume?.sourceOperationId === draft.operationId)
+            }
+          }
+        }
+        return { draft }
+      }
+      case 'resumeDreamSikeDraft': {
+        const sessionId = str(args?.sessionId)
+        if (!sessionId) throw new Error('缺少待续写的酒馆会话')
+        if (!agentRegistry.get(sessionId)?.session) await agentRegistry.resume({ resumeSessionId: sessionId })
+        const result = await replayFailedTurn(undefined, sessionId, {
+          expectedOperationId: str(args?.expectedOperationId), expectedVersion: Number(args?.expectedVersion)
+        })
+        return { view: result, draft: (await chatForSession(sessionId))?.dreamSikeDraft || null }
       }
       case 'hydrateTavernHelperMessages': {
         const sessionId = args && args.sessionId
@@ -4322,22 +4422,30 @@ export async function apply(ctx) {
   // or unreadable file keeps the saved snapshot, so the game never loses its preset.
   async function resolveChatRuntimePreset(chat) {
     if (!chat || groupOfMode(chat.mode) !== 'play') return null
+    const project = snapshot => projectPlayPresetSnapshot(snapshot, chat.playPresetId)
     const saved = chat.runtimePresetSnapshot && typeof chat.runtimePresetSnapshot === 'object' ? chat.runtimePresetSnapshot : null
-    if (!saved?.presetPath || !chat.id) return saved
+    if (!saved?.presetPath || !chat.id) return project(saved)
     let text
-    try { text = await fileResources.readText(normalizeResourcePath(saved.presetPath, 'preset')) } catch { return saved }
-    if (text === undefined || createHash('sha256').update(text).digest('hex') === saved.compatibilityPreset?.revision) return saved
+    try { text = await fileResources.readText(normalizeResourcePath(saved.presetPath, 'preset')) } catch { return project(saved) }
+    if (text === undefined || createHash('sha256').update(text).digest('hex') === saved.compatibilityPreset?.revision) return project(saved)
+    if (backgroundTasks.activity(chat).busy || tavernScriptDispatch.status(chat.sessionId).busy) return project(saved)
     let fresh
-    try { fresh = await runtimePresets.fullSnapshot(saved.presetPath) } catch { return saved }
-    if (!fresh) return saved
+    try { fresh = await runtimePresets.fullSnapshot(saved.presetPath) } catch { return project(saved) }
+    if (!fresh) return project(saved)
+    let refreshed = false
     for (let attempt = 0; attempt < 3; attempt++) {
-      const head = (await chatPersistence.readSlice(chat.id, [], ['_storageRevision', 'runtimePresetSnapshot.presetPath']))?.chat
+      const head = (await chatPersistence.readSlice(chat.id, [], ['_storageRevision', 'runtimePresetSnapshot.presetPath', 'tavernHelperLifecycleRevision']))?.chat
       // Applying another preset meanwhile wins over refreshing this one.
-      if (!head || head.runtimePresetSnapshot?.presetPath !== saved.presetPath) return saved
-      if (await patchChat(chat.id, head._storageRevision, [{ op: 'set', path: ['runtimePresetSnapshot'], value: fresh }], { source: 'preset.refresh', touchUpdatedAt: false })) break
+      if (!head || head.runtimePresetSnapshot?.presetPath !== saved.presetPath) return project(saved)
+      if (await patchChat(chat.id, head._storageRevision, [
+        { op: 'set', path: ['runtimePresetSnapshot'], value: fresh },
+        { op: 'set', path: ['runtimePresetPath'], value: fresh.presetPath },
+        { op: 'set', path: ['tavernHelperLifecycleRevision'], value: (Number(head.tavernHelperLifecycleRevision) || 0) + 1 }
+      ], { source: 'preset.refresh', touchUpdatedAt: false })) { refreshed = true; break }
     }
+    if (!refreshed) return project(saved)
     chat.runtimePresetSnapshot = fresh
-    return fresh
+    return project(fresh)
   }
 
   const compileCompatibilityTurn = createCompatibilityTurnCompiler({
@@ -4384,7 +4492,7 @@ export async function apply(ctx) {
     })
   }
 
-  const controlledToolNames = new Set(['tavern_read_variables', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
+  const controlledToolNames = new Set(['tavern_read_variables', 'sike_read_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
   const foregroundStrategies = createForegroundOrchestrationStrategies({
     compatibility: {
       beforeTurn: async function (input) {
@@ -4486,6 +4594,7 @@ export async function apply(ctx) {
 
   registerTurnLifecycleHooks({
     backgroundAgentRunner,
+    chatForSession,
     hookChatForSession,
     clearRuntimePresetRequestState,
     contentText,
@@ -4518,6 +4627,7 @@ export async function apply(ctx) {
       searchWorldbook,
       tools,
     })
+    registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools })
     registerUserProfileTools({
       chatForSession,
       tools,

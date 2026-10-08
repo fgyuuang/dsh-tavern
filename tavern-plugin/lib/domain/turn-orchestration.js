@@ -9,6 +9,7 @@ import { lastTavernHelperVariables } from './tavern-helper-context.js'
 import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeResourcePath } from './file-resources.js'
 import { diffJson } from './json-mutation.js'
+import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn } from './dream-sike-draft.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -185,6 +186,15 @@ export function foregroundFrameInputs(plan, sourceText, projectedText, presetSna
       source: { stage: 'mvu-background-owner' }
     })
   }
+  if (chat?.playPresetId === 'dream-sike-dsh' && chat.dreamSikeDraft?.resumedFrom
+    && ['draft', 'ready'].includes(chat.dreamSikeDraft.status)) {
+    inputs.push({
+      kind: 'foreground.writing-rules',
+      text: '上次失败回合的正文草稿已恢复。先调用 sike_read_turn 查看已保存的版本和检查结果；不要再调用 sike_put_draft。若状态已就绪，可直接给出简短完成提示，由酒馆提交该草稿。',
+      required: true,
+      source: { stage: 'dream-sike-resume' }
+    })
+  }
   return inputs.concat(presetMiddleInstructions(presetSnapshot), scriptPromptFrameInputs(chat))
 }
 
@@ -291,6 +301,14 @@ export function createTurnOrchestrator(options) {
       const begun = timeline.apply({ chat: { ...chat, messages: [] }, intent: { kind: 'body.begin', turn, userText } })
       chat = { ...begun.chat, messages: chat.messages }
       foregroundOperation = begun.value
+      if (chat.dreamSikeResume) {
+        if (carryDreamSikeDraftIntoTurn(chat, {
+          chatId: str(chat.id), sessionId: input.sessionId, turn,
+          operationId: foregroundOperation.operationId,
+          branchId: foregroundOperation.basedOn.branchId,
+          storyRevision: foregroundOperation.basedOn.revision
+        }, now())) chatChanged = true
+      }
       const cachedFrame = rememberedFrame(chat, foregroundOperation.operationId)
       if (cachedFrame !== null) {
         if (chatChanged) await savePreparation({ source: 'foreground.prepare' })
@@ -713,6 +731,14 @@ export function createTurnOrchestrator(options) {
       return item.kind === 'body' && item.status === 'running' && Number(item.turn) === turn
     })
     if (operation === undefined) throw new Error('找不到本轮正文 operation，请重新生成本轮正文')
+    if (chat.playPresetId === 'dream-sike-dsh') {
+      const ready = readDreamSikeDraft(chat)
+      if (!ready || ready.status !== 'ready' || ready.turn !== turn || ready.operationId !== operation.id
+        || ready.sessionId !== input.sessionId || ready.branchId !== operation.basedOn.branchId
+        || ready.storyRevision !== operation.basedOn.revision || ready.text.trim() !== sourceText) {
+        throw new Error('梦境思客DSH正文草稿未确认或已过期，正式正文未提交')
+      }
+    }
     const before = {
       posture: chat.posture || '',
       ledger: chat.ledger ? structuredClone(chat.ledger) : null,
@@ -770,6 +796,9 @@ export function createTurnOrchestrator(options) {
         draft.foregroundError = null
         draft.presentationWarnings = Array.isArray(reply.warnings) ? clone(reply.warnings) : []
         rememberCommit(draft, turn, { mode, userText, requestId, scriptReference }, before, now)
+        if (draft.playPresetId === 'dream-sike-dsh' && !markDreamSikeDraftCommitted(draft, { turn, operationId: operation.id }, now())) {
+          throw new Error('梦境思客DSH草稿状态已变化，正式正文未提交')
+        }
       }
     })
     chat = completed.chat
@@ -836,9 +865,11 @@ export function createTurnOrchestrator(options) {
     if (chat === undefined) return []
     const mode = chat.mode || 'story'
     const webTools = chat.webSearchEnabled === true ? ['web_search'] : []
-    if (mode === 'script') return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', ...webTools]
+    const draftTools = chat.playPresetId === 'dream-sike-dsh'
+      ? ['sike_read_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft'] : []
+    if (mode === 'script') return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', ...draftTools, ...webTools]
     if (mode === 'card') return [...CARD_MEMORY_TOOLS, 'web_search', shellToolName, ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response']
-    return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_recall_history', 'worldbook_search', ...webTools]
+    return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_recall_history', 'worldbook_search', ...draftTools, ...webTools]
   }
 
   async function modeFor(sessionId) {

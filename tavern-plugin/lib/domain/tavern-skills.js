@@ -58,7 +58,10 @@ export function createTavernSkillModule(options = {}) {
   const files = options.files || createDurableFilePromotion(options.filePromotion)
   if (str(options.directory) === '' || str(options.builtInDirectory) === '') throw new Error('Tavern Skill Module 缺少目录')
 
-  const roots = [{ kind: 'builtin', path: builtInDirectory, role: 'card' }, ...(options.backgroundDirectory ? [{ kind: 'builtin', path: path.resolve(options.backgroundDirectory), role: 'background' }] : []), { kind: 'user', path: directory, role: 'card' }]
+  const roots = [{ kind: 'builtin', path: builtInDirectory, role: 'card' },
+    ...(options.backgroundDirectory ? [{ kind: 'builtin', path: path.resolve(options.backgroundDirectory), role: 'background' }] : []),
+    ...(Array.isArray(options.extraBuiltInDirectories) ? options.extraBuiltInDirectories.map(directory => ({ kind: 'builtin', path: path.resolve(directory), role: 'foreground' })) : []),
+    { kind: 'user', path: directory, role: 'card' }]
   const listeners = new Set()
   const configPath = path.join(directory, '.assignments.json')
   let pending = Promise.resolve()

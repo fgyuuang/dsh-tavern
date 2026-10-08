@@ -12,6 +12,7 @@ import { diffJson } from './json-mutation.js'
 import { rollbackAvailability, clearFailedTurnSurface, locateRegenerationSurface, planRegenerationSurface, failedTurnReplayAvailability, replayableFailedTurn } from './rollback-surface.js'
 import { assertRegenerationSourceCurrent, replaceLastRound } from './last-round-replacement.js'
 import { diagnosticIdentity, regenerationTargetDiagnostic } from './regeneration-diagnostics.js'
+import { planDreamSikeDraftResume } from './dream-sike-draft.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -487,7 +488,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
   // and nothing to replace. Clearing its residue restores the exact request
   // prefix the provider already cached; replaying the same input then only pays
   // for the completion that was interrupted.
-  async function replayFailedTurn(chatId, sessionId) {
+  async function replayFailedTurn(chatId, sessionId, resumeDraft = null) {
     if (sessionPatch && !sessionPatch.replacementAllowed()) throw new Error(sessionPatch.blockReason())
     const chat = str(chatId) === '' ? await chatForSession(sessionId) : await readChat(chatId)
     if (chat === undefined || chat === null) throw new Error('聊天不存在: ' + chatId)
@@ -500,12 +501,27 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     const session = agent.session
     const events = sessionEvents(session)
     const replay = failedTurnReplayAvailability({ events, nodes: session.surface?.nodes || [], cleared: chat.suppressedDshTurns || [] })
-    const target = replay.target
+    let target = replay.target
+    // A crash can happen after the draft marker and surface suppression are
+    // durable but before followup enters the native inbox. The append-only log
+    // still owns the original input; only that exact failed tail may be retried.
+    if (!target && resumeDraft && chat.dreamSikeResume) {
+      const pending = chat.dreamSikeResume
+      const candidate = replayableFailedTurn({ events })
+      if (candidate?.turn === pending.failedTurn && (chat.suppressedDshTurns || []).map(Number).includes(candidate.turn)
+        && pending.sourceOperationId === resumeDraft.expectedOperationId && pending.sourceVersion === resumeDraft.expectedVersion
+        && pending.branchId === chat.timeline?.branchId && pending.storyRevision === chat.timeline?.revision) {
+        target = candidate
+      }
+    }
     if (target === null) throw new Error(replay.reason)
+    const resume = resumeDraft ? planDreamSikeDraftResume(chat, { ...resumeDraft, failedTurn: target.turn }) : null
+    if (resume && agent.inbox?.hasPending) throw new Error('续写输入已排队，请等待原生 Agent 完成恢复')
     // Read the card before spending a generation: a broken card must fail here,
     // not after the new turn has already committed.
     const card = await readChatCard(chat)
     pendingReplays.add(chat.id)
+    let queued = false
     try {
       // 1) 移除被中断的内容：清掉失败回合留在原生消息面上的节点。清理钩子
       // 正常已在失败时执行过，此处重复调用对已清理的回合是无操作。
@@ -514,8 +530,10 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       // 2) 同步隐藏该回合残留的正文与错误提示，再原样重发本轮输入。
       await updateChat(chat.id, function (current) {
         if (current === null || typeof current !== 'object') return current
+        const currentResume = resume ? planDreamSikeDraftResume(current, { ...resumeDraft, failedTurn: target.turn }) : null
         return {
           ...current,
+          ...(currentResume ? { dreamSikeResume: currentResume } : {}),
           suppressedDshTurns: Array.from(new Set([...(Array.isArray(current.suppressedDshTurns) ? current.suppressedDshTurns : []), target.turn]))
             .sort(function (left, right) { return left - right }),
           updatedAt: Date.now()
@@ -531,11 +549,24 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
         content: projectPlayerContent(target.inputAttachments, target.userText),
         source: target.source
       })
+      queued = true
       await agent.whenIdle()
       const latest = await readChat(chat.id) || chat
       const result = await view(latest, card)
       result.replayed = { turn: target.turn, userText: target.userText, cleared }
+      if (resume) result.resumedDraft = { fromTurn: target.turn, version: resume.sourceVersion }
       return result
+    } catch (error) {
+      if (resume && !queued) {
+        await updateChat(chat.id, current => {
+          if (current?.dreamSikeResume?.sourceOperationId !== resume.sourceOperationId) return undefined
+          const next = { ...current }
+          delete next.dreamSikeResume
+          next.suppressedDshTurns = (Array.isArray(next.suppressedDshTurns) ? next.suppressedDshTurns : []).filter(turn => Number(turn) !== target.turn)
+          return next
+        }, { source: 'replay.draft-unqueue' })
+      }
+      throw error
     } finally {
       pendingReplays.delete(chat.id)
     }
@@ -1021,5 +1052,5 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     }
   }
 
-  return Object.freeze({ regenerate, replayFailed: replayFailedTurn, recover: regenerationRecovery.recover, rollback: rollbackTurn, undoRollback })
+  return Object.freeze({ regenerate, replayFailed: replayFailedTurn, replayActive: chatId => pendingReplays.has(chatId), recover: regenerationRecovery.recover, rollback: rollbackTurn, undoRollback })
 }
