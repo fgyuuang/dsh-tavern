@@ -11977,6 +11977,9 @@ function bindTavernFontZoom(node, win) {
 					state.status === "running" ? React.createElement("span", { role: "status" }, sceneImageStageLabel(state)) : null,
 					state.status === "running" ? React.createElement("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || Boolean(state.cancelRequestedAt), onClick: cancelImage }, state.cancelRequestedAt ? "正在取消…" : "取消生图") : null,
 					state.recovery === "save" && state.status !== "running" ? React.createElement("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: retrySave }, "重试保存") : null,
+					// The latest turn retries from the composer; earlier turns retry here.
+					props.offerGenerate && state.enabled && !version && ["failed", "cancelled"].includes(state.status) && state.recovery !== "save"
+						? React.createElement("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: function () { return generate("generate"); } }, busy ? "整理画面…" : "重试生图") : null,
 					error || state && state.error ? React.createElement("span", { role: "alert", className: "dsh-tavern-settings-error" }, error || state.error) : null
 				);
 			}
