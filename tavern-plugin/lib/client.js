@@ -13210,7 +13210,7 @@ function bindTavernFontZoom(node, win) {
 					let attempt;
 					try { attempt = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
 					if (!attempt) {
-						const playPresetId = await resolvePlayPreset();
+						const playPresetId = await resolvePlayPreset(openingPicker);
 						attempt = { operationId: window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now()) + ":" + String(Math.random()), sessionId: "", playPresetId: playPresetId };
 						localStorage.setItem(key, JSON.stringify(attempt));
 					}
@@ -13247,7 +13247,7 @@ function bindTavernFontZoom(node, win) {
 					let preparedWorkspaceId = "";
 					try { preparedWorkspaceId = await timing.measure("claimPrewarm", () => playPrewarmRef.current.claim(card && card.path)); }
 					catch (prewarmError) { console.warn("dsh-tavern: 工作区预热不可用，改为正常创建", prewarmError); }
-					created = await conversationLifecycle.start({ kind: "play", targetMode: targetMode, card: card, preparationId: previousOpeningPicker && previousOpeningPicker.preparationId || "", openingId: openingId || "", userName: resolvedUserName, requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh", preparedWorkspaceId: preparedWorkspaceId });
+					created = await conversationLifecycle.start({ kind: "play", targetMode: targetMode, card: card, preparationId: previousOpeningPicker && previousOpeningPicker.preparationId || "", openingId: openingId || "", userName: resolvedUserName, playPresetId: previousOpeningPicker && previousOpeningPicker.playPresetId || "", requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh", preparedWorkspaceId: preparedWorkspaceId });
 					if (initialMessage) await timing.measure("submitInitialMessage", () => props.executeSlash("/send " + substituteTavernIdentityMacros(initialMessage, { playerName: resolvedUserName, characterName: card && card.name }) + "|/trigger", created.sessionId));
 					if (targetMode !== "card") window.localStorage.setItem("dsh-tavern-player-name", resolvedUserName);
 					successful = true;
@@ -13261,13 +13261,15 @@ function bindTavernFontZoom(node, win) {
                 let successful = false;
 				playPrewarmRef.current.begin({ key: card.path, kind: "play" });
 				try {
-					const globalSettings = await rpc("getTavernSettings");
+					const [globalSettings, presetCatalog] = await Promise.all([rpc("getTavernSettings"), call("listPlayPresets", {})]);
+					const playPresets = Array.isArray(presetCatalog.presets) ? presetCatalog.presets.filter(function (preset) { return preset && typeof preset.id === "string"; }) : [];
+					const playPresetId = playPresets.some(function (preset) { return preset.id === presetCatalog.defaultPlayPresetId; }) ? presetCatalog.defaultPlayPresetId : (playPresets[0] && playPresets[0].id || "tavern");
                     const userName = globalSettings.settings?.defaultPlaySettings?.playerName || "你";
 					const preparedKey = JSON.stringify([userName, compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh"]);
-					setOpeningPicker({ card: card, requestMode: requestMode, openings: [], index: 0, userName: userName, preparing: true });
+					setOpeningPicker({ card: card, requestMode: requestMode, openings: [], index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, preparing: true });
 					const response = await initializeFullOpeningTemplate(await call("getCardOpenings", { previewTransport: "deferred-v1", path: card.path, userName: userName, requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh" }));
 					const openings = response.openings || [];
-					setOpeningPicker({ card: card, requestMode: requestMode, preparing: false, preparedKey: preparedKey, preparationId: response.preparationId || "", openings: openings, index: 0, userName: userName, trustedCardMode: response.trustedCardMode });
+					setOpeningPicker({ card: card, requestMode: requestMode, preparing: false, preparedKey: preparedKey, preparationId: response.preparationId || "", openings: openings, index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, trustedCardMode: response.trustedCardMode });
 				successful = true;
 				} catch (err) { setOpeningPicker(null); playPrewarmRef.current.cancel(); setError(String(err && err.message || err)); }
 				finally { if (timing) timing.finish(successful); setBusy(false); }
@@ -13604,6 +13606,8 @@ function bindTavernFontZoom(node, win) {
 			const openingChoice = openingPicker ? h(React.Fragment, null,
 				h("div", { className: "dsh-tavern-card-picker-head" }, h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: discardOpening }, "放弃开局"), h("span", null, openingPicker.card.name + " · 游戏准备"), h("button", { className: "dsh-tavern-btn", "aria-expanded": !openingSettingsCollapsed, onClick: function () { openingSettingsManual.current = true; setOpeningSettingsCollapsed(function (value) { return !value; }); } }, openingSettingsCollapsed ? "展开设置" : "折叠设置"), h("span", { className: "dsh-tavern-spacer" }), h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: closePicker }, "暂时收起")),
 				busy ? h("div", { className: "dsh-tavern-session-switching", role: "status", "aria-live": "polite" }, openingPicker.preparing ? "正在准备开场与脚本资源…" : "正在完成游戏初始化…", openingPicker.preparing ? h("div", { style: { marginTop: "8px", fontSize: "13px", opacity: .75 } }, "首次打开可能需要下载资源，请稍候；后续打开通常更快。") : null) : null,
+				h("label", { className: "dsh-tavern-player-name" }, h("span", null, "本局 Agent 模式"), h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏 Agent 模式", value: openingPicker.playPresetId || "tavern", disabled: busy || openingPicker.preparing, onChange: function (event) { const playPresetId = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { playPresetId: playPresetId }) : current; }); } }, (openingPicker.playPresets || []).map(function (preset) { return h("option", { key: preset.id, value: preset.id }, preset.name); }))),
+				h("div", { className: "dsh-tavern-player-name-help" }, "仅用于这次新游戏，不更改新游戏默认值。"),
 					selectedOpening ? h("div", { hidden: openingSettingsCollapsed },
 						h("label", { className: "dsh-tavern-player-name" }, h("span", null, "故事中的玩家称呼（可选）"), h("input", { value: openingPicker.userName ?? "", maxLength: 80, placeholder: "你", disabled: busy, onChange: function (event) { const userName = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { userName: userName }) : current; }); } })),
 						h("div", { className: "dsh-tavern-player-name-help" }, "可以填写姓名、昵称或身份；默认沿用你上次使用的称呼，也可以在这里针对本局修改。开场白预览会随之更新。")

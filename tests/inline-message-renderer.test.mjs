@@ -1843,16 +1843,44 @@ test('native opening send resolves identity macros using the chosen player name'
   const identity = source.slice(source.indexOf('function substituteTavernIdentityMacros('), source.indexOf('function scrollTavernTouchChain('))
   const start = source.slice(source.indexOf('async function newConversation('), source.indexOf('async function preparePlayConversation('))
   const sent = []
+  const started = []
   const timing = { measure: (_name, fn) => fn(), finish() {} }
-  const sandbox = { uiMode: 'play', openingPicker: null, compatibilityAvailable: false, requestMode: 'dsh',
+  const sandbox = { uiMode: 'play', openingPicker: { playPresetId: 'dream-sike-dsh' }, compatibilityAvailable: false, requestMode: 'dsh',
     openingPerformance: { begin: () => timing }, tavernSessionTransition: { begin() {}, end() {} },
     setBusy() {}, setError(error) { if (error) throw Error(error) }, setOpeningPicker() {},
     playPrewarmRef: { current: { claim: async () => '' } },
-    conversationLifecycle: { start: async () => ({ sessionId: 'new-session' }) },
+    conversationLifecycle: { start: async request => { started.push(request); return { sessionId: 'new-session' } } },
     props: { executeSlash: async (line, sessionId) => sent.push({ line, sessionId }) },
     window: { localStorage: { setItem() {} } }, console: { info() {}, warn() {} }
   }
   vm.runInNewContext(identity + start + '\nthis.start = newConversation;', sandbox)
   await sandbox.start({ name: '角色甲' }, 'play', 'primary', '小林', '{{user}}遇见{{char}}，{{ USER }}继续。')
+  assert.equal(started[0].playPresetId, 'dream-sike-dsh')
   assert.deepEqual(sent, [{ line: '/send 小林遇见角色甲，小林继续。|/trigger', sessionId: 'new-session' }])
+})
+
+test('new game preparation offers the current default Agent without changing it', async () => {
+  const source = await readFile(new URL('../tavern-plugin/lib/client.js', import.meta.url), 'utf8')
+  const prepare = source.slice(source.indexOf('async function preparePlayConversation('), source.indexOf('async function importCard('))
+  const states = []
+  const catalog = { defaultPlayPresetId: 'tavern', presets: [
+    { id: 'tavern', name: '原酒馆预设' }, { id: 'dream-sike-dsh', name: '梦境思客DSH' }
+  ] }
+  const sandbox = {
+    setBusy() {}, setError(error) { if (error) throw Error(error) },
+    playPrewarmRef: { current: { begin() {}, cancel() {} } },
+    openingPerformance: { begin: () => ({ finish() {} }) },
+    rpc: async method => { assert.equal(method, 'getTavernSettings'); return { settings: { defaultPlaySettings: { playerName: '玩家' } } } },
+    call: async method => method === 'listPlayPresets' ? catalog : { preparationId: 'preview', openings: [] },
+    initializeFullOpeningTemplate: async value => value,
+    setOpeningPicker: value => states.push(value),
+    compatibilityAvailable: false, requestMode: 'dsh'
+  }
+  vm.runInNewContext(prepare + '\nthis.prepare = preparePlayConversation;', sandbox)
+  await sandbox.prepare({ path: 'card' })
+  assert.equal(states.length, 2)
+  assert.equal(states[0].playPresetId, 'tavern')
+  assert.equal(states[1].playPresetId, 'tavern')
+  assert.equal(states[1].playPresets.length, 2)
+  assert.equal(catalog.defaultPlayPresetId, 'tavern')
 })
