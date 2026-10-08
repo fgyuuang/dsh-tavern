@@ -1022,6 +1022,7 @@ window.__ModuleLoader__.load({
 		exports.askTavernCardChatRemoval = askTavernCardChatRemoval;
 		exports.removeTavernCardChats = removeTavernCardChats;
 		exports.groupTavernHistory = groupTavernHistory;
+		exports.groupTavernBranches = groupTavernBranches;
 		exports.createPlayWorkspaceResolver = createPlayWorkspaceResolver;
 		exports.createSessionListRecoveryModule = createSessionListRecoveryModule;
 		exports.createTavernFrameLifecycle = createTavernFrameLifecycle;

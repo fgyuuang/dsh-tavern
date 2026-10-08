@@ -23,6 +23,8 @@ function createdAtFromId(id) {
 function chatSummary(chat, preservedLastOpenedAt = 0) {
   const updatedAt = Math.max(0, Number(chat && (chat.updatedAt || chat.createdAt)) || 0)
   const createdAt = Math.max(0, Number(chat && chat.createdAt) || 0) || createdAtFromId(chat && chat.id) || updatedAt
+  const fork = chat && chat.forkedFrom && typeof chat.forkedFrom === 'object' ? chat.forkedFrom : null
+  const branchId = str(chat && chat.timeline && chat.timeline.branchId)
   return {
     id: str(chat && chat.id),
     cardPath: str(chat && chat.cardPath),
@@ -30,6 +32,8 @@ function chatSummary(chat, preservedLastOpenedAt = 0) {
     title: str(chat && chat.title),
     mode: str(chat && chat.mode) || 'story',
     requestMode: chat && chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
+    ...(branchId ? { branchId } : {}),
+    ...(fork && str(fork.chatId) ? { forkedFrom: { chatId: str(fork.chatId), turn: Math.max(0, Number(fork.turn) || 0) } } : {}),
     ...(currentBackgroundSessionId(chat) === null ? {} : { backgroundSessionId: currentBackgroundSessionId(chat) }),
     ...(Array.isArray(chat?.backgroundHistoryIds) ? { backgroundHistoryIds: chat.backgroundHistoryIds } : {}),
     createdAt,
@@ -39,7 +43,9 @@ function chatSummary(chat, preservedLastOpenedAt = 0) {
 }
 
 function sameSummary(left, right) {
-  return left && right && JSON.stringify(left.backgroundHistoryIds || []) === JSON.stringify(right.backgroundHistoryIds || []) && ['id', 'cardPath', 'cardName', 'title', 'mode', 'requestMode', 'createdAt', 'updatedAt', 'lastOpenedAt', 'backgroundSessionId'].every(function (key) { return left[key] === right[key] })
+  return left && right && JSON.stringify(left.backgroundHistoryIds || []) === JSON.stringify(right.backgroundHistoryIds || [])
+    && JSON.stringify(left.forkedFrom || null) === JSON.stringify(right.forkedFrom || null)
+    && ['id', 'cardPath', 'cardName', 'title', 'mode', 'requestMode', 'branchId', 'createdAt', 'updatedAt', 'lastOpenedAt', 'backgroundSessionId'].every(function (key) { return left[key] === right[key] })
 }
 
 /**
@@ -184,7 +190,7 @@ export function createTavernConversationRegistry(options = {}) {
       const summary = summaries.get(chatId)
       if (!summary) continue
       const normalized = chatSummary(summary)
-      rows.push({ sessionId, chatId, ...(normalized.backgroundHistoryIds ? { backgroundHistoryIds: normalized.backgroundHistoryIds } : {}), ...(typeof normalized.backgroundSessionId === 'string' ? { backgroundSessionId: normalized.backgroundSessionId } : {}), cardPath: normalized.cardPath, cardName: normalized.cardName, title: normalized.title, mode: normalized.mode, requestMode: normalized.requestMode, createdAt: normalized.createdAt, updatedAt: normalized.updatedAt, lastOpenedAt: normalized.lastOpenedAt })
+      rows.push({ sessionId, chatId, ...(normalized.backgroundHistoryIds ? { backgroundHistoryIds: normalized.backgroundHistoryIds } : {}), ...(typeof normalized.backgroundSessionId === 'string' ? { backgroundSessionId: normalized.backgroundSessionId } : {}), ...(normalized.branchId ? { branchId: normalized.branchId } : {}), ...(normalized.forkedFrom ? { forkedFrom: normalized.forkedFrom } : {}), cardPath: normalized.cardPath, cardName: normalized.cardName, title: normalized.title, mode: normalized.mode, requestMode: normalized.requestMode, createdAt: normalized.createdAt, updatedAt: normalized.updatedAt, lastOpenedAt: normalized.lastOpenedAt })
     }
     // Conversations keep a fixed place: opening or continuing one must not move it.
     rows.sort(function (left, right) { return right.createdAt - left.createdAt || right.lastOpenedAt - left.lastOpenedAt })

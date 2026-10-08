@@ -167,3 +167,18 @@
 			}
 			return Array.from(groups.values()).sort((a, b) => b.activity - a.activity);
 		}
+
+		function groupTavernBranches(items) {
+			const nodes = items.map(item => Object.assign({}, item, { branches: [] }));
+			const byChatId = new Map(nodes.map(item => [item.chatId, item]));
+			const roots = [];
+			for (const item of nodes) {
+				const parent = item.forkedFrom && byChatId.get(item.forkedFrom.chatId);
+				if (parent && parent !== item && parent.cardPath === item.cardPath && parent.createdAt <= item.createdAt) parent.branches.push(item);
+				else roots.push(item);
+			}
+			const chronological = (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0);
+			function sortTree(item) { item.branches.sort(chronological); item.branches.forEach(sortTree); }
+			roots.sort(chronological).forEach(sortTree);
+			return roots;
+		}
