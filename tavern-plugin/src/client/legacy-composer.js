@@ -76,7 +76,7 @@ function installOpeningHostComposer(hostDocument, submit, report) {
 // Parent DOM IDs are shared, but the focused iframe identifies the sender even
 // after document.write replaces its document. Never fall back to the active chat.
 const tavernHostComposers = new WeakMap();
-function installFrameHostComposer(doc, ownsFrame, submit, report) {
+function installFrameHostComposer(doc, ownsFrame, submit, report, setDraft) {
   let state = tavernHostComposers.get(doc);
   if (!state) {
     if (doc.getElementById('send_textarea') || doc.getElementById('send_but')) return function () {};
@@ -87,6 +87,29 @@ function installFrameHostComposer(doc, ownsFrame, submit, report) {
     controls.append(area, button); doc.body.append(controls);
     state = { controls, owners: new Set() };
     tavernHostComposers.set(doc, state);
+    area.addEventListener('input', function () {
+      // Cards assign value and dispatch input on this ST compatibility control.
+      // Capture the originating frame now; a deferred write must never pick a
+      // different focused card or fall back to the currently selected chat.
+      const source = doc.activeElement;
+      const owners = Array.from(state.owners).filter(owner => owner.ownsFrame(source));
+      if (owners.length !== 1) {
+        const error = new Error('无法确定输入文字所属的卡片，请重新点击卡片内的交互按钮');
+        const reporter = owners[0] || Array.from(state.owners)[0];
+        if (reporter) reporter.report(error);
+        return;
+      }
+      const owner = owners[0], text = String(area.value || '');
+      // Preparation pages have no Session: keep their text private until the
+      // existing explicit start button submits it.
+      if (typeof owner.setDraft !== 'function') return;
+      const revision = ++owner.draftRevision;
+      Promise.resolve().then(function () {
+        if (!state.owners.has(owner) || !owner.ownsFrame(source)) throw new Error('卡片已关闭，请重新打开');
+        if (revision !== owner.draftRevision) return;
+        return owner.setDraft(text);
+      }).catch(owner.report);
+    });
     button.addEventListener('click', function () {
       const owners = Array.from(state.owners).filter(function (owner) { return owner.ownsFrame(doc.activeElement); });
       if (owners.length !== 1) throw new Error('无法确定开局消息所属的卡片，请重新点击卡片内的开始按钮');
@@ -95,7 +118,7 @@ function installFrameHostComposer(doc, ownsFrame, submit, report) {
       owner.sender.send(text).then(function () { if (area.value === text) area.value = ''; }, owner.report);
     });
   }
-  const owner = { ownsFrame, report };
+  const owner = { ownsFrame, report, setDraft, draftRevision: 0 };
   owner.sender = createTavernFrameLifecycle(doc.defaultView || {}, doc).sender({ submit, valid: () => state.owners.has(owner) });
   state.owners.add(owner);
   return function () {

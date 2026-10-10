@@ -550,19 +550,27 @@
 					const openingArtifacts = props.openingPreview && props.trustedCardMode
 						? createTavernHostArtifactScope({ document: hostWindow.document }) : null;
 					hostWindow.addEventListener("message", receive);
+                    const composerSessionId = props.sessionId;
                     const releaseComposer = props.trustedCardMode && hostWindow.document
                         ? installFrameHostComposer(hostWindow.document, function (node) {
                             const channel = channels.get(visible.token);
                             return Boolean(listener && visible.key === desired.key && node && channel && channel.element() === node);
                         }, function (text) {
-                            if (!listener || visible.key !== desired.key) throw new Error("卡片已失效，请重新打开");
+                            if (!listener || visible.key !== desired.key || props.sessionId !== composerSessionId) throw new Error("卡片已失效，请重新打开");
                             if (props.openingPreview) {
                                 return submitOpening(visible, text);
                             }
                             const executeSlash = configuredSlashExecutor || props.executeSlash;
                             if (!props.sessionId || typeof executeSlash !== "function") throw new Error("当前界面无法触发生成，请刷新页面后重试");
-                            return executeSlash("/send " + text + "|/trigger", props.sessionId);
-                        }, function (error) { tavernErrorHub.report("开始旅程", error); }) : function () {};
+                            return executeSlash("/send " + text + "|/trigger", composerSessionId);
+                        }, function (error) { tavernErrorHub.report("开始旅程", error); }, composerSessionId ? function (text) {
+                            if (!listener || visible.key !== desired.key || props.sessionId !== composerSessionId) throw new Error("卡片已失效，请重新打开");
+                            const executeSlash = configuredSlashExecutor || props.executeSlash;
+                            if (typeof executeSlash !== "function") throw new Error("当前对话输入框尚未就绪");
+                            // /setinput updates this Session's native draft; it
+                            // never triggers generation or publishes a message.
+                            return executeSlash("/setinput " + text, composerSessionId);
+                        } : undefined) : function () {};
 
 					const unsubscribeTheme = hostWindow.document && typeof hostWindow.MutationObserver === "function"
 						? subscribeTavernHostTheme(hostWindow, function (theme) { sendTextColors(null, theme); }) : null;
