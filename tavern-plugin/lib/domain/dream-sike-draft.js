@@ -1,3 +1,5 @@
+import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
+
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
 const MAX_PATCHES = 2
@@ -266,28 +268,74 @@ export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, rep
 
 function issue(code, message) { return { code, message } }
 
+const REVIEW_LABELS = {
+  character: '角色行为', knowledge: '信息差', style: '预设文风',
+  continuity: '剧情连续性', playerAgency: '玩家选择权', format: '输出格式'
+}
+
+/** Observable editorial findings, not a record of the model's private reasoning. */
+function inspectEditorialReview(review) {
+  const issues = []
+  const observations = {}
+  if (!review || typeof review !== 'object' || Array.isArray(review)) {
+    return { review: observations, issues: [issue('editorial-missing', '请按六个检查维度提交简短、可核实的正文审阅结果')] }
+  }
+  if (Object.keys(review).some(key => !DREAM_SIKE_REVIEW_AXES.includes(key))) {
+    issues.push(issue('editorial-extra-axis', '正文审阅仅接受 character、knowledge、style、continuity、playerAgency、format 六个维度'))
+  }
+  for (const axis of DREAM_SIKE_REVIEW_AXES) {
+    const item = review[axis]
+    const evidence = str(item?.evidence).trim()
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || !['pass', 'revise'].includes(item.status)
+      || Object.keys(item).some(key => !['status', 'evidence'].includes(key))
+      || evidence.length < 8 || evidence.length > 500
+      || /^(?:(?:全部|均|都)?(?:检查|审阅)?(?:通过|正常|符合(?:要求|预设)?|没有问题|无问题|无需修改|pass|ok|no issues)[，。,.!！\s]*)+$/i.test(evidence)
+      || /<\/?(?:think|simple_thinking|dream_self_check|thought_of_chain|thinking_step)(?:\s[^>]*)?>|```(?:thought|analysis|reasoning|thought_of_chain|thinking_step)\b/i.test(evidence)) {
+      issues.push(issue('editorial-invalid-' + axis, REVIEW_LABELS[axis] + '需要 pass 或 revise，并附 8–500 字符的具体正文依据；不要提供私有推理'))
+      continue
+    }
+    observations[axis] = { status: item.status, evidence }
+    if (item.status === 'revise') issues.push(issue('editorial-revise-' + axis, REVIEW_LABELS[axis] + '待修订：' + evidence))
+  }
+  return { review: observations, issues }
+}
+
 /** Deterministic protocol checks; literary judgment remains with the Agent. */
 export function inspectDreamSikeDraft(text) {
   const issues = []
   if (typeof text !== 'string' || text.trim() === '') issues.push(issue('empty-body', '正文为空'))
-  if (/<\/?(?:think|simple_thinking|dream_self_check)(?:\s[^>]*)?>/i.test(text)) issues.push(issue('private-protocol', '正文含有内部思考或修订协议标签'))
+  if (/<\/?(?:think|simple_thinking|dream_self_check|thought_of_chain|thinking_step)(?:\s[^>]*)?>/i.test(text)) issues.push(issue('private-protocol', '正文含有内部思考或修订协议标签'))
   if (/<\/?UpdateVariable(?:\s[^>]*)?>/i.test(text)) issues.push(issue('state-protocol', '变量更新由提交后的后台 Agent 处理'))
   for (const tag of ['dream_body', 'dream_parallel_event']) {
     const opens = (text.match(new RegExp('<' + tag + '(?:\\s[^>]*)?>', 'gi')) || []).length
     const closes = (text.match(new RegExp('</' + tag + '\\s*>', 'gi')) || []).length
     if (opens !== closes) issues.push(issue('unbalanced-' + tag, tag + ' 标签未配对'))
   }
-  if (/```(?:thought|analysis|reasoning)\b/i.test(text)) issues.push(issue('private-protocol', '正文含有内部推理代码块'))
+  if (/```(?:thought|analysis|reasoning|thought_of_chain|thinking_step)\b/i.test(text)) issues.push(issue('private-protocol', '正文含有内部推理代码块'))
   return issues
 }
 
-export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.now()) {
+export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.now(), review = undefined) {
+  // Keep the historic numeric timestamp call signature for host integrations.
+  if (now && typeof now === 'object') { review = now.review; now = now.now ?? Date.now() }
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后检查')
-  const issues = inspectDreamSikeDraft(draft.text)
+  const issues = inspectDreamSikeDraft(draft.text).concat(inspectDreamSikeContractDraft(chat, draft.text))
   draft.checks = { version: draft.version, issues, checkedAt: now }
+  if (needsDreamSikeEditorialReview(chat)) {
+    const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+    const editorial = inspectEditorialReview(review)
+    issues.push(...editorial.issues)
+    draft.checks.editorial = {
+      required: true, version: draft.version, contractDigest: str(contract?.digest),
+      passed: editorial.issues.length === 0, review: editorial.review
+    }
+  }
+  if (issues.length > 0 && draft.status === 'ready') draft.status = 'draft'
   draft.phase = 'checking'
-  draft.trace.push({ phase: 'checking', action: issues.length ? '检查发现 ' + issues.length + ' 项问题' : '检查通过', at: now })
+  draft.trace.push({ phase: 'checking', action: issues.length ? '检查发现 ' + issues.length + ' 项问题'
+    : draft.checks.editorial?.required ? '协议检查通过，正文审阅已记录' : '协议检查通过', at: now })
   draft.updatedAt = now
   return copy(draft)
 }
@@ -295,9 +343,15 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
 export function readyDreamSikeDraft(chat, identity, expectedVersion, now = Date.now()) {
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后确认')
-  if (draft.status === 'ready') return copy(draft)
   if (!draft.checks || draft.checks.version !== draft.version) throw new Error('请先检查当前版本草稿')
+  if (needsDreamSikeEditorialReview(chat)) {
+    const editorial = draft.checks.editorial
+    const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+    if (!editorial || !editorial.passed || editorial.version !== draft.version) throw new Error('请先完成当前版本的六维正文审阅，并修订已发现的问题')
+    if (editorial.contractDigest !== str(contract?.digest)) throw new Error('预设规则已变化，请依据当前契约重新检查草稿')
+  }
   if (draft.checks.issues.length > 0) throw new Error('草稿仍有待处理的格式或协议问题')
+  if (draft.status === 'ready') return copy(draft)
   draft.status = 'ready'
   draft.phase = 'ready'
   draft.trace.push({ phase: 'ready', action: '正文可提交', at: now })

@@ -30,11 +30,13 @@ test('switching a play chat returns a revisioned patch without changing its hist
   assert.throws(() => selectPlayPreset({ ...chat, mode: 'card' }, DREAM_SIKE_AGENT_PRESET, { foregroundIdle: true, backgroundIdle: true }), /游玩/)
 })
 
-test('Agent mode removes imported prompt text but retains its regex rules and source', () => {
+test('Agent mode preserves imported writing rules with a versioned contract and regex source', () => {
   const original = { presetPath: 'presets/old.json', digest: 'old', front: { entries: [{ content: 'old prompt' }], text: 'old prompt' }, regexScripts: [{ id: 'display-rule' }] }
   const projected = projectPlayPresetSnapshot(original, DREAM_SIKE_AGENT_PRESET)
-  assert.equal(projected.front.text, '')
-  assert.equal(projected.text, '')
+  assert.equal(projected.front.text, 'old prompt')
+  assert.equal(projected.text, 'old prompt')
+  assert.equal(projected.agentContract.version, 2)
+  assert.equal(projected.agentContract.entries[0].action, 'preserved')
   assert.deepEqual(projected.regexScripts, original.regexScripts)
   assert.equal(projected.presetPath, original.presetPath)
   assert.equal(original.front.text, 'old prompt')

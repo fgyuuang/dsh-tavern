@@ -3,6 +3,7 @@ import {
   checkDreamSikeDraft, dreamSikeDraftView, dreamSikeTurnIdentity,
   patchDreamSikeDraft, putDreamSikeDraft, readyDreamSikeDraft
 } from '../domain/dream-sike-draft.js'
+import { dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
 
 const output = {
   schema: {
@@ -28,11 +29,16 @@ function turnReport(chat, identity, draftOffset = 0) {
     throw new Error('草稿读取位置已超出当前正文，请从 0 重新读取')
   }
   const draftEnd = Math.min((currentDraft?.text.length || 0), draftOffset + DRAFT_READ_CHARS)
+  const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
   return JSON.stringify({
     turn: identity.turn, card: str(chat.cardName), playerAction: clip(operation.userText, 3000),
     posture: clip(chat.posture, 1000), recent,
     worldBook: clip(chat.preparedWorldBookContext, 4000),
     state: clip(JSON.stringify(chat.variables || {}), 2500),
+    presetContract: contract ? { version: contract.version, digest: contract.digest, presetName: contract.presetName,
+      sourceCharacters: contract.sourceCharacters, entriesCount: contract.entries.length,
+      reviewAxes: contract.reviewAxes, instruction: contract.instruction } : null,
+    editorialRequired: needsDreamSikeEditorialReview(chat),
     draft: currentDraft ? {
       status: currentDraft.status, phase: currentDraft.phase, version: currentDraft.version,
       revisionCount: currentDraft.revisionCount, checks: currentDraft.checks,
@@ -40,7 +46,9 @@ function turnReport(chat, identity, draftOffset = 0) {
       text: currentDraft.text.slice(draftOffset, draftEnd),
       nextOffset: draftEnd < currentDraft.text.length ? draftEnd : null
     } : null,
-    next: '需要更多细节时调用世界书搜索和历史召回工具；草稿提交前使用检查工具。'
+    next: needsDreamSikeEditorialReview(chat)
+      ? '按预设契约写作。检查草稿时提交六维 review，说明具体缺陷或可观察结果，不展开私有推理；发现 revise 后局部修订并重新审阅。需要资料时使用世界书搜索和历史召回。'
+      : '需要更多细节时调用世界书搜索和历史召回工具；草稿提交前使用检查工具。'
   })
 }
 
@@ -85,8 +93,8 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   tools.register(defineTool({
     name: 'sike_put_draft',
-    description: '建立本回合唯一的正文草稿。草稿不会成为正式消息，也不会触发变量结算；后续修改请用 sike_patch_draft。',
-    parameters: { text: { type: 'string', required: true, description: '供玩家阅读的完整剧情正文；不要包含内部推理或变量协议' } },
+    description: '建立本回合唯一的完整可渲染文档，保留已启用预设要求的正文外壳、场景栏、平行事件及人物卡 HTML。草稿不会成为正式消息，也不会触发变量结算；后续修改请用 sike_patch_draft。',
+    parameters: { text: { type: 'string', required: true, description: '供玩家阅读的完整可渲染正文，包括本局要求的可见预设外壳与卡片 HTML；不要包含内部推理或变量协议' } },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => putDreamSikeDraft(chat, identity, args.text), 'draft.put')
@@ -110,13 +118,20 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   tools.register(defineTool({
     name: 'sike_check_draft',
-    description: '检查当前草稿的正文格式和内部协议残留。输出可核实的问题；文风与剧情判断由 Agent 根据上下文进行。',
-    parameters: { expectedVersion: { type: 'integer', required: true, description: '要检查的草稿版本' } },
+    description: '检查正文协议，并记录 Agent 对预设文风、角色、信息差和剧情的可核实审阅。存在原预设写作规则时必须提交六维 review。此工具只验证审阅结构和协议；文风判断由 Agent 对照原规则进行，不等于程序证明质量。',
+    parameters: {
+      expectedVersion: { type: 'integer', required: true, description: '要检查的草稿版本' },
+      review: { type: 'json', description: '原预设规则启用时必填对象：character、knowledge、style、continuity、playerAgency、format 各为 {status:"pass"或"revise",evidence:"8–500 字符的具体正文缺陷或可观察结果"}。不要只说符合要求，不要展开私有推理。' }
+    },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
-      const draft = await write(exec, (chat, identity) => checkDreamSikeDraft(chat, identity, args.expectedVersion), 'draft.check')
+      const draft = await write(exec, (chat, identity) => checkDreamSikeDraft(chat, identity, args.expectedVersion, { review: args.review }), 'draft.check')
       const issues = draft.checks.issues
-      const report = issues.length ? '发现 ' + issues.length + ' 项问题：' + issues.map(item => item.message).join('；') : '检查通过；允许零修订。'
+      const report = issues.length
+        ? '发现 ' + issues.length + ' 项问题：' + issues.map(item => item.message).join('；') + '。请处理缺陷后，对新版本重新检查。'
+        : draft.checks.editorial?.required
+          ? '协议检查通过，六维正文审阅已记录；允许零修订。审阅为 Agent 判断，可在工作窗核实。'
+          : '检查通过；允许零修订。'
       return { report, draft }
     }
   }))

@@ -242,7 +242,7 @@ test('梦境思客DSH仅提交已确认草稿一次，并标记草稿完成', as
 })
 
 test('梦境思客DSH未确认、过期或与模型末尾文字不符的草稿不提交，也不结算', async () => {
-  for (const state of ['unready', 'stale', 'mismatch']) {
+  for (const state of ['unready', 'checked-unconfirmed', 'stale', 'mismatch']) {
     const run = harness('story', { playPresetId: 'dream-sike-dsh' })
     const input = { sessionId: 'session-1', turn: 2, requestId: 'sike-rpc-' + state, userText: '推开窗' }
     await run.orchestrator.prepare(input)
@@ -251,7 +251,7 @@ test('梦境思客DSH未确认、过期或与模型末尾文字不符的草稿�
     putDreamSikeDraft(chat, identity, '雨水扑进房间。', 10)
     if (state !== 'unready') {
       checkDreamSikeDraft(chat, identity, 1, 20)
-      readyDreamSikeDraft(chat, identity, 1, 30)
+      if (state !== 'checked-unconfirmed') readyDreamSikeDraft(chat, identity, 1, 30)
       if (state === 'stale') chat.dreamSikeDraft.storyRevision++
     }
     run.replaceChat(chat)

@@ -9,7 +9,7 @@ import { lastTavernHelperVariables } from './tavern-helper-context.js'
 import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeResourcePath } from './file-resources.js'
 import { diffJson } from './json-mutation.js'
-import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn } from './dream-sike-draft.js'
+import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn, dreamSikeTurnIdentity, readyDreamSikeDraft } from './dream-sike-draft.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -738,6 +738,10 @@ export function createTurnOrchestrator(options) {
         || ready.storyRevision !== operation.basedOn.revision || ready.text.trim() !== sourceText) {
         throw new Error('梦境思客DSH正文草稿未确认或已过期，正式正文未提交')
       }
+      // Revalidate confirmed, restored drafts without confirming a draft on the
+      // Agent's behalf. Preset changes must not bypass the editorial gate.
+      try { readyDreamSikeDraft(chat, dreamSikeTurnIdentity(chat, input.sessionId, turn), ready.version) }
+      catch (error) { throw new Error('梦境思客DSH正文草稿未确认或已过期，正式正文未提交：' + error.message) }
     }
     const before = {
       posture: chat.posture || '',
