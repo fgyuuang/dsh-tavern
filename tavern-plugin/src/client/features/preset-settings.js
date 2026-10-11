@@ -4,6 +4,9 @@ function TavernPresetSettings(props) {
     const [busy, setBusy] = React.useState(false), [notice, setNotice] = React.useState("");
     const [error, setError] = React.useState("");
     const [variableDrafts, setVariableDrafts] = React.useState({});
+    const [stageId, setStageId] = React.useState("role-scene"), [query, setQuery] = React.useState("");
+    const [sourceDrawer, setSourceDrawer] = React.useState(null);
+    const drawerElement = React.useRef(null), drawerTrigger = React.useRef(null);
     const context = React.useRef({ sessionId: props.sessionId, revision: props.revision, generation: 0 });
     const saving = React.useRef(false);
     context.current.sessionId = props.sessionId;
@@ -12,12 +15,22 @@ function TavernPresetSettings(props) {
         let active = true;
         context.current.generation += 1;
         saving.current = false;
-        setSettings(null); setDrafts({}); setVariableDrafts({}); setBusy(false); setNotice(""); setError("");
+        setSettings(null); setDrafts({}); setVariableDrafts({}); setBusy(false); setNotice(""); setError(""); setSourceDrawer(null);
         rpc("getConversationPresetSettings", {}, props.sessionId).then(result => {
             if (active) setSettings(result.settings);
         }, error => { if (active) setError(String(error.message || error)); });
         return () => { active = false; context.current.generation += 1; };
     }, [props.sessionId, props.revision]);
+    React.useEffect(function () {
+        if (!sourceDrawer) return;
+        if (drawerElement.current && !drawerElement.current.open) drawerElement.current.showModal();
+        drawerElement.current?.querySelector("button")?.focus();
+        return () => { drawerTrigger.current?.focus(); };
+    }, [sourceDrawer]);
+    function openSource(event, target) {
+        drawerTrigger.current = event.currentTarget;
+        setSourceDrawer(target || {});
+    }
     function patch(kind, item, change) {
         setDrafts(current => ({ ...current, [kind + ":" + item.key]: { ...item, ...current[kind + ":" + item.key], ...change } }));
     }
@@ -70,49 +83,132 @@ function TavernPresetSettings(props) {
                 disabled: busy, onChange: event => patch(kind, item, { content: event.target.value }) })) : null);
     }
     const hasDrafts = Object.keys(drafts).length > 0;
-    function compatibility(item) {
+    function compatibility(item, includeSupported) {
         const value = item.compatibility;
-        return value ? h("p", { className: "dsh-tavern-settings-desc", "data-compatibility": value.status },
-            value.label || value.status, value.reason ? "：" + value.reason : "") : null;
+        if (value?.status === "supported" && !includeSupported) return null;
+        return value ? h("details", { className: "dsh-agent-preset-compat", "data-compatibility": value.status },
+            h("summary", null, value.label || value.status), h("p", null, value.reason || "")) : null;
     }
     function sourceGroup(source) {
         const multiple = source.mode === "multiple" || source.mode === "checkbox";
-        return h("fieldset", { key: source.id, className: "dsh-local-field", "data-source-group": source.id },
-            h("legend", null, source.label),
-            (source.options || []).map(option => h("div", { key: option.id, className: "dsh-tavern-preset-setting-row" },
-                h("label", null, h("input", {
-                    type: multiple ? "checkbox" : "radio", name: "preset-source-" + props.sessionId + "-" + source.id,
-                    checked: !!option.enabled, disabled: busy || hasDrafts || option.available === false,
-                    "aria-label": source.label + "：" + option.label,
-                    onChange: event => {
-                        if (hasDrafts || option.available === false) return;
-                        submit({ sourceAction: { groupId: source.id, optionId: option.id, enabled: event.target.checked } });
-                    }
-                }), " " + option.label),
-                option.description ? h("p", { className: "dsh-tavern-settings-desc" }, option.description) : null,
-                h("small", null, option.status === "unmatched" ? "未匹配原预设条目" : option.enabled ? "已开启" : "未开启"),
-                compatibility(option),
-                (option.prompts || []).length ? h("details", null,
-                    h("summary", null, "来源提示词原文（" + option.prompts.length + "）"),
-                    option.prompts.map(prompt => h("div", { key: prompt.key },
-                        h("p", null, prompt.name + " · " + (prompt.enabled ? "启用" : "关闭")),
-                        h("textarea", { className: "dsh-tavern-preset-entry-editor", rows: 6, readOnly: true,
-                            "aria-label": source.label + "：" + option.label + "：" + prompt.name + "原文", value: prompt.content || "" })))) : null)),
+        const selected = (source.options || []).find(option => option.enabled);
+        return h("section", { key: source.id, className: "dsh-agent-preset-group", "data-source-group": source.id },
+            h("div", { className: "dsh-agent-preset-group-heading" }, h("h4", null, source.label),
+                h("button", { type: "button", className: "dsh-agent-preset-link", "aria-label": "查看" + source.label + "原文",
+                    onClick: event => openSource(event, { groupId: source.id }) }, "来源原文")),
+            source.description ? h("p", { className: "dsh-tavern-settings-desc" }, source.description) : null,
+            multiple ? h("div", { className: "dsh-agent-preset-options" }, (source.options || []).map(option =>
+                h("div", { key: option.id, className: "dsh-agent-preset-option", "data-source-option": option.id },
+                    h("label", { className: "dsh-agent-preset-switch-row" }, h("span", null, option.label), h("input", {
+                        type: "checkbox", role: "switch", checked: !!option.enabled,
+                        disabled: busy || hasDrafts || option.available === false,
+                        "aria-label": source.label + "：" + option.label,
+                        onChange: event => submit({ sourceAction: { groupId: source.id, optionId: option.id, enabled: event.target.checked } }) })),
+                    option.description ? h("p", { className: "dsh-tavern-settings-desc" }, option.description) : null,
+                    compatibility(option)))) : h(React.Fragment, null,
+                h("select", { value: selected?.id || "", disabled: busy || hasDrafts, "aria-label": source.label,
+                    onChange: event => { if (event.target.value) submit({ sourceAction: { groupId: source.id, optionId: event.target.value, enabled: true } }); } },
+                    h("option", { value: "", disabled: true }, "请选择" + source.label),
+                    (source.options || []).map(option => h("option", { key: option.id, value: option.id, disabled: option.available === false,
+                        "data-source-option": option.id }, option.label + (option.available === false ? "（不可用）" : "")))),
+                selected?.description ? h("p", { className: "dsh-tavern-settings-desc" }, selected.description) : null,
+                selected ? compatibility(selected) : null),
             (source.variableInputs || []).map(input => {
                 const key = source.id + ":" + input.id;
                 const value = Object.prototype.hasOwnProperty.call(variableDrafts, key) ? variableDrafts[key] : String(input.value == null ? "" : input.value);
-                return h("div", { key: input.id, className: "dsh-tavern-preset-setting-row" },
-                    h("label", null, input.label, h("input", { type: "text", value, maxLength: 100000,
+                return h("div", { key: input.id, className: "dsh-agent-preset-variable", "data-source-variable": input.id },
+                    h("label", null, input.label, h("input", { type: "text", value, maxLength: 10000,
                         "aria-label": source.label + "：" + input.label,
                         disabled: busy || hasDrafts || input.available === false,
                         onChange: event => setVariableDrafts(current => ({ ...current, [key]: event.target.value })) })),
-                    input.description ? h("p", { className: "dsh-tavern-settings-desc" }, input.description) : null,
-                    h("small", null, input.scope === "global" ? "原全局变量 · 本局覆盖" : "本局变量"),
+                    input.description || input.compatibility?.reason ? h("details", { className: "dsh-agent-preset-help" }, h("summary", null, "用法说明"),
+                        input.description ? h("p", null, input.description) : null,
+                        input.compatibility?.reason ? h("p", null, input.compatibility.reason) : null) : null,
+                    h("small", null, "保存到本局"),
                     compatibility(input),
                     h("button", { type: "button", className: "dsh-tavern-btn",
                         disabled: busy || hasDrafts || input.available === false || value === String(input.value == null ? "" : input.value),
                         onClick: () => submit({ sourceAction: { groupId: source.id, optionId: input.id, value } }) }, "应用" + input.label));
             }));
+    }
+    function stages() {
+        const groups = settings.sourceSettings.groups || [];
+        const defaults = [
+            { id: "role-scene", label: "角色与场景", groupIds: ["角色设定", "人称设定"] },
+            { id: "narration", label: "叙事与文风", groupIds: ["文风设置", "次要文风", "叙事者", "字数要求"] },
+            { id: "planning", label: "思考与检索", groupIds: ["思考强度", "角色分析"] },
+            { id: "output", label: "输出与共创", groupIds: ["抢话设定", "输出模式"] },
+            { id: "review-state", label: "审稿与状态", groupIds: ["MVU适配", "其他选开设置"] },
+            { id: "model", label: "模型与兼容", groupIds: ["模型适配"] }
+        ];
+        const provided = settings.agentPreset?.stages;
+        const result = (provided?.length ? provided : defaults).map(stage => ({ ...stage,
+            optionIds: [...(stage.optionIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => group.options.map(option => ({ groupId: group.id, optionId: option.id }))))],
+            variableIds: [...(stage.variableIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => group.variableInputs.map(input => ({ groupId: group.id, inputId: input.id }))))] }));
+        const last = result.find(stage => stage.id === "model") || result[result.length - 1];
+        for (const group of groups) {
+            for (const option of group.options || []) if (!result.some(stage => stage.optionIds.some(ref => ref.groupId === group.id && ref.optionId === option.id))) last.optionIds.push({ groupId: group.id, optionId: option.id });
+            for (const input of group.variableInputs || []) if (!result.some(stage => stage.variableIds.some(ref => ref.groupId === group.id && (ref.inputId || ref.optionId) === input.id))) last.variableIds.push({ groupId: group.id, inputId: input.id });
+        }
+        return result;
+    }
+    function workbench() {
+        const workflow = stages(), current = workflow.find(stage => stage.id === stageId) || workflow[0];
+        const agentEnabled = settings.agentPreset?.enabled === true;
+        const search = query.trim().toLocaleLowerCase();
+        const groups = (settings.sourceSettings.groups || []).map(source => ({ ...source,
+            options: (source.options || []).filter(option => search
+                ? [source.label, option.label, option.description].some(text => String(text || "").toLocaleLowerCase().includes(search))
+                : current.optionIds.some(ref => ref.groupId === source.id && ref.optionId === option.id)),
+            variableInputs: (source.variableInputs || []).filter(input => search
+                ? [source.label, input.label, input.description].some(text => String(text || "").toLocaleLowerCase().includes(search))
+                : current.variableIds.some(ref => ref.groupId === source.id && (ref.inputId || ref.optionId) === input.id))
+        })).filter(group => group.options.length || group.variableInputs.length);
+        const tabPrefix = "dsh-preset-" + props.sessionId;
+        return h(React.Fragment, null,
+            h("header", { className: "dsh-agent-preset-header" },
+                h("div", null, h("h3", null, agentEnabled ? settings.agentPreset?.title || "梦境思客DSH" : settings.presetName || "梦境思客"),
+                    h("p", null, agentEnabled ? "保留原作者规则，按 Agent 执行阶段配置" : "保留原作者规则，配置原酒馆预设选项")),
+                h("span", { className: "dsh-agent-preset-badge" }, agentEnabled ? "Agent 模式" : "原酒馆模式")),
+            h("div", { className: "dsh-agent-preset-toolbar" },
+                h("input", { type: "search", value: query, placeholder: "查找预设功能…", "aria-label": "搜索预设功能", onChange: event => setQuery(event.target.value) }),
+                h("button", { type: "button", className: "dsh-agent-preset-link", onClick: event => openSource(event) }, "来源与原文")),
+            h("nav", { role: "tablist", "aria-label": agentEnabled ? "Agent 执行阶段" : "预设配置分类", className: "dsh-agent-preset-tabs" }, workflow.map((stage, index) =>
+                h("button", { key: stage.id, type: "button", role: "tab", id: tabPrefix + "-" + stage.id,
+                    "aria-selected": current.id === stage.id, "aria-controls": tabPrefix + "-panel", tabIndex: current.id === stage.id ? 0 : -1,
+                    onClick: () => { setStageId(stage.id); setQuery(""); }, onKeyDown: event => {
+                        const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                        const target = event.key === "Home" ? 0 : event.key === "End" ? workflow.length - 1 : offset ? (index + offset + workflow.length) % workflow.length : -1;
+                        if (target >= 0) { event.preventDefault(); setStageId(workflow[target].id); setQuery(""); event.currentTarget.parentElement.children[target].focus(); }
+                    } }, stage.label))),
+            hasDrafts ? h("p", { role: "status", className: "dsh-agent-preset-warning" }, "高级设置有未保存修改，请先保存或撤销，再切换原预设功能。") : null,
+            [...(settings.sourceSettings.errors || []), ...(settings.agentPreset?.errors || [])].map((item, index) => h("p", { key: index, role: "alert" }, typeof item === "string" ? item : item.message || String(item))),
+            h("div", { role: "tabpanel", id: tabPrefix + "-panel", "aria-labelledby": tabPrefix + "-" + current.id, className: "dsh-agent-preset-panel" },
+                h("div", { className: "dsh-agent-preset-stage-heading" }, h("h4", null, search ? "搜索结果" : current.label),
+                    h("p", null, search ? "显示所有分类中匹配的功能" : agentEnabled ? current.description || "选择后立即保存，从下一回合生效" : "原预设选项，选择后从下一回合生效")),
+                groups.length ? h("div", { className: "dsh-agent-preset-groups" }, groups.map(sourceGroup)) : h("p", null, search ? "没有匹配的功能" : "此阶段暂无可配置选项")),
+            h("details", { className: "dsh-agent-preset-advanced" }, h("summary", null, "高级设置：规则、正则与脚本"), advanced()),
+            h("footer", { className: "dsh-agent-preset-footer" }, h("span", null, settings.presetName || "原预设"), h("span", null, "仅影响本局 · 下一回合生效")),
+            sourceDrawer ? h("div", { className: "dsh-agent-preset-overlay", onClick: event => { if (event.target === event.currentTarget) setSourceDrawer(null); } },
+                h("dialog", { "aria-modal": "true", "aria-label": "来源提示词原文", className: "dsh-agent-preset-drawer", ref: drawerElement,
+                    onCancel: event => { event.preventDefault(); setSourceDrawer(null); },
+                    onKeyDown: event => {
+                        if (event.key === "Escape") { event.preventDefault(); setSourceDrawer(null); }
+                        if (event.key === "Tab") {
+                            const controls = [...event.currentTarget.querySelectorAll('button,textarea,summary,[tabindex="0"]')].filter(element => element.getClientRects().length);
+                            const first = controls[0], last = controls[controls.length - 1];
+                            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+                            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+                        }
+                    } },
+                    h("div", { className: "dsh-agent-preset-drawer-heading" }, h("h3", null, "来源与原文"), h("button", { type: "button", "aria-label": "关闭来源原文", onClick: () => setSourceDrawer(null) }, "关闭")),
+                    h("p", null, "原作者提示词仅供查看，选项与高级设置保存在本局。"),
+                    settings.sourceSettings.groups.filter(group => !sourceDrawer.groupId || sourceDrawer.groupId === group.id).map(group =>
+                        h("section", { key: group.id }, h("h4", null, group.label), group.options.map(option =>
+                            h("details", { key: option.id, className: "dsh-agent-preset-source-row" }, h("summary", null, option.label + (option.enabled ? " · 已开启" : "")),
+                                option.description ? h("p", null, option.description) : null, compatibility(option, true),
+                                (option.prompts || []).length ? option.prompts.map(prompt => h("label", { key: prompt.key }, prompt.name,
+                                    h("textarea", { rows: 7, readOnly: true, value: prompt.content || "", "aria-label": group.label + "：" + option.label + "：" + prompt.name + "原文" }))) : h("p", null, "此项为宿主设置，没有对应提示词原文。"))))))) : null);
     }
     function advanced() {
         return h(React.Fragment, null,
@@ -125,18 +221,11 @@ function TavernPresetSettings(props) {
             h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !hasDrafts, onClick: save }, busy ? "保存中…" : "保存本局预设设置"),
             h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !hasDrafts, onClick: () => setDrafts({}) }, "撤销未保存修改"));
     }
-    return h("section", { "aria-label": "预设功能设置", className: "dsh-local-field" },
-        h("h3", null, "预设功能设置"),
-        h("p", { className: "dsh-tavern-settings-desc" }, settings?.sourceSettings ? "按原预设助手分组选取功能，选择后立即保存，从下一回合生效。展开来源提示词可查看原文；迁移状态显示各功能的实际支持情况。" : "本局的文风、剧情分析和格式规则会进入 Agent 请求。展开规则可查看原文或修改；保存仅影响本局。"),
+    return h("section", { "aria-label": "预设功能设置", className: settings?.sourceSettings ? "dsh-agent-preset" : "dsh-local-field" },
+        !settings?.sourceSettings ? h("h3", null, "预设功能设置") : null,
+        !settings?.sourceSettings ? h("p", { className: "dsh-tavern-settings-desc" }, "本局的文风、剧情分析和格式规则会进入 Agent 请求。展开规则可查看原文或修改；保存仅影响本局。") : null,
         settings ? h(React.Fragment, null,
-            h("p", null, settings.presetName || "本局没有引用酒馆预设"),
-            settings.sourceSettings ? h(React.Fragment, null,
-                h("h4", null, settings.sourceSettings.title || "原预设助手设置"),
-                settings.sourceSettings.description ? h("p", { className: "dsh-tavern-settings-desc" }, settings.sourceSettings.description) : null,
-                (settings.sourceSettings.errors || []).map((item, index) => h("p", { key: index, role: "alert" }, typeof item === "string" ? item : item.message || String(item))),
-                hasDrafts ? h("p", { role: "status" }, "高级设置有未保存修改，请先保存或撤销，再切换原预设功能。") : null,
-                (settings.sourceSettings.groups || []).map(sourceGroup),
-                h("details", null, h("summary", null, "高级设置：规则、正则与脚本"), advanced())) : advanced()) : h("p", null, "正在读取本局预设…"),
+            settings.sourceSettings ? workbench() : h(React.Fragment, null, h("p", null, settings.presetName || "本局没有引用酒馆预设"), advanced())) : h("p", null, "正在读取本局预设…"),
         error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, busy ? "正在保存本局预设设置…" : notice));
 }
 
