@@ -3,7 +3,7 @@ import {
   checkDreamSikeDraft, dreamSikeDraftView, dreamSikeTurnIdentity,
   patchDreamSikeDraft, putDreamSikeDraft, readyDreamSikeDraft
 } from '../domain/dream-sike-draft.js'
-import { dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
+import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
 import { dreamSikePreparationView, needsDreamSikePreparation, prepareDreamSikeTurn, recordDreamSikeTurnRead } from '../domain/dream-sike-preparation.js'
 import { readDreamSikeAgentRules } from '../domain/dream-sike-agent-profile.js'
 import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from '../domain/dream-sike-draft-modules.js'
@@ -281,14 +281,26 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     description: '检查正文协议，并记录 Agent 对预设文风、角色、信息差和剧情的可核实审阅。仅 editorialRequired=true 的剧情回合必须提交六维 review；聊天和总结模式免除。工具验证审阅结构和协议，文风判断由 Agent 对照作者规则进行，不等于程序证明质量。',
     parameters: {
       expectedVersion: { type: 'integer', required: true, description: '要检查的草稿版本' },
-      review: { type: 'json', description: 'editorialRequired=true 时必填对象：character、knowledge、style、continuity、playerAgency、format 各为 {status:"pass"或"revise",evidence:"8–500 字符的具体正文缺陷或可观察结果"}。聊天与总结模式省略；不要只说符合要求，不要展开私有推理。' }
+      review: {
+        type: 'object', additionalProperties: false,
+        description: 'editorialRequired=true 时必填六维对象。聊天与总结模式省略；不要只说符合要求，不要展开私有推理。',
+        properties: Object.fromEntries(DREAM_SIKE_REVIEW_AXES.map(axis => [axis, {
+          type: 'object', required: true, additionalProperties: false,
+          properties: {
+            status: { type: 'string', required: true, enum: ['pass', 'revise'] },
+            evidence: { type: 'string', required: true, description: '8–500 字符的具体正文缺陷或可观察结果' }
+          }
+        }]))
+      }
     },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => checkDreamSikeDraft(chat, identity, args.expectedVersion, { review: args.review }), 'draft.check')
       const issues = draft.checks.issues
       const report = issues.length
-        ? '发现 ' + issues.length + ' 项问题：' + issues.map(item => item.message).join('；') + '。请处理缺陷后，对新版本重新检查。'
+        ? '当前草稿版本 ' + draft.version + '，发现 ' + issues.length + ' 项问题：' + issues.map(item => item.message).join('；')
+          + (issues.every(item => /^editorial-(missing|extra-axis|invalid-)/.test(item.code))
+            ? '。请补齐 review 对象，对当前版本重新检查；无需因此修改正文。' : '。请处理正文缺陷后重新检查。')
         : draft.checks.editorial?.required
           ? '协议检查通过，六维正文审阅已记录；允许零修订。审阅为 Agent 判断，可在工作窗核实。'
           : '检查通过；允许零修订。'

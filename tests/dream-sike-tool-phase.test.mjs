@@ -63,6 +63,14 @@ test('同一步的预推测修改或确认不执行，下个模型步骤可继�
   let chat=fixture(); const tools=new Map()
   registerDreamSikeTools({tools:{register:t=>tools.set(t.name,t)},chatForSession:async()=>structuredClone(chat),
     updateChat:async(_id,mutate)=>{chat=await mutate(structuredClone(chat));return chat},activeTurnOf:()=>1})
+  const reviewSchema = tools.get('sike_check_draft').parameters.properties.review
+  assert.equal(reviewSchema.type, 'object')
+  assert.deepEqual(reviewSchema.required, ['character','knowledge','style','continuity','playerAgency','format'])
+  for (const axis of Object.values(reviewSchema.properties)) {
+    assert.equal(axis.type, 'object')
+    assert.deepEqual(axis.required, ['status','evidence'])
+    assert.deepEqual(axis.properties.status.enum, ['pass','revise'])
+  }
   const exec={agent:{session:{id:'s'},phase:{turn:1,step:1}}}
   await tools.get('sike_read_turn').execute({},exec)
   await tools.get('sike_put_draft').execute({text:'门向内开了。'},exec)
