@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 
 // The optional source card is read only. No chat, profile setting, worldbook,
 // model or desktop process is touched. All helper writes stay in page memory.
+// The editable seat implements the native input API contract, not the desktop
+// conversation component. This does not verify parent-offline/read-only seats.
 test('救赎之理真实开局和状态前端将输入桥接至可编辑正文输入框', {
   skip: !process.env.TAVERN_BROWSER_TESTS || !process.env.TAVERN_REDEMPTION_CARD,
   timeout: 90000
@@ -108,6 +110,7 @@ test('救赎之理真实开局和状态前端将输入桥接至可编辑正文�
   await opening.locator('#enter').click()
   await opening.locator('#go').click()
   await page.waitForFunction(() => (window.drafts.A || '').startsWith('【救赎之理】'))
+  t.diagnostic('开局填入后的父文档焦点：' + await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName))
   assert.ok(await opening.locator('#log').innerText().then(text => text.includes('已写入输入框')))
   assert.equal(await page.evaluate(() => window.calls.length), 0, '开始降临只填入，不自动调用模型')
   const editorA = page.getByRole('textbox', { name: 'A 的消息' })
@@ -153,4 +156,5 @@ test('救赎之理真实开局和状态前端将输入桥接至可编辑正文�
   assert.equal(await editorB.innerText(), '询问门口的守卫', '卸载后拒绝已经排队的填入')
   assert.equal(await page.evaluate(() => window.calls.length), 3, '卸载不补发消息')
   assert.deepEqual(errors, [])
+  t.diagnostic('原卡开局、建议、道具、手工编辑、双帧隔离、重复发送和过期回调均通过；2 次用户发送、1 次兼容按钮发送；没有模型调用。')
 })

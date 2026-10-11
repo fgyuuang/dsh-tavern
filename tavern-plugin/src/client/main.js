@@ -760,6 +760,7 @@ window.__ModuleLoader__.load({
 
 // @include features/turn-history.js
 
+// @include features/preset-settings.js
 // @include features/play-controls.js
 
 // @include features/request-context.js

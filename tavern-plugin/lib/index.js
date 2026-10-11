@@ -6,6 +6,7 @@ import { registerModelStreamHooks } from './hooks/model-stream.js'
 import { registerTurnLifecycleHooks } from './hooks/turn-lifecycle.js'
 import { registerGameplayTools } from './tools/gameplay.js'
 import { registerDreamSikeTools } from './tools/dream-sike.js'
+import { conversationPresetSettings, updateConversationPresetSettings } from './domain/conversation-preset-settings.js'
 import { registerGameMemoryTools } from './tools/game-memory.js'
 import { createGameMemoryWorkspace } from './domain/game-memory-workspace.js'
 import { createCardProjects } from './domain/card-projects.js'
@@ -3825,6 +3826,35 @@ export async function apply(ctx) {
       case 'setDefaultPlayPreset': {
         const settings = await updateTavernSettings({ defaultPlayPresetId: args?.presetId })
         return { defaultPlayPresetId: settings.defaultPlayPresetId }
+      }
+      case 'getConversationPresetSettings': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
+        return { settings: conversationPresetSettings(chat.runtimePresetSnapshot, chat.playPresetId) }
+      }
+      case 'updateConversationPresetSettings': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
+        const assertIdle = current => {
+          if (agentRegistry.get(sessionId)?.phase?.kind === 'running' || backgroundTasks.activity(current).busy
+            || tavernScriptDispatch.status(sessionId).busy || ['pending', 'running', 'waiting-runtime'].includes(current.settleStatus)
+            || current.regenInProgress || replayFailedTurnActive(current.id)) throw new Error('请等待前后台任务完成后再修改预设')
+        }
+        assertIdle(chat)
+        const snapshot = updateConversationPresetSettings(chat.runtimePresetSnapshot, args?.changes, args?.digest, chat.playPresetId)
+        const saved = await updateChat(chat.id, current => {
+          assertIdle(current)
+          if (current._storageRevision !== chat._storageRevision || current.runtimePresetSnapshot?.digest !== args.digest) throw new Error('本局状态已变化，请刷新后重试')
+          current.runtimePresetSnapshot = snapshot
+          current.tavernHelperLifecycleRevision = (Number(current.tavernHelperLifecycleRevision) || 0) + 1
+          current.playPresetRevision = (Number(current.playPresetRevision) || 0) + 1
+          current.dreamSikeResume = null
+          return current
+        }, { source: 'preset.configure-conversation' })
+        tavernScriptDispatch.dispose(sessionId)
+        return { settings: conversationPresetSettings(saved.runtimePresetSnapshot, saved.playPresetId), nextTurn: true }
       }
       case 'applyConversationPreset': {
         const sessionId = str(args?.sessionId)

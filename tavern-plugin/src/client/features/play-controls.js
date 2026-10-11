@@ -846,6 +846,7 @@
                     data?.current?.id && !data.presets.some(p => p.path === data.current.id) ? h("option", { value: data.current.id }, data.current.name + "（源文件已移除）") : null,
                     (data?.presets || []).filter(p => p.valid && p.recognized).map(p => h("option", { key: p.path, value: p.path }, p.title)))),
                 h("p", { className: "dsh-tavern-settings-desc" }, "本局引用的酒馆预设；梦境思客DSH会沿用其可用正则。切换从下一回合生效。"),
+                h(TavernPresetSettings, { key: props.sessionId, sessionId: props.sessionId, revision: data?.current?.id }),
                 error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
         }
 
@@ -1359,6 +1360,10 @@
 			const slots = input.slots;
 			const uiConversation = ctx.get("uiConversation") || ctx.get("conversation");
 			const executeSlash = createTavernFrameSlashExecutor(ctx);
+            ctx.effect(() => slots.inject("conversation.session.header.utilities", () => slots.register(
+                { name: "conversation.session.header.utilities", id: "dsh-tavern-return-to-story", order: 75 },
+                props => React.createElement(TavernReturnToStory, { ...props, sessions: ctx.sessions })
+            )), "dsh-tavern: return from background view");
             ctx.effect(() => ctx.betterSidebar.registerTab({
                 id: "dsh-tavern:conversation-settings", title: "本局设置", order: 8, single: true,
                 component: props => React.createElement(TavernConversationSettingsTab, { sessionId: props.scope.sessionId, sessions: ctx.sessions })
