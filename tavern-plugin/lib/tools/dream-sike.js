@@ -136,6 +136,26 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     return { chat, identity: dreamSikeTurnIdentity(chat, sessionId, turn) }
   }
 
+  const mutations = new WeakMap()
+  function register(tool) {
+    if (tool.name === 'sike_read_turn') return tools.register(tool)
+    const execute = tool.execute
+    return tools.register({ ...tool, async execute(args, exec) {
+      const agent = exec?.agent, phase = agent?.phase
+      const scoped = agent && Number.isSafeInteger(phase?.turn) && Number.isSafeInteger(phase?.step)
+      const key = scoped ? phase.turn + ':' + phase.step : null
+      if (key && mutations.get(agent)?.key === key) {
+        const { chat, identity } = await resolve(exec)
+        const draft = currentDraftView(chat, identity)
+        return { report: '本模型步骤已有写作状态变更，后续预推测调用未执行。当前草稿版本：' + (draft?.version ?? '尚未建立') + '。请依据实际结果在下一步骤继续；同次局部修改合并到 patches。', draft }
+      }
+      const marker = { key }
+      if (key) mutations.set(agent, marker)
+      try { return await execute(args, exec) }
+      catch (error) { if (key && mutations.get(agent) === marker) mutations.delete(agent); throw error }
+    } })
+  }
+
   async function write(exec, mutate, source) {
     const { chat, identity } = await resolve(exec)
     const saved = await updateChat(chat.id, current => {
@@ -153,7 +173,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     return draft
   }
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_read_turn',
     description: '读取当前行动、带真实消息或分支楼层引用的近期材料、草稿，以及当前启用作者规则和文风/叙事者索引。规则可完整分页续读，长草稿按 nextOffset 续读；资料截断时使用历史、世界书和变量工具补全。',
     parameters: {
@@ -184,7 +204,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_prepare_turn',
     description: '读取回合后保存简短写作准备：当前场景、人物约束、认知边界、已选文风、当前推进和玩家停止位置。仅 preparationRequired=true 的剧情回合必须起草前调用，聊天和总结模式免除。这是执行简报，不接收完整思考链，不触发消息或变量结算。',
     parameters: {
@@ -213,9 +233,9 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_put_draft',
-    description: '建立本回合唯一的完整可渲染文档，保留已启用预设要求的正文外壳、场景栏、平行事件及人物卡 HTML。草稿不会成为正式消息，也不会触发变量结算；后续修改请用 sike_patch_draft。',
+    description: '建立本回合唯一的主线草稿，保留已选正文外壳、场景栏及人物卡 HTML。平行事件由独立模块合入，若提前包含平行区块，宿主先保存主线并移交该区块。已有草稿后使用局部修订，不能再次建立；草稿不触发正式消息或变量结算。',
     parameters: { text: { type: 'string', required: true, description: '供玩家阅读的完整可渲染正文，包括本局要求的可见预设外壳与卡片 HTML；不要包含内部推理或变量协议' } },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
@@ -224,7 +244,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_patch_draft',
     description: '以当前版本和唯一原文片段局部修订草稿，修订次数不设上限。同次审稿的缺陷优先合并为 patches 数组，一次原子应用 1–8 个片段；按顺序匹配前一片段修改后的文本，全部有效才保存一个新版本。也兼容单项 find/replacement；不得用整篇重写绕过版本检查。',
     parameters: {
@@ -241,7 +261,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_run_module',
     description: '执行已启用独立草稿模块：parallel 按作者原文生成平行事件并合入唯一草稿；review 自动先生成或更新缺失/过期的平行事件，再独立审阅完整草稿。结果返回当前版本，存在 revise 时把同次审稿缺陷合并到 sike_patch_draft 的 patches 数组。全部通过再检查确认；不触发正式消息或变量结算，未变化的结果复用。',
     parameters: { kind: { type: 'string', required: true, description: 'parallel 或 review' }, expectedVersion: { type: 'integer', required: true, description: '当前未确认草稿版本' } },
@@ -256,7 +276,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
         next: '使用返回的当前版本；存在 revise 时一次批量局部修改，再运行 review（自动更新过期平行事件）。审稿全部 pass 后 sike_check_draft、sike_ready_draft。' }), draft: result.draft }
     }
   }))
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_check_draft',
     description: '检查正文协议，并记录 Agent 对预设文风、角色、信息差和剧情的可核实审阅。仅 editorialRequired=true 的剧情回合必须提交六维 review；聊天和总结模式免除。工具验证审阅结构和协议，文风判断由 Agent 对照作者规则进行，不等于程序证明质量。',
     parameters: {
@@ -276,7 +296,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
-  tools.register(defineTool({
+  register(defineTool({
     name: 'sike_ready_draft',
     description: '所有检查和修订完成后，最后确认当前版本正文。成功后草稿锁定，应立即结束回合并返回一句简短完成提示；正式正文由宿主提交一次。',
     parameters: { expectedVersion: { type: 'integer', required: true, description: '已检查通过的草稿版本' } },

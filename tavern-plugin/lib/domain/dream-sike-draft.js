@@ -1,7 +1,7 @@
 import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
 import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
-import { dreamSikeDraftModulePlan, draftModuleReceiptCurrent } from './dream-sike-draft-modules.js'
+import { dreamSikeDraftModulePlan, draftModuleReceiptCurrent, draftModuleBase } from './dream-sike-draft-modules.js'
 
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
@@ -235,8 +235,8 @@ export function dreamSikeExecutionTrace(session, draft) {
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
   assertDreamSikePreparation(chat, identity)
-  const prose = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi, '')
-  if (dreamSikeDraftModulePlan(chat, 'parallel') && /<dream_parallel_event\b[^>]*>[\s\S]*?<\/dream_parallel_event\s*>/i.test(prose)) throw new Error('本局平行事件使用独立模块，请先仅建立主线草稿，再调用 sike_run_module(kind="parallel")')
+  if (dreamSikeDraftModulePlan(chat, 'parallel')) text = draftModuleBase(text, 'parallel')
+  assertDraftText(text)
   const previous = readDreamSikeDraft(chat)
   if (sameIdentity(previous, identity)) {
     if (previous.status === 'draft' && previous.version === 1 && previous.text === text) return previous

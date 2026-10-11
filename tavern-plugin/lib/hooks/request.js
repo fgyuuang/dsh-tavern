@@ -46,12 +46,6 @@ export function registerRequestHooks({
       const frame = previous?.frame && (previous.framePending === true || previous.turn === payload.turn) ? previous.frame : undefined
       requestCoordinates.set(sessionId, { turn: payload.turn, step: payload.step, ...(frame ? { frame } : {}) })
     }
-    if (sessionId !== '' && Number(payload.step) > 12 && !backgroundAgentRunner.owns(sessionId)) {
-      const chat = await chatForSession(sessionId)
-      if (chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')) {
-        throw new Error('梦境思客DSH本回合已达到 12 个模型执行步骤，草稿已保留')
-      }
-    }
     return await next()
   })
 

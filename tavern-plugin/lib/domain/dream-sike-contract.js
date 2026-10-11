@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 10
+const VERSION = 11
 export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
   '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
   '27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'f9b03e19-fd96-4782-8867-73ad2cbabfb9',
@@ -52,7 +52,7 @@ const WRAPPERS = new Set([
 
 export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 本局选定的原酒馆预设仍定义人物分析、叙事者、文风、视角、输入转述、字数、场景栏、平行事件及卡片格式。逐项执行已启用规则；未启用条目不加载。Skills 提供方法，不覆盖本局选择。当前玩家明确的修改优先于默认写法。
-原预设的正文/XML/HTML要求约束 sike_put_draft 的完整可渲染文本，保留 dream_plot、dream_body、dream_after_format、dream_scene、dream_parallel_event 等已要求的外壳及卡片 HTML。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
+原预设的正文/XML/HTML要求约束完整可渲染文档。sike_put_draft 先保存主线、dream_plot、dream_body、dream_after_format、dream_scene 及卡片 HTML；平行事件由独立模块插入 dream_parallel_event，前台不必预填。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
 原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history、dreamer_input、writing_setting 的开闭标签条目已按原生边界移除，这些名称在保留下来的作者原句中表示待核对的材料范围，按 sike_read_turn 的 materialAreas 解析为当前卡片、有效世界书、状态、本回合输入和分支历史；按名称对应的分析职责照旧执行，不因标签不存在而跳过，也不把原生工具消息改为旧酒馆的文本协议。
 首次读取回合保留材料、规则与当前草稿。连续续读作者规则时使用 includeMaterials=false、includeDraft=false，避免每页重复材料；只续读草稿时使用 includeRules=false。压缩、重启后或需要重新核对材料时显式 includeMaterials=true、includeRules=true。引用和摘要不能代替尚未读取的原文。

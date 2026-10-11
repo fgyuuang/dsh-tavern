@@ -179,7 +179,7 @@ test('stopping hook repairs stale ready drafts instead of declaring success or c
   putDreamSikeDraft(chat, identity, '她接过信。')
   checkDreamSikeDraft(chat, identity, 1, { review: review() })
   readyDreamSikeDraft(chat, identity, 1)
-  const hooks = new Map(), steering = [], commits = []
+  const hooks = new Map(), steering = [], commits = [], failures = []
   registerTurnLifecycleHooks({
     ctx: { on(name, handler) { hooks.set(name, handler) } },
     backgroundAgentRunner: { requestContext() {}, owns() { return false } },
@@ -187,10 +187,11 @@ test('stopping hook repairs stale ready drafts instead of declaring success or c
     chatForSession: async () => chat,
     userMessageForTurn: () => ({ content: [{ type: 'text', text: '递信' }] }),
     contentText: () => '递信', requestIdForTurn: () => 'req',
-    foregroundHandoff: { async finalize(input) { commits.push(input); return {} } }
+    foregroundHandoff: { async finalize(input) { commits.push(input); return {} } },
+    turnOrchestrator: { async recordFailure(input) { failures.push(input) } }
   })
   const agent = { session: { id: 's', events: [{ type: 'turn/start', data: { turn: 1 } },
-    { type: 'assistant/message', data: { turn: 1, message: { source: { kind: 'model' }, content: [{ type: 'text', text: '完成。' }] } } }] }, phase: { step: 7 }, steer(message) { steering.push(message) } }
+    { type: 'assistant/message', data: { turn: 1, message: { source: { kind: 'model' }, content: [{ type: 'text', text: '完成。' }] } } }] }, phase: { step: 25 }, steer(message) { steering.push(message) } }
   await hooks.get('agent/turn-stopping')({ agent, turn: 1 })
   assert.equal(commits.length, 1)
   assert.equal(steering.length, 0)
@@ -201,4 +202,8 @@ test('stopping hook repairs stale ready drafts instead of declaring success or c
   assert.match(steering.at(-1).content[0].text, /sike_prepare_turn/)
   assert.doesNotMatch(steering.at(-1).content[0].text, /草稿已确认/)
   assert.equal(chat.dreamSikeDraft.status, 'ready') // validation was read-only
+  await hooks.get('agent/turn-stopping')({ agent, turn: 1 })
+  await assert.rejects(hooks.get('agent/turn-stopping')({ agent, turn: 1 }), /状态没有推进/)
+  assert.equal(failures.length, 1)
+  assert.equal(commits.length, 1)
 })

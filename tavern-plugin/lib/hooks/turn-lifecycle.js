@@ -6,6 +6,7 @@ import { synchronizeBodyEdits } from '../domain/body-editor.js'
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
 import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '../domain/dream-sike-draft.js'
 import { randomUUID } from 'node:crypto'
+import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
@@ -30,6 +31,7 @@ export function registerTurnLifecycleHooks({
   turnOrchestrator,
   userMessageForTurn,
 }) {
+  const incompleteStops = new WeakMap()
   ctx.on('agent/turn-stopping', async function (payload) {
     const session = payload.agent && payload.agent.session
     if (session === undefined) return
@@ -56,8 +58,13 @@ export function registerTurnLifecycleHooks({
       catch { ready = false }
     }
     if (dreamMode && (!ready || !assistant?.text)) {
-      const step = Math.max(0, Number(payload.agent?.phase?.step) || 0)
-      if (step < 12 && typeof payload.agent?.steer === 'function') {
+      const fingerprint = JSON.stringify([draft?.version, draft?.status, draft?.checks?.version,
+        draft?.checks?.issues?.map(issue => issue.code), draft?.checks?.editorial?.passed,
+        chat.dreamSikePreparation?.preparedAt, chat.dreamSikePreparation?.ruleReadRanges?.length])
+      const previous = incompleteStops.get(payload.agent)
+      const count = previous?.turn === payload.turn && previous.fingerprint === fingerprint ? previous.count + 1 : 1
+      incompleteStops.set(payload.agent, { turn: payload.turn, fingerprint, count })
+      if (count < 3 && typeof payload.agent?.steer === 'function') {
         payload.agent.steer({
           id: randomUUID(), role: 'user',
           content: [{ type: 'text', text: ready
@@ -68,10 +75,11 @@ export function registerTurnLifecycleHooks({
         return
       }
       const message = ready ? '草稿已确认，但模型没有结束回复；草稿已保留，请继续处理。'
-        : '梦境思客DSH未在 12 个执行步骤内确认正文；草稿已保留，请继续处理。'
+        : '梦境思客DSH连续结束回复但草稿状态没有推进；草稿已保留，可继续处理。'
       await turnOrchestrator.recordFailure({ sessionId, turn: payload.turn, requestId, code: 'dream-sike-incomplete', message })
       throw new Error(message)
     }
+    incompleteStops.delete(payload.agent)
     if (assistant === null || assistant.text === '') {
       const reasoningOnly = assistant !== null && assistant.reasoningOnly === true
       const message = reasoningOnly
@@ -137,6 +145,7 @@ export function registerTurnLifecycleHooks({
       const extra = await pluginPromptSections({ gameId: agent.session.id })
       if (extra.length) assembled.sections = [...(assembled.sections || []), ...extra]
     }
-    return prependSystemInstruction(assembled, chat ? runtimePrompt('system-append') : '')
+    const phase = dreamSikeToolPhase(chat, agent.session.id, Number(agent.phase?.turn))
+    return prependSystemInstruction(applyDreamSikeToolPhase(assembled, phase), chat ? runtimePrompt('system-append') : '')
   })
 }
