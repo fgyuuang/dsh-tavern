@@ -569,6 +569,9 @@
                 const timing = openingPerformance.begin("startClick");
                 let successful = false;
 				const previousOpeningPicker = openingPicker;
+                if (initialMessage === undefined && uiMode === "play" && previousOpeningPicker?.card?.path === card?.path) {
+                    initialMessage = openingPickerInput(previousOpeningPicker, openingId);
+                }
                 let created = null;
 				const transitionOpening = previousOpeningPicker && previousOpeningPicker.openings ? previousOpeningPicker.openings.filter(function (item) { return item.id === openingId; })[0] : null;
 				tavernSessionTransition.begin({ projection: transitionOpening && transitionOpening.projection, trustedCardMode: previousOpeningPicker && previousOpeningPicker.trustedCardMode === true });
@@ -944,6 +947,8 @@
 				busy ? h("div", { className: "dsh-tavern-session-switching", role: "status", "aria-live": "polite" }, openingPicker.preparing ? "正在准备开场与脚本资源…" : "正在完成游戏初始化…", openingPicker.preparing ? h("div", { style: { marginTop: "8px", fontSize: "13px", opacity: .75 } }, "首次打开可能需要下载资源，请稍候；后续打开通常更快。") : null) : null,
 				h("label", { className: "dsh-tavern-player-name" }, h("span", null, "本局 Agent 模式"), h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏 Agent 模式", value: openingPicker.playPresetId || "tavern", disabled: busy || openingPicker.preparing, onChange: function (event) { const playPresetId = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { playPresetId: playPresetId }) : current; }); } }, (openingPicker.playPresets || []).map(function (preset) { return h("option", { key: preset.id, value: preset.id }, preset.name); }))),
 				h("div", { className: "dsh-tavern-player-name-help" }, "仅用于这次新游戏，不更改新游戏默认值。"),
+                    selectedOpening ? h(TavernOpeningInput, { picker: openingPicker, openingId: selectedOpening.id, busy: busy,
+                        onChange: text => setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text)) }) : null,
 					selectedOpening ? h("div", { hidden: openingSettingsCollapsed },
 						h("label", { className: "dsh-tavern-player-name" }, h("span", null, "故事中的玩家称呼（可选）"), h("input", { value: openingPicker.userName ?? "", maxLength: 80, placeholder: "你", disabled: busy, onChange: function (event) { const userName = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { userName: userName }) : current; }); } })),
 						h("div", { className: "dsh-tavern-player-name-help" }, "可以填写姓名、昵称或身份；默认沿用你上次使用的称呼，也可以在这里针对本局修改。开场白预览会随之更新。")
@@ -969,6 +974,10 @@
                     frameSizing: selectedOpening.frameSizing,
 					openingPreview: selectedOpening.openingPreview,
                     onSubmitOpening: function (text) { if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续"); return newConversation(openingPicker.card, null, selectedOpening.id, openingPicker.userName || "你", text); },
+                    onDraftOpening: function (text) {
+                        if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续");
+                        setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text));
+                    },
 					onSelectOpening: function (id) {
 						if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续");
 						const index = openingPicker.openings.findIndex(function (opening) { return opening.id === id; });

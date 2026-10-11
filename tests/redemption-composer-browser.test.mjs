@@ -156,5 +156,31 @@ test('救赎之理真实开局和状态前端将输入桥接至可编辑正文�
   assert.equal(await editorB.innerText(), '询问门口的守卫', '卸载后拒绝已经排队的填入')
   assert.equal(await page.evaluate(() => window.calls.length), 3, '卸载不补发消息')
   assert.deepEqual(errors, [])
+  // A preparation page has no native Session; fill its private editor without
+  // touching A/B. Creation/submission remains a separate explicit action.
+  await page.evaluate(() => {
+    window.preview = { draft: '', submitted: [] }
+    const area = document.createElement('textarea'); area.id = 'preview-editor'; area.setAttribute('aria-label', '准备页开局指令');
+    document.body.append(area); area.oninput = () => { window.preview.draft = area.value }
+    const button = document.createElement('button'); button.id = 'preview-start'; button.textContent = '提交准备页开局';
+    button.onclick = () => window.preview.submitted.push(window.preview.draft); document.body.append(button)
+    const frame = document.createElement('iframe'); frame.id = 'private-preview'; document.body.append(frame)
+    window.releases.preview = window.client.installFrameHostComposer(document, node => node === frame,
+      text => { window.preview.submitted.push(text) }, error => window.bridgeErrors.push(error.message),
+      text => { window.preview.draft = text; area.value = text })
+  })
+  await page.locator('#private-preview').evaluate((frame, html) => { frame.srcdoc = html }, withHelpers(originalHtml('开局')))
+  const preview = page.frameLocator('#private-preview')
+  await preview.locator('#enter:visible, #go:visible').first().waitFor()
+  // The unmodified card remembers that its welcome screen was acknowledged.
+  if (await preview.locator('#enter').isVisible()) await preview.locator('#enter').click()
+  await preview.locator('#go').click()
+  await page.waitForFunction(() => window.preview.draft.startsWith('【救赎之理】'))
+  assert.equal(await page.evaluate(() => window.preview.submitted.length), 0)
+  assert.equal(await page.evaluate(() => window.calls.length), 3)
+  await page.getByLabel('准备页开局指令', { exact: true }).fill('我先核对入口的信息。')
+  await page.locator('#preview-start').click()
+  assert.deepEqual(await page.evaluate(() => window.preview.submitted), ['我先核对入口的信息。'])
+  assert.equal(await page.evaluate(() => window.calls.length), 3, '准备页不写已有 Session')
   t.diagnostic('原卡开局、建议、道具、手工编辑、双帧隔离、重复发送和过期回调均通过；2 次用户发送、1 次兼容按钮发送；没有模型调用。')
 })

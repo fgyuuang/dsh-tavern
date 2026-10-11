@@ -4846,7 +4846,6 @@ function tavernModelRefusalNotice(text) {
 		    });
 		    releaseSender = sender.dispose;
 		    area.addEventListener('input', function () {
-		      if (typeof window.submitTavernInput === 'function') return;
 		      Promise.resolve().then(() => {
 		        if (owner.isConnected === false) return;
 		        if (typeof window.triggerSlash !== 'function') throw new Error('当前对话输入框尚未就绪');
@@ -10024,6 +10023,18 @@ function bindTavernFontZoom(node, win) {
                         // Only a pipe ending in /trigger starts the game. Scripts also query
                         // (/pass {{user}}) or notify (/echo); answer those without starting.
                         const line = String(data.args && data.args.line || "");
+                        const privateDraft = /^\/setinput(?: ([\s\S]*))?$/.exec(line);
+                        if (privateDraft) {
+                            Promise.resolve().then(function () {
+                                if (!current() || sourceDocument !== visible || typeof props.onDraftOpening !== "function") throw new Error("开局输入框不可用");
+                                return props.onDraftOpening(privateDraft[1] || "");
+                            }).then(function () {
+                                if (current()) event.source.postMessage({ type: "dsh-tavern-helper-response", token: data.token, requestId: data.requestId, ok: true, result: { pipe: "" } }, "*");
+                            }, function (error) {
+                                if (current()) event.source.postMessage({ type: "dsh-tavern-helper-response", token: data.token, requestId: data.requestId, ok: false, error: String(error.message || error) }, "*");
+                            });
+                            return;
+                        }
                         if (!/(?:^|\|)\s*\/trigger(?:\s[^|]*)?\s*$/.test(line)) {
                             const query = /^\s*\/pass\s+([\s\S]*)$/.exec(line);
                             const names = { user: String(helperContext && helperContext.playerName || "你"), char: String(helperContext && helperContext.characterName || "角色") };
@@ -10145,6 +10156,9 @@ function bindTavernFontZoom(node, win) {
                             // /setinput updates this Session's native draft; it
                             // never triggers generation or publishes a message.
                             return executeSlash("/setinput " + text, composerSessionId);
+                        } : props.openingPreview && typeof props.onDraftOpening === "function" ? function (text) {
+                            if (!listener || visible.key !== desired.key || props.sessionId) throw new Error("开局准备页已失效");
+                            return props.onDraftOpening(text);
                         } : undefined) : function () {};
 
 					const unsubscribeTheme = hostWindow.document && typeof hostWindow.MutationObserver === "function"
@@ -11584,7 +11598,7 @@ function bindTavernFontZoom(node, win) {
                 if (options.trustedCardMode === true && !options.openingPreview && parseTavernInlineFragment(content, window.document)) {
                     return h(TavernInlineFragment, {key:index, content:content});
                 }
-				return h(TavernMessageFrame, { key: index, content: content, sessionId: options.sessionId, turn: options.turn, partIndex: index, frameOwner: options.frameOwner, frameSizing: options.frameSizing, helperContext: options.helperContext, helperContextReader: options.helperContextReader, openingPreview: options.openingPreview, onSelectOpening: options.onSelectOpening, onSubmitOpening: options.onSubmitOpening, trustedCardMode: options.trustedCardMode, eager: options.eagerFrame, executeSlash: options.executeSlash });
+				return h(TavernMessageFrame, { key: index, content: content, sessionId: options.sessionId, turn: options.turn, partIndex: index, frameOwner: options.frameOwner, frameSizing: options.frameSizing, helperContext: options.helperContext, helperContextReader: options.helperContextReader, openingPreview: options.openingPreview, onSelectOpening: options.onSelectOpening, onSubmitOpening: options.onSubmitOpening, onDraftOpening: options.onDraftOpening, trustedCardMode: options.trustedCardMode, eager: options.eagerFrame, executeSlash: options.executeSlash });
 			});
 		}
 
@@ -12724,6 +12738,21 @@ function bindTavernFontZoom(node, win) {
 			return "分支 · " + origin + (item.branchSourceUnavailable ? " · 来源对话不可用" : "");
 		}
 
+function openingPickerInput(picker, openingId) {
+    return picker && picker.preparedInputId === openingId ? String(picker.preparedInput || "") : "";
+}
+function updateOpeningPickerInput(picker, openingId, text) {
+    if (!picker || picker.openings[picker.index]?.id !== openingId) return picker;
+    return { ...picker, preparedInputId: openingId, preparedInput: String(text || "") };
+}
+function TavernOpeningInput(props) {
+    const h = React.createElement;
+    return h("div", { className: "dsh-tavern-player-name" },
+        h("label", null, "开局指令（可编辑）", h("textarea", { rows: 6, maxLength: 100000,
+            className: "dsh-tavern-preset-entry-editor", "aria-label": "开局指令", disabled: props.busy,
+            value: openingPickerInput(props.picker, props.openingId), onChange: event => props.onChange(event.target.value) })),
+        h("p", { className: "dsh-tavern-player-name-help" }, "卡片按钮生成的指令会填入这里。回车用于换行；核对或编辑后点击“开始新游戏”提交。留空时只载入开场。"));
+}
 		function createTavernShellFeatureModule() {
 		// One request per loaded client, including failure. No timers or retries.
 		function createHostCompatibilityNotice(load, storage) {
@@ -13326,6 +13355,9 @@ function bindTavernFontZoom(node, win) {
                 const timing = openingPerformance.begin("startClick");
                 let successful = false;
 				const previousOpeningPicker = openingPicker;
+                if (initialMessage === undefined && uiMode === "play" && previousOpeningPicker?.card?.path === card?.path) {
+                    initialMessage = openingPickerInput(previousOpeningPicker, openingId);
+                }
                 let created = null;
 				const transitionOpening = previousOpeningPicker && previousOpeningPicker.openings ? previousOpeningPicker.openings.filter(function (item) { return item.id === openingId; })[0] : null;
 				tavernSessionTransition.begin({ projection: transitionOpening && transitionOpening.projection, trustedCardMode: previousOpeningPicker && previousOpeningPicker.trustedCardMode === true });
@@ -13701,6 +13733,8 @@ function bindTavernFontZoom(node, win) {
 				busy ? h("div", { className: "dsh-tavern-session-switching", role: "status", "aria-live": "polite" }, openingPicker.preparing ? "正在准备开场与脚本资源…" : "正在完成游戏初始化…", openingPicker.preparing ? h("div", { style: { marginTop: "8px", fontSize: "13px", opacity: .75 } }, "首次打开可能需要下载资源，请稍候；后续打开通常更快。") : null) : null,
 				h("label", { className: "dsh-tavern-player-name" }, h("span", null, "本局 Agent 模式"), h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏 Agent 模式", value: openingPicker.playPresetId || "tavern", disabled: busy || openingPicker.preparing, onChange: function (event) { const playPresetId = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { playPresetId: playPresetId }) : current; }); } }, (openingPicker.playPresets || []).map(function (preset) { return h("option", { key: preset.id, value: preset.id }, preset.name); }))),
 				h("div", { className: "dsh-tavern-player-name-help" }, "仅用于这次新游戏，不更改新游戏默认值。"),
+                    selectedOpening ? h(TavernOpeningInput, { picker: openingPicker, openingId: selectedOpening.id, busy: busy,
+                        onChange: text => setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text)) }) : null,
 					selectedOpening ? h("div", { hidden: openingSettingsCollapsed },
 						h("label", { className: "dsh-tavern-player-name" }, h("span", null, "故事中的玩家称呼（可选）"), h("input", { value: openingPicker.userName ?? "", maxLength: 80, placeholder: "你", disabled: busy, onChange: function (event) { const userName = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { userName: userName }) : current; }); } })),
 						h("div", { className: "dsh-tavern-player-name-help" }, "可以填写姓名、昵称或身份；默认沿用你上次使用的称呼，也可以在这里针对本局修改。开场白预览会随之更新。")
@@ -13726,6 +13760,10 @@ function bindTavernFontZoom(node, win) {
                     frameSizing: selectedOpening.frameSizing,
 					openingPreview: selectedOpening.openingPreview,
                     onSubmitOpening: function (text) { if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续"); return newConversation(openingPicker.card, null, selectedOpening.id, openingPicker.userName || "你", text); },
+                    onDraftOpening: function (text) {
+                        if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续");
+                        setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text));
+                    },
 					onSelectOpening: function (id) {
 						if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续");
 						const index = openingPicker.openings.findIndex(function (opening) { return opening.id === id; });

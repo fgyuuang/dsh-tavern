@@ -449,6 +449,18 @@
                         // Only a pipe ending in /trigger starts the game. Scripts also query
                         // (/pass {{user}}) or notify (/echo); answer those without starting.
                         const line = String(data.args && data.args.line || "");
+                        const privateDraft = /^\/setinput(?: ([\s\S]*))?$/.exec(line);
+                        if (privateDraft) {
+                            Promise.resolve().then(function () {
+                                if (!current() || sourceDocument !== visible || typeof props.onDraftOpening !== "function") throw new Error("开局输入框不可用");
+                                return props.onDraftOpening(privateDraft[1] || "");
+                            }).then(function () {
+                                if (current()) event.source.postMessage({ type: "dsh-tavern-helper-response", token: data.token, requestId: data.requestId, ok: true, result: { pipe: "" } }, "*");
+                            }, function (error) {
+                                if (current()) event.source.postMessage({ type: "dsh-tavern-helper-response", token: data.token, requestId: data.requestId, ok: false, error: String(error.message || error) }, "*");
+                            });
+                            return;
+                        }
                         if (!/(?:^|\|)\s*\/trigger(?:\s[^|]*)?\s*$/.test(line)) {
                             const query = /^\s*\/pass\s+([\s\S]*)$/.exec(line);
                             const names = { user: String(helperContext && helperContext.playerName || "你"), char: String(helperContext && helperContext.characterName || "角色") };
@@ -570,6 +582,9 @@
                             // /setinput updates this Session's native draft; it
                             // never triggers generation or publishes a message.
                             return executeSlash("/setinput " + text, composerSessionId);
+                        } : props.openingPreview && typeof props.onDraftOpening === "function" ? function (text) {
+                            if (!listener || visible.key !== desired.key || props.sessionId) throw new Error("开局准备页已失效");
+                            return props.onDraftOpening(text);
                         } : undefined) : function () {};
 
 					const unsubscribeTheme = hostWindow.document && typeof hostWindow.MutationObserver === "function"

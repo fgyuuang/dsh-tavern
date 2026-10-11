@@ -728,6 +728,7 @@ window.__ModuleLoader__.load({
 
 // @include features/card-list.js
 
+// @include modules/opening-input.js
 // @include features/sidebar.js
 
 // @include features/scene-images.js

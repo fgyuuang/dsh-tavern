@@ -31,7 +31,6 @@ function installLegacyTavernComposer() {
     });
     releaseSender = sender.dispose;
     area.addEventListener('input', function () {
-      if (typeof window.submitTavernInput === 'function') return;
       Promise.resolve().then(() => {
         if (owner.isConnected === false) return;
         if (typeof window.triggerSlash !== 'function') throw new Error('当前对话输入框尚未就绪');

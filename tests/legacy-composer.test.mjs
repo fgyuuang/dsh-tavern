@@ -10,7 +10,7 @@ const installFrameHostComposer = vm.runInNewContext(
   readFileSync(new URL('../tavern-plugin/src/client/legacy-composer.js', import.meta.url), 'utf8') + '\ninstallFrameHostComposer'
 )
 
-function mount(send, managed = false) {
+function mount(send, managed = false, draft) {
   const nodes = []
   function element() {
     return { value: '', append(...items) { nodes.push(...items) }, setAttribute() {}, addEventListener(name, fn) { this[name] = fn } }
@@ -19,10 +19,17 @@ function mount(send, managed = false) {
   const html = helperClient.buildTavernFrameDocument({ token: 'send', content: '<p>opening</p>', helperContext: { messages: [] } })
   const source = html.match(/<script data-dsh-tavern-legacy-composer>([\s\S]*?)<\/script>/)?.[1]
   assert.ok(source)
-  vm.runInNewContext(source, { document, window: managed ? { submitTavernInput: send } : { triggerSlash: send }, console: { error() {} } })
+  vm.runInNewContext(source, { document, window: managed ? { submitTavernInput: send, triggerSlash: draft } : { triggerSlash: send }, console: { error() {} } })
   return { nodes, area: document.getElementById('send_textarea'), button: document.getElementById('send_but') }
 }
 const tick = () => new Promise(resolve => setImmediate(resolve))
+test('模块内兼容输入即使有独立发送 API 仍同步 draft，不触发发送', async () => {
+  const sends = [], drafts = []
+  const { area } = mount(text => sends.push(text), true, command => { drafts.push(command); return Promise.resolve() })
+  area.value = '模块交互后的输入'; area.input(); await tick()
+  assert.deepEqual(drafts, ['/setinput 模块交互后的输入'])
+  assert.deepEqual(sends, [])
+})
 
 test('failed legacy send retains payload, displays failure and permits retry', async () => {
   const { nodes, area, button } = mount(() => Promise.reject(new Error('发送失败')))

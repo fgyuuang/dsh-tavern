@@ -27,11 +27,17 @@ test('预设设置真实 React 界面保存下一回合配置、失败保留编�
     const liveTavernView={invalidate(){}},notifyTavernDataChanged=()=>{};
     const tavernErrorHub={report(source,error){throw error}};
     ${await readFile(new URL('../tavern-plugin/src/client/features/preset-settings.js', import.meta.url), 'utf8')}
+    ${await readFile(new URL('../tavern-plugin/src/client/modules/opening-input.js', import.meta.url), 'utf8')}
+    function OpeningEditor(){const[picker,setPicker]=React.useState({openings:[{id:'prepared'}],index:0,preparedInputId:'prepared',preparedInput:'卡片填入的开局'});return React.createElement(TavernOpeningInput,{picker,openingId:'prepared',onChange:text=>setPicker(current=>updateOpeningPickerInput(current,'prepared',text))})}
     modules['react-dom/client'].createRoot(document.getElementById('root')).render(React.createElement(React.Fragment,null,
+      React.createElement(OpeningEditor),
       React.createElement(TavernPresetSettings,{sessionId:'foreground'}),
       React.createElement(TavernReturnToStory,{sessionId:'background',sessions:{subagentAddress:()=>({parentSessionId:'foreground'}),open(id){window.opened=id}}})))
   ` })
   await page.getByText('剧情理解与角色（0/1）', { exact: true }).click()
+  assert.equal(await page.getByLabel('开局指令', { exact: true }).inputValue(), '卡片填入的开局')
+  await page.getByLabel('开局指令', { exact: true }).fill('核对后修改的开局指令')
+  assert.equal(await page.getByLabel('开局指令', { exact: true }).inputValue(), '核对后修改的开局指令')
   await page.getByText('角色分析 · 关闭', { exact: true }).click()
   await page.getByLabel('启用 角色分析', { exact: true }).check()
   await page.getByLabel('角色分析规则内容', { exact: true }).fill('根据角色知识边界与历史推演本回合')
