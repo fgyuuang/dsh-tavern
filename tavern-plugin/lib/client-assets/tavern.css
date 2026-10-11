@@ -171,6 +171,10 @@ body.dsh-tavern-shell-active,
 body.dsh-tavern-shell-active button[aria-label="新建会话"], body.dsh-tavern-shell-active button[aria-label="New session"] { display: none !important; }
 body.dsh-tavern-shell-active [data-turn-tail] > [data-slot="conversation.chat.turnTail"] + div > button { display: none !important; }
 body.dsh-tavern-shell-active [data-turn-tail] [data-slot="conversation.chat.assistant-actions"] > :not(.dsh-tavern-message-fork) { display: none !important; }
+/* Keep the synchronized fork action available on older completed turns. DSH fades
+   their whole action row after a later (including failed) turn starts. */
+body.dsh-tavern-shell-active [data-turn-tail][data-actions-reveal="hover"]:has(.dsh-tavern-message-fork) > [data-slot="conversation.chat.turnTail"] + div { opacity: 1 !important; }
+body.dsh-tavern-shell-active [data-turn-tail]:has(.dsh-tavern-message-fork) > [data-slot="conversation.chat.turnTail"] + div > :not([data-slot="conversation.chat.assistant-actions"]) { display: none !important; }
 body.dsh-tavern-shell-active .dsh-tavern-hero-preset-row { display: none !important; }
 /* 会话列表首次加载前不画首页，避免刷新时先闪首页再跳回上次的对话。 */
 body.dsh-tavern-sessions-pending [data-phase="hero"] > *, body.dsh-tavern-sessions-pending [data-phase="hero"]::before { visibility: hidden !important; }
