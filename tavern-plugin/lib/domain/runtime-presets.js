@@ -84,8 +84,8 @@ function presetPathOf(snapshot) {
 export function resolveRuntimePresetMacros(snapshot, options = {}) {
   const macroState = {
     userName: typeof options.macroState?.userName === 'string' && options.macroState.userName !== '' ? options.macroState.userName : '你',
-    local: Object.assign({}, options.macroState?.local && typeof options.macroState.local === 'object' ? options.macroState.local : {}),
-    global: Object.assign({}, options.macroState?.global && typeof options.macroState.global === 'object' ? options.macroState.global : {})
+    local: Object.assign({}, options.macroState?.local && typeof options.macroState.local === 'object' ? options.macroState.local : {}, snapshot?.sourceMacroOverrides?.local || {}),
+    global: Object.assign({}, options.macroState?.global && typeof options.macroState.global === 'object' ? options.macroState.global : {}, snapshot?.sourceMacroOverrides?.global || {})
   }
   if (snapshot === null || typeof snapshot !== 'object') return { snapshot: null, macroState, diagnostics: [] }
   const rawPhases = snapshot.front || snapshot.middle || snapshot.back

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { nativeRegexScriptsOf } from './preset-reading.js'
 import { compileDreamSikeContract } from './dream-sike-contract.js'
+import { dreamSikeSourceSettings, applyDreamSikeSourceAction } from './dream-sike-source-settings.js'
 
 const phases = ['front', 'middle', 'back']
 function regexCatalog(snapshot) {
@@ -32,8 +33,10 @@ export function conversationPresetSettings(snapshot, mode = 'tavern') {
   delete inspection.agentContract
   const actions = new Map((compileDreamSikeContract(inspection)?.agentContract?.entries || []).map(entry => [entry.id, entry.action]))
   const regexActive = new Set((snapshot.regexScripts || []).filter(script => script.enabled !== false).map(script => script.regexKey || script.id))
+  const sourceSettings = dreamSikeSourceSettings(snapshot, mode)
   return {
     presetName: snapshot.presetName, digest: snapshot.digest,
+    sourceSettings: sourceSettings.groups.length ? sourceSettings : null,
     entries: orderedEntries(snapshot).filter(({ entry }) => entry && entry.marker !== true && entry.injectable === true).map(({ phase, entry }) => ({
       key: entry.entryKey, name: entry.name || entry.entryKey, phase, role: entry.role,
       enabled: active.has(entry.entryKey), content: active.get(entry.entryKey)?.content ?? entry.content ?? '',
@@ -55,9 +58,19 @@ export function conversationPresetSettings(snapshot, mode = 'tavern') {
 // Edit a game's immutable preset copy. Never mutate the library or defaults.
 export function updateConversationPresetSettings(snapshot, changes, expectedDigest, mode = 'tavern') {
   if (!snapshot || snapshot.digest !== expectedDigest) throw new Error('本局预设已变化，请刷新设置后重试')
+  let sourcePatch = null
+  if (changes?.sourceAction !== undefined) {
+    if ((changes.entries?.length || changes.regexScripts?.length)) throw new Error('原设置选项不能与高级编辑同时保存')
+    sourcePatch = applyDreamSikeSourceAction(snapshot, changes.sourceAction, mode)
+    changes = { entries: sourcePatch.entries || [], regexScripts: [] }
+  }
   if (!changes || !Array.isArray(changes.entries) || !Array.isArray(changes.regexScripts)
     || changes.entries.length > 300 || changes.regexScripts.length > 300) throw new Error('预设设置格式无效')
   const next = structuredClone(snapshot)
+  if (sourcePatch?.macroOverrides) next.sourceMacroOverrides = {
+    local: { ...snapshot.sourceMacroOverrides?.local, ...sourcePatch.macroOverrides.local },
+    global: { ...snapshot.sourceMacroOverrides?.global, ...sourcePatch.macroOverrides.global }
+  }
   const current = conversationPresetSettings(snapshot, mode)
   const activeRegexes = new Set(current.regexScripts.filter(script => script.enabled).map(script => script.key))
   const regexes = regexCatalog(snapshot).map(script => ({ ...script, enabled: activeRegexes.has(script.regexKey) }))
@@ -73,6 +86,15 @@ export function updateConversationPresetSettings(snapshot, changes, expectedDige
         const entry = next.compatibilityPreset.entries.find(entry => entry.entryKey === change.key)
         entry.enabled = change.enabled
         if (change.content !== undefined) entry.content = change.content
+        // Keep the per-game source copy coherent for the original group resolver.
+        // The resource library and other games are never written here.
+        const raw = next.compatibilityPresetDocument?.prompts?.[entry.sourcePromptIndex]
+        if (raw && raw.identifier === entry.identifier) {
+          raw.enabled = entry.enabled
+          if (change.content !== undefined) raw.content = entry.content
+        }
+        const order = next.compatibilityPresetDocument?.prompt_order?.[entry.sourceOrderGroupIndex]?.order?.[entry.sourceOrderItemIndex]
+        if (order && order.identifier === entry.identifier) order.enabled = entry.enabled
       } else {
         const script = regexes.find(script => script.regexKey === change.key)
         script.enabled = change.enabled
@@ -96,6 +118,7 @@ export function updateConversationPresetSettings(snapshot, changes, expectedDige
   next.regexSources = next.regexScripts.map(script => ({ path: next.presetPath, regexKey: script.regexKey, id: script.id, name: script.name }))
   delete next.agentContract
   next.digest = createHash('sha256').update(JSON.stringify({ front: next.front, middle: next.middle, back: next.back,
-    regexScripts: next.regexScripts, compatibilityPreset: next.compatibilityPreset, compatibilityPresetDocument: next.compatibilityPresetDocument })).digest('hex')
+    regexScripts: next.regexScripts, compatibilityPreset: next.compatibilityPreset, compatibilityPresetDocument: next.compatibilityPresetDocument,
+    sourceMacroOverrides: next.sourceMacroOverrides })).digest('hex')
   return next
 }
