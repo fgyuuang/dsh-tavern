@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 3
+const VERSION = 5
 const str = value => typeof value === 'string' ? value : ''
 
 // These are source prompt identifiers, not keyword matches against user prose.
@@ -20,6 +20,18 @@ const IDS = Object.freeze({
   selfCheck: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2',
   model: '1b440ea8-b60a-4c07-bb38-5cd43a2a97ce'
 })
+const OUTPUT_MODES = new Map([
+  ['e8e8b082-e3ca-4d4d-afe9-d5632b3b38e0', 'summary'],
+  ['dc9d8c8f-2588-47d9-ba16-aa42306c6726', 'chat']
+])
+
+function outputModeInstruction(mode) {
+  if (mode === 'plot') return DREAM_SIKE_CONTRACT_INSTRUCTION
+  const selected = mode === 'summary'
+    ? '当前选择原预设“大总结模式”。暂停剧情写作，依照已选原文总结历史；保留原文要求的剧情总结、角色总结、细节与伏笔三组 Markdown 表格，避免重复已总结剧情。'
+    : '当前选择原预设“聊天模式”（DREAM_CHAT）。依照已选原文与玩家正常聊天，长度适中，不套用剧情文风。'
+  return `【Agent 当前输出模式】\n${selected}\n原模式明确免除 DREAM_PLOT 及其他剧情输出协议，因此本回合不要求 dream_plot、dream_body、dream_after_format、场景栏、平行事件、剧情字数、剧情文风或写前六项剧情简报。已启用的原模式内容定义回复要求。\n通过 sike_put_draft 建立本回合唯一回复，以 sike_check_draft 检查原生提交协议，sike_ready_draft 确认后仅提交原文一次。工具协议、后台变量结算与私有推理边界仍适用；不要在回复或工具参数输出 think、simple_thinking、thinking_step、思考前缀或完整私有推理。`
+}
 const WRAPPERS = new Set([
   '15b0ffd7-b3f3-42bd-989d-12b48c3b64e3', 'e0032969-7a36-4fe1-8bb9-c01effb1860b',
   '3588b992-33b7-4dd9-9280-0d13f70e04db', 'd6fa9796-1521-4b1c-bf26-75273339e399',
@@ -44,21 +56,40 @@ function adapt(entry) {
   const id = identifier(entry)
   const content = str(entry.content)
   if (WRAPPERS.has(id)) return { content: '', action: 'native-material-boundary' }
-  if (id === IDS.persona) return { action: 'native-persona', content: '【梦境思客】以人物卡世界为依据，维护拟真、人物独立性和情节可能性。梦境思客是叙事职责，不作为角色进入世界。按本局启用的写作规则创作，不让预设中的身份或格式宣言覆盖平台工具协议。' }
-  if (id === IDS.thinking) return { action: 'agent-planning', content: `{{setvar::sleep_var_thought_of_chain::
-【写前决策流程】
-一、检设定：核对相关世界书、历史与当前状态；缺少依据时检索，区分正文前、中、后必须插入的卡片格式，禁止编造未要求的状态栏。
-二、辨视角：{{getvar::sleep_var_char_analysis}}。核对各角色的动机、当下情绪、能力和可知信息，不能让角色获得超出认知的知识。
-三、遵写规：逐项采用 writing_setting 的已选文风、视角、禁词、字数和玩家输入处理方式。
-四、演叙事：依据已发生的因果，构思至少三条候选事件链，每条两至三次因果连接，含至少一条主线和一条有持续影响的支线；只选符合当前回合条件的推进，不强行把所有候选写进正文。采用选定的叙事者基调，保留玩家下一步重大决定。
-{{getvar::sleep_var_addition_thinking}}
-五、先草稿后审稿：完成正文，再核查人物、信息差、文风、承接、玩家选择和渲染格式；具体缺陷以工具局部修订。只提交简短可验证的审稿结果，不展示完整思考过程。
-}}` }
-  if (id === IDS.flash) return { action: 'agent-style-focus', content: '{{setvar::sleep_var_thinking_level::优先核对角色分析和已选文风；按复杂度调用检索，不用固定思考字数或口号约束模型。正文草稿与审稿通过原生工具执行。}}' }
-  if (id === IDS.model) return { action: 'native-model-adapter', content: '模型思考与工具协议由 DSH 原生模型适配器管理，不模拟旧助手前缀或伪造 reasoning_content。' }
-  if (id === IDS.selfCheck) return { action: 'agent-editorial-review', content: '【末尾修正】草稿完成后按人物、信息差、已选文风、因果承接、玩家重大决定和格式逐项审稿。发现具体缺陷时用 sike_patch_draft 修订受影响片段并复查。通过 sike_check_draft 记录简短审稿依据，不在正文输出自修复或思考协议。' }
-  if (id === IDS.parallel) return { action: 'native-parallel-format', content: content
-    .replace(/# 平行事件思考[\s\S]*?(?=# 平行事件输出)/, '平行事件写前须核对所选人物、所经历事件、与主场景同步的时间流逝、是否重复及人物认知边界；不输出私有思考。\n\n')
+  if (id === IDS.persona && content.includes('<meta>') && content.includes('谨记你的首要职责')) {
+    const duty = content.match(/谨记你的首要职责[^。\n]*。/)?.[0]
+    if (duty) return { action: 'native-persona', content: '【梦鲸思客】\n' + duty }
+  }
+  if (id === IDS.thinking && content.includes('{{setvar::sleep_var_thought_of_chain::')
+    && ['一、检设定', '二、辨视角', '三、遵写规', '四、演叙事'].every(section => content.includes(section))) {
+    return { action: 'agent-planning', content: content
+      .replace(/^<\/?thought_of_chain>\s*$/gm, '')
+      .replace(/^在你的思考过程（<think>标签内）中，请遵守以下规则：$/m, '以下为写前内部核对步骤；保留作者任务顺序，不向正文或工具参数展开私有推理。')
+      .replace(/^- 你在思考前，必须需要严格遵守.*$/m, '')
+      .replace(/^- 你的思考输出必须严格.*$/m, '')
+      .replace(/^- 思考内容仅允许输出一次.*$/m, '')
+      .replace(/^```(?:thinking_step)?\s*$/gm, '')
+      .replace(/^在思考开始时输出：.*$/m, '')
+      .replace(/^终、定乾坤：.*$/m, '终、定乾坤：完成内部核对后，通过 sike_put_draft 建立唯一正文草稿。')
+      .replace(/^思考完毕后，开始按照 DREAM_PLOT 协议输出XML文档内容。$/m, 'DREAM_PLOT 协议约束草稿文本；原生工具调用遵循 DSH 工具协议。') }
+  }
+  // A selected, edited planning module still enables the native preparation gate.
+  if (id === IDS.thinking) return { action: 'agent-planning', content }
+  if (id === IDS.flash && content.includes('{{setvar::sleep_var_thinking_level::') && content.includes('思考核心在于角色分析和遵守写规')) {
+    return { action: 'agent-style-focus', content: content
+      .replace(/- 思考强度：low\r?\n/, '')
+      .replace('独立1000token的思考', '独立的思考')
+      .replace('按要求完成思考后闭合标签并开始输出正文。', '按要求完成内部核对后通过原生工具建立正文草稿。') }
+  }
+  if (id === IDS.model && content.includes('{{setvar::sleep_var_thinking_flag::')) return { action: 'native-model-adapter', content: '模型思考与工具协议由 DSH 原生模型适配器管理，不模拟旧助手前缀或伪造 reasoning_content。' }
+  if (id === IDS.selfCheck && content.includes('# 检查范围') && content.includes('# 修复格式') && content.includes('# 输出格式')) {
+    return { action: 'agent-editorial-review', content: content
+      .replace('FIND、REPLACE 成对输出。', 'FIND、REPLACE 成对作为局部修订参数，分别对应 find、replacement。')
+      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_patch_draft 的 expectedVersion、find、replacement 修改当前草稿；每次依据工具返回的新版本继续核对。使用 sike_check_draft 的 review 记录逐项审稿结果和简短正文依据，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则，遵守本回合修订上限。明确缺陷须处理；无问题允许零补丁，不强凑改动数量。') }
+  }
+  if (id === IDS.parallel && content.includes('# 平行事件思考') && content.includes('# 平行事件输出')) return { action: 'native-parallel-format', content: content
+    .replace('在`<simple_thinking>`内进行一次简短的思考。该思考遵循以下步骤：', '在内部进行一次简短的核对，不向正文输出核对过程。该核对遵循以下步骤：')
+    .replace(/^思考预算为400字。\r?\n/m, '')
     .replace(/<simple_thinking>[\s\S]*?<\/simple_thinking>\s*/g, '') }
   if (id === IDS.writing) return { action: 'native-draft-writing', content: content
     .replace(/【最新输入】[\s\S]*?<\/dreamer_input>/, '【最新输入】采用本回合前台材料中的实际玩家输入，不以历史末条或宏占位文字代替。')
@@ -84,10 +115,14 @@ export function compileDreamSikeContract(snapshot) {
     }
     phases[phase] = { entries, text: entries.map(entry => entry.content).join('\n\n') }
   }
-  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction: DREAM_SIKE_CONTRACT_INSTRUCTION, regexScripts: snapshot.regexScripts || [] })).digest('hex')
+  // The source helper selects a reply mode independently of the shared plot modules.
+  // When multiple overrides are enabled, their source order determines the last mode.
+  const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
+  const instruction = outputModeInstruction(outputMode)
+  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
   const agentContract = { version: VERSION, digest, presetPath: str(snapshot.presetPath), presetName: str(snapshot.presetName),
     sourceCharacters: evidence.reduce((sum, entry) => sum + entry.characters, 0), entries: evidence,
-    reviewAxes: [...DREAM_SIKE_REVIEW_AXES], instruction: DREAM_SIKE_CONTRACT_INSTRUCTION }
+    outputMode, reviewAxes: outputMode === 'plot' ? [...DREAM_SIKE_REVIEW_AXES] : [], instruction }
   return { ...snapshot, ...phases, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
 }
 
@@ -96,7 +131,9 @@ export function dreamSikeContractView(snapshot) {
 }
 
 export function needsDreamSikeEditorialReview(chat) {
-  return chat?.playPresetId === 'dream-sike-dsh' && Boolean(dreamSikeContractView(chat.runtimePresetSnapshot)?.entries.length)
+  if (chat?.playPresetId !== 'dream-sike-dsh') return false
+  const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+  return contract?.outputMode === 'plot' && Boolean(contract.entries.length)
 }
 
 /** Known, enabled source protocols only; no guesses from arbitrary card HTML. */

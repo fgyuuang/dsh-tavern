@@ -1,4 +1,4 @@
-import { dreamSikeContractView } from './dream-sike-contract.js'
+import { dreamSikeContractView, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
 
 const FIELDS = ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt']
@@ -12,6 +12,7 @@ function same(receipt, identity) {
 
 export function needsDreamSikePreparation(chat) {
   return chat?.playPresetId === 'dream-sike-dsh'
+    && needsDreamSikeEditorialReview(chat)
     && dreamSikeContractView(chat.runtimePresetSnapshot)?.entries.some(entry => entry.action === 'agent-planning') === true
 }
 

@@ -7,6 +7,16 @@ import { registerTurnLifecycleHooks } from '../tavern-plugin/lib/hooks/turn-life
 
 const brief = () => ({ scene: '钟楼门口，下午两点，只完成交接。', characters: '档案员谨慎追问，保持职业边界。', knowledge: '封信未拆开，人物不知道信件内容。', style: '节制口语与动作描写，保留当前视角。', progression: '完成递信并提出核对收件人的问题。', stopAt: '停在追问后，保留玩家如何回应的选择。' })
 const review = () => Object.fromEntries(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'].map(key => [key, { status: 'pass', evidence: '正文停在交接后的询问，未展开下一步玩家行动。' }]))
+test('原聊天和大总结输出不要求剧情准备或六维剧情审阅', () => {
+  for (const id of ['e8e8b082-e3ca-4d4d-afe9-d5632b3b38e0', 'dc9d8c8f-2588-47d9-ba16-aa42306c6726']) {
+    const { chat, identity } = fixture()
+    chat.runtimePresetSnapshot.front.entries.push({ id, content: '本轮免除故事协议' })
+    assert.equal(needsDreamSikePreparation(chat), false)
+    putDreamSikeDraft(chat, identity, '这是按当前选择模式整理的回复。')
+    checkDreamSikeDraft(chat, identity, 1)
+    assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
+  }
+})
 function fixture() {
   const chat = { id: 'c', sessionId: 's', playPresetId: 'dream-sike-dsh', mode: 'story', messages: [], variables: {},
     runtimePresetSnapshot: { front: { entries: [{ id: '0da6f4d7-961d-4966-a084-857a3dd876ad', content: 'original enabled planning' }] } },
