@@ -1,6 +1,7 @@
 import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
 import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
+import { dreamSikeDraftModulePlan, draftModuleReceiptCurrent } from './dream-sike-draft-modules.js'
 
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
@@ -135,6 +136,7 @@ export function dreamSikeDraftView(chat) {
     version: draft.version, status: current ? draft.status : 'stale',
     text: draft.text, revisionCount: draft.revisionCount,
     changes: (Array.isArray(draft.changes) ? draft.changes : []).map(change => ({
+      ...(change.kind ? { kind: change.kind, summary: change.summary } : {}),
       find: change.find, replacement: change.replacement,
       beforeVersion: change.beforeVersion, afterVersion: change.afterVersion, at: change.at
     })),
@@ -231,6 +233,8 @@ export function dreamSikeExecutionTrace(session, draft) {
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
   assertDreamSikePreparation(chat, identity)
+  const prose = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi, '')
+  if (dreamSikeDraftModulePlan(chat, 'parallel') && /<dream_parallel_event\b[^>]*>[\s\S]*?<\/dream_parallel_event\s*>/i.test(prose)) throw new Error('本局平行事件使用独立模块，请先仅建立主线草稿，再调用 sike_run_module(kind="parallel")')
   const previous = readDreamSikeDraft(chat)
   if (sameIdentity(previous, identity)) {
     if (previous.status === 'draft' && previous.version === 1 && previous.text === text) return previous
@@ -334,6 +338,10 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后检查')
   const issues = inspectDreamSikeDraft(draft.text).concat(inspectDreamSikeContractDraft(chat, draft.text))
+  for (const kind of ['parallel', 'review']) {
+    if (dreamSikeDraftModulePlan(chat, kind) && !draftModuleReceiptCurrent(chat, kind)) issues.push(issue('module-' + kind + '-pending', '请先对当前草稿版本运行 sike_run_module(kind="' + kind + '")；模块缺失或已随草稿修订过期'))
+  }
+  if (draftModuleReceiptCurrent(chat, 'review')) review = draft.modules.review.review
   draft.checks = { version: draft.version, issues, checkedAt: now }
   if (needsDreamSikeEditorialReview(chat)) {
     const contract = dreamSikeContractView(chat.runtimePresetSnapshot)

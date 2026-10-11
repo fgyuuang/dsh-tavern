@@ -185,7 +185,7 @@ test('原生 defineTool 注册六个回合工具，起草、检查、修订、�
     activeTurnOf(exec) { return exec.agent.phase.turn },
     async publish(sessionId, view) { published.push({ sessionId, status: view.status, version: view.version }) }
   })
-  const names = ['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft']
+  const names = ['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft']
   assert.deepEqual([...registered.keys()], names)
   for (const name of names) {
     const tool = registered.get(name)

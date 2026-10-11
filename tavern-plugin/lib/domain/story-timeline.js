@@ -20,7 +20,7 @@ function sameBasedOn(left, right) {
 }
 
 function participantRole(role) {
-  return role === 'candidate' || role === 'settlement' || role === 'character-design' || role === 'ledger' || role === 'worldbook-filter' || role === 'dream-followup' ? 'background' : role
+  return role === 'candidate' || role === 'settlement' || role === 'character-design' || role === 'ledger' || role === 'worldbook-filter' || role === 'dream-followup' || role === 'dream-draft-module' ? 'background' : role
 }
 
 function participantLifetime(value) {

@@ -27,7 +27,14 @@ function DreamSikeFollowup(props) {
         }
         return props.executeSlash(...args);
     }
-    const summary = record.status === 'queued' ? (record.waitingForSettlement === false ? '正文与结算已完成，等待生成后续互动' : '正文已提交，等待变量结算后生成') : record.status === 'running' ? '正文与结算已完成，正在生成后续互动' : record.status === 'failed' ? '后续互动生成失败，正文已保留' : '剧情共创与行动选项';
+    const moduleNames = new Map([
+        ['f9b03e19-fd96-4782-8867-73ad2cbabfb9', '思客说书'], ['27bf435f-4283-4937-8c6f-3c31abc4f6d2', '剧情共创'],
+        ['11cdd506-1513-4008-b6b9-c883dbad65c5', '行动选项'], ['f96f47f7-01ef-4676-b0fe-6f254ae7e550', '行动选项'],
+        ['6a8e799c-9445-44f2-a853-c6c71b92b855', '本回合摘要']
+    ]);
+    const enabledIds = new Set((record.enabledModules || []).map(module => module.id));
+    const completedLabel = [...new Set([...moduleNames].filter(([id]) => enabledIds.has(id)).map(([, name]) => name))].join('与') || (record.enabledModules ? '后续内容已完成' : '剧情共创与行动选项');
+    const summary = record.status === 'queued' ? (record.waitingForSettlement === false ? '正文与结算已完成，等待生成后续互动' : '正文已提交，等待变量结算后生成') : record.status === 'running' ? '正文与结算已完成，正在生成后续互动' : record.status === 'failed' ? '后续互动生成失败，正文已保留' : completedLabel;
     const projection = record.status === 'done' && record.projection ? renderTavernProjection(record.projection, {
         sessionId: props.sessionId, turn: props.turn, partIndexPrefix: 'dream-followup:' + record.key,
         frameOwner: props.frameOwner, frameSizing: props.frameSizing, trustedCardMode: props.trustedCardMode,

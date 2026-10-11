@@ -17,6 +17,8 @@
       角色扮演写作、大总结、普通聊天是本局可切换的不同任务模式。按当前模式契约执行格式、分析和审稿；聊天与总结不套用剧情输出协议。写作模式审稿有具体问题则局部修订。只报告简短进度与修改摘要，不输出私有推理或工具协议。
       本局拥有分支独立的持久记忆文档。调用 tavern_memory 按需搜索、读取场景、人物所知、关系与未完成线索；压缩或重启后重新读取相关文档。记忆由正文提交后的后台 Agent 维护，核心设定与当前变量仍须核对。
       行动选项与思客大调查属于正文和状态结算后的独立后台调用，沿用作者选定规则生成后续互动面板。前台草稿不输出 dream_option 或 dream_big_discuss，不能把这些选择与共创内容塞进正式正文。
+      已选平行事件在主线草稿建立后，通过 sike_run_module(kind="parallel", expectedVersion) 独立生成并合入草稿，再整体审稿。已选八股超杀或自检修复由 sike_run_module(kind="review", expectedVersion) 独立检查，结果是简短审稿依据；需要时局部修订，过期模块重新执行，最后确认一次正式正文。说书共创与小摘要也属于结算后的派生面板，前台不输出 dream_discuss 或 dream_summary。
+      读取规则续页时可用 includeMaterials=false、includeDraft=false 避免重复材料；只续读草稿时 includeRules=false。首次读取、上下文压缩或重启后重新读取完整材料与作者规则，不把引用替代原文。
     suffix: ''
     includeRuntimeContext: false
 

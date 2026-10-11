@@ -4,6 +4,16 @@ import test from 'node:test'
 import { createForegroundHandoff } from '../tavern-plugin/lib/domain/foreground-handoff.js'
 import { prepareWorldBookRecall } from '../tavern-plugin/lib/domain/worldbook-recall.js'
 
+test('下一回合写作先取消可选后续互动，不中断正式结算', async () => {
+  const order = [], chat = { id: 'game', mode: 'story', messages: [] }
+  const handoff = createForegroundHandoff({ store: { chatForSession: async () => chat },
+    tasks: { activity: () => ({ phase: 'idle', busy: false, role: '' }) }, queueBackground: async () => { throw Error('无需结算') },
+    cancelFollowup: async id => { assert.equal(id, 'game'); order.push('cancel-followup') },
+    turns: { finalize() {}, discard() {}, prepare() { order.push('prepare-story') } } })
+  await handoff.prepare({ sessionId: 'session' })
+  assert.deepEqual(order, ['cancel-followup', 'prepare-story'])
+})
+
 test('开场预扫描只提供预览，不调用结算模型、不重复准备', async () => {
   const chat = { id: 'opening', mode: 'story', messages: [{ role: 'assistant', greeting: true, text: '铜铃渡口旁有星砂信箱。', turn: 1 }] }
   const entries = ['铜铃渡口', '星砂信箱', '玩家专有词'].map((key, index) => ({ ref: 'entry:' + index, enabled: true, constant: false, primaryKeys: [key], content: '秘密' + index }))

@@ -44,7 +44,8 @@ test('known chain is adapted to planning while writing macros and visible parall
   const rendered = resolveRuntimePresetMacros(compileDreamSikeContract(raw), { lastUserMessage: '本回合实际输入' }).snapshot.text
   assert.match(rendered, /自定义文风/)
   assert.match(rendered, /至少列举 3 条事件链/)
-  assert.match(rendered, /<dream_parallel_event>/)
+  assert.doesNotMatch(rendered, /<dream_parallel_event>/)
+  assert.match(compileDreamSikeContract(raw).deferredDraft.entries[0].content, /<dream_parallel_event>/)
   assert.doesNotMatch(rendered, /legacy-private-chain|lastUserMessage|<simple_thinking>|完整隐式推理|旧格式进行思考/)
 })
 
@@ -160,21 +161,21 @@ test('flash style focus and five parallel checks retain authored wording without
   assert.match(compiled.text, /绝对禁止.*在思考中写正文撰草稿/)
   const source = SOURCE_RULES['807eefad-93ca-490c-a629-1d51038e3626']
   const checks = source.slice(source.indexOf('1. 当前挑选'), source.indexOf('思考预算为400字。'))
-  assert.ok(compiled.text.includes(checks))
+  assert.ok(compiled.deferredDraft.entries[0].content.includes(checks))
   assert.doesNotMatch(compiled.text, /1000token|思考强度：low|思考预算为400字|<simple_thinking>|闭合标签/)
-  assert.match(compiled.text, /<dream_parallel_event>/)
+  assert.match(compiled.deferredDraft.entries[0].content, /<dream_parallel_event>/)
 })
 
 test('source self-repair scans, cognition checks and unique patch rules survive native adaptation', () => {
   const id = '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2'
   const source = SOURCE_RULES[id]
   const compiled = compileDreamSikeContract({ back: { entries: [entry(id, '自检修复', source)] } })
-  assert.ok(compiled.text.includes(source.slice(0, source.indexOf('# 修复格式'))))
+  assert.ok(compiled.deferredDraft.entries[0].content.includes(source.slice(0, source.indexOf('# 修复格式'))))
   const rules = source.slice(source.indexOf('1. 全部 FIND'), source.indexOf('# 输出格式'))
-  assert.ok(compiled.text.includes(rules))
-  assert.match(compiled.text, /sike_patch_draft.*expectedVersion.*find.*replacement/)
-  assert.match(compiled.text, /sike_check_draft/)
-  assert.match(compiled.text, /无问题允许零补丁/)
+  assert.ok(compiled.deferredDraft.entries[0].content.includes(rules))
+  assert.match(compiled.agentContract.instruction, /sike_run_module/)
+  assert.match(compiled.agentContract.instruction, /sike_check_draft/)
+  assert.match(compiled.agentContract.instruction, /无问题允许零补丁/)
   assert.doesNotMatch(compiled.text, /<dream_self_check>|<review>|<patch>|至少三项、至多十项/)
 })
 

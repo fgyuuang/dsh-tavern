@@ -31,6 +31,8 @@ export function createForegroundHandoff(options = {}) {
     }
     // An unfinished prefilter is optional: sending cancels it instead of waiting.
     if (chat !== undefined) await options.cancelPrefilter?.(chat.id)
+    // Optional interaction panels yield to the player's next story action.
+    if (chat !== undefined) await options.cancelFollowup?.(chat.id)
     // A greeting is already story text. Direct typing may bypass candidate
     // preparation, so project its keywords locally before the first body request.
     const onlyGreeting = opening ? opening.messageCount === 1 && opening.firstGreeting === true

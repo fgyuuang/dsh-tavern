@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { normalizedContextUsage, contextUsageMetrics, summarizeContextUsage, requestPrefixMetrics } from './context-cache-metrics.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -160,7 +161,8 @@ export function createModelRequestLog(options = {}) {
           requests: retainRecentBodies(requests.concat([{
             id: requestId, scope, task: record.task, sessionId: record.sessionId,
             turn: record.turn, agentTurn: record.agentTurn, step: record.step,
-            createdAt: record.createdAt, preset: record.preset
+            createdAt: record.createdAt, preset: record.preset,
+            provider: str(requestOptions?.provider), model: str(requestOptions?.model)
           }]), Math.max(turn, record.agentTurn), pruned)
         }
       })
@@ -191,7 +193,8 @@ export function createModelRequestLog(options = {}) {
         text: str(input.text),
         finish: input.finish === undefined ? null : JSON.parse(JSON.stringify(input.finish)),
         error: str(input.error) || null
-      }
+      },
+      usage: normalizedContextUsage(input.usage)
     }
     await writeJson(resultPath, result)
     // Callers needing the full request use evidence(); completion returns only state.
@@ -247,5 +250,32 @@ export function createModelRequestLog(options = {}) {
     const chatId = owner?.chatId || fallbackChatId;
     return chatId ? latest(chatId, knownId, sessionId) : null;
   }
-  return Object.freeze({ record, complete, evidence, list, detail, latest, latestForSession })
+  async function contextCacheAudit(chatId, { limit = 50, includePrefix = false } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('上下文审计请求数量须为 1–100')
+    if (typeof includePrefix !== 'boolean') throw new Error('前缀审计开关须为布尔值')
+    const entries = (await list(chatId)).slice(-limit), rows = [], previous = new Map()
+    for (const [index, entry] of entries.entries()) {
+      const base = 'model-requests/' + chatId + '/'
+      const result = await readJson(base + entry.id + '.result.json')
+      const row = { id: entry.id, scope: entry.scope, task: entry.task, sessionId: entry.sessionId,
+        turn: entry.turn, agentTurn: entry.agentTurn, step: entry.step,
+        provider: entry.provider, model: entry.model, createdAt: entry.createdAt,
+        status: result?.status || 'unknown', durationMs: result?.durationMs ?? null, ...contextUsageMetrics(result?.usage) }
+      // Full bodies can be MBs. Default usage audits read sidecars only; opt-in
+      // structural comparisons are bounded to eight recent retained snapshots.
+      if (includePrefix && index >= entries.length - 8 && !entry.pruned) {
+        const body = await readJson(base + entry.id + '.json')
+        if (body?.request) {
+          row.provider ||= body.request.provider; row.model ||= body.request.model
+          const key = JSON.stringify([entry.sessionId, row.provider, row.model])
+          row.prefix = requestPrefixMetrics(previous.get(key), body.request)
+          previous.set(key, body.request)
+        }
+      }
+      rows.push(row)
+    }
+    return { version: 1, chatId, convention: 'dsh-disjoint-token-usage',
+      source: 'provider-reported-stream-usage', summary: summarizeContextUsage(rows), requests: rows }
+  }
+  return Object.freeze({ record, complete, evidence, list, detail, latest, latestForSession, contextCacheAudit })
 }

@@ -93,9 +93,11 @@ export function registerModelStreamHooks({
       let responseText = ''
       let finish = null
       let failure = null
+      let usage = null
       try {
         for await (const chunk of stream) {
           if (chunk && chunk.type === 'text-delta') responseText += str(chunk.text)
+          if (chunk && chunk.type === 'usage') usage = chunk.usage
           if (chunk && chunk.type === 'finish') finish = chunk.reason === undefined ? chunk : chunk.reason
           yield chunk
         }
@@ -107,7 +109,7 @@ export function registerModelStreamHooks({
         const completed = finish && finish.kind !== 'error' && finish.kind !== 'aborted'
         foregroundStrategies.completeRequest(options, completed)
         if (chat && requestRecord) {
-          try { await modelRequestLog.complete({ chatId: chat.id, id: requestRecord.id, text: responseText, finish, error: failure }) }
+          try { await modelRequestLog.complete({ chatId: chat.id, id: requestRecord.id, text: responseText, finish, error: failure, usage }) }
           catch (error) { console.error('dsh-tavern: 模型结果日志写入失败', str(error && error.message || error)) }
         }
       }

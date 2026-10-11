@@ -176,6 +176,7 @@ import { createTavernScriptDispatch } from './domain/tavern-script-dispatch.js'
 import { createTavernExtensionSettings } from './domain/tavern-extension-settings.js'
 import { createTavernScriptHostAdapter } from './domain/tavern-script-host-adapter.js'
 import { createDreamSikeFollowups, dreamSikeFollowupView, DREAM_SIKE_FOLLOWUP_TOOL } from './domain/dream-sike-followup.js'
+import { createDreamSikeDraftModules, DREAM_SIKE_MODULE_TOOL } from './domain/dream-sike-draft-modules.js'
 import { createTavernRemoteAssetPinStore } from './domain/tavern-remote-assets.js'
 import { OFFICIAL_MVU_VERSION, inspectOfficialMvuAsset } from './domain/official-mvu-assets.js'
 import { createTavernStaticResourceCache } from './domain/tavern-static-resource-cache.js'
@@ -2328,7 +2329,7 @@ export async function apply(ctx) {
     imageSystemPrompt: () => runtimePrompt('scene-image-system'),
     resolveModelSelection: async input => backgroundModelSelection(await backgroundConfigForSession(input.sessionId)) || input.selection,
     resolveWebSearch: async input => (await backgroundConfigForSession(input.sessionId))?.webSearchEnabled === true,
-    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL, GAME_MEMORY_SUBMIT_TOOL, DREAM_SIKE_FOLLOWUP_TOOL],
+    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL, GAME_MEMORY_SUBMIT_TOOL, DREAM_SIKE_FOLLOWUP_TOOL, DREAM_SIKE_MODULE_TOOL],
     sharedTools: [{
       tool: GAME_MEMORY_READ_TOOL,
       async execute({ input, args }) {
@@ -2823,6 +2824,10 @@ export async function apply(ctx) {
     publish: sessionId => sessionSignals.publish(sessionId, { kind: 'tavern-state', version: 'sike-followup:' + Date.now() })
   })
   ctx.effect(() => () => dreamSikeFollowups.dispose())
+  const dreamSikeDraftModules = createDreamSikeDraftModules({ read: readChat, update: updateChat, tasks: backgroundTasks,
+    run: input => backgroundAgentRunner.run(input), selection: backgroundModelSelection,
+    publish: sessionId => sessionSignals.publish(sessionId, { kind: 'tavern-state', version: 'sike-module:' + Date.now() }) })
+  ctx.effect(() => () => dreamSikeDraftModules.dispose())
   const ledgerEditor = createLedgerEditor({
     chats: { forSession: chatForSession, update: updateChat }, timeline: storyTimeline,
     isBusy: chat => backgroundTasks.activity(chat).busy || Boolean(chat.regenInProgress) || agentRegistry.get(chat.sessionId)?.phase?.kind === 'running'
@@ -3534,6 +3539,7 @@ export async function apply(ctx) {
     shellToolName: process.platform === 'win32' ? 'pwsh' : 'bash'
   })
   const foregroundHandoff = createForegroundHandoff({
+    cancelFollowup: chatId => dreamSikeFollowups.cancel(chatId),
     turns: turnOrchestrator,
     prepareOpeningWorldBook: prepareNextWorldBookContext,
     store: { chatForSession, readChat, readState: taskStateReader.read, stateForSession: taskStateReader.forSession, openingStateForSession },
@@ -3951,6 +3957,11 @@ export async function apply(ctx) {
         const ownerId = background?.parentSessionId || session?.header?.parentSession || sessionId
         const chat = await sessionStateForSession(ownerId)
         return { record: await modelRequestLog.latestForSession(sessionId, str(args?.knownId), chat?.id) }
+      }
+      case 'getContextCacheAudit': {
+        const chat = await chatHeaderForSession(args?.sessionId, ['id'])
+        if (!chat) throw new Error('当前会话没有绑定游戏')
+        return { audit: await modelRequestLog.contextCacheAudit(chat.id, { limit: args?.limit ?? 50, includePrefix: args?.includePrefix ?? false }) }
       }
       case 'listSkills': return { skills: (await tavernSkills.list()).map(({ content, path, ...summary }) => summary) }
       case 'editSkill': return { skill: await tavernSkills.edit(args) }
@@ -4627,7 +4638,7 @@ export async function apply(ctx) {
     })
   }
 
-  const controlledToolNames = new Set(['tavern_memory', 'tavern_read_variables', 'sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
+  const controlledToolNames = new Set(['tavern_memory', 'tavern_read_variables', 'sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft', ...CARD_MEMORY_TOOLS, 'bash', 'pwsh', ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'web_search', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_user_profile_confirm', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response'])
   const foregroundStrategies = createForegroundOrchestrationStrategies({
     compatibility: {
       beforeTurn: async function (input) {
@@ -4764,7 +4775,7 @@ export async function apply(ctx) {
       searchWorldbook,
       tools,
     })
-    registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools })
+    registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools, draftModules: dreamSikeDraftModules })
     registerGameMemoryTools({ tools, workspace: gameMemory, chatForSession: sessionId => chatHeaderForSession(sessionId, ['gameMemory']) })
     registerUserProfileTools({
       chatForSession,

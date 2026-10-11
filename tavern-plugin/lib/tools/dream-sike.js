@@ -50,7 +50,7 @@ function turnReport(chat, identity, args = {}) {
   })
   const materialRefs = ['action:' + identity.operationId, 'worldbook:' + identity.branchId + ':' + identity.storyRevision,
     'variables:' + identity.branchId + ':' + identity.storyRevision, ...recent.map(message => message.ref)]
-  return {
+  const report = {
     turn: identity.turn, card: str(chat.cardName), playerAction: clip(operation.userText, 3000),
     posture: clip(chat.posture, 1000), recent,
     materialRefs,
@@ -76,7 +76,7 @@ function turnReport(chat, identity, args = {}) {
     state: clip(JSON.stringify(chat.variables || {}), 2500),
     presetContract: contract ? { version: contract.version, digest: contract.digest, presetName: contract.presetName,
       sourceCharacters: contract.sourceCharacters, entriesCount: contract.entries.length,
-      reviewAxes: contract.reviewAxes, instruction: contract.instruction } : null,
+      reviewAxes: contract.reviewAxes, draftModules: contract.draftModules || [], followupModules: contract.followupModules || [], instruction: contract.instruction } : null,
     presetRules,
     editorialRequired: needsDreamSikeEditorialReview(chat),
     preparationRequired: needsDreamSikePreparation(chat),
@@ -93,10 +93,28 @@ function turnReport(chat, identity, args = {}) {
         ? '按已选作者规则依次核对材料、人物、格式、文风和叙事者方法；需要依据时检索。preparationRequired 为 true 时用 sike_prepare_turn 保存六项简短执行约束；可用 coverage 引用实际读取的规则与材料。起草后六维审稿，有缺陷再局部修订；允许零补丁，不展开私有推理。'
         : '当前为 ' + (contract?.outputMode || '普通') + ' 输出模式，按该模式的作者原文执行，不要求剧情六项准备或六维剧情审稿；仍须建立、检查并确认唯一回复。')
   }
+  if (args.includeMaterials === false) {
+    for (const field of ['playerAction', 'posture', 'recent', 'worldBook', 'state']) delete report[field]
+    report.materialsOmitted = true
+    report.materialReadHint = '本次仅返回材料引用；需要原文、压缩或重启后用 includeMaterials=true 重读，不将本页引用视为已读取事实。'
+    if (report.presetContract) delete report.presetContract.instruction
+    if (report.preparation) {
+      const receipt = report.preparation
+      report.preparation = { preparedAt: receipt.preparedAt, contractDigest: receipt.contractDigest, brief: receipt.brief,
+        readCounts: { rules: receipt.servedRuleIds?.length || 0, ranges: receipt.ruleReadRanges?.length || 0, materials: receipt.materialRefs?.length || 0 } }
+    }
+  }
+  if (args.includeDraft === false) { report.draft = null; report.draftOmitted = true }
+  if (args.includeRules === false) {
+    report.presetRules = { rules: [], omitted: true, digest: presetRules.digest, contractDigest: presetRules.contractDigest,
+      nextOffset: args.ruleOffset || 0, nextContentOffset: args.ruleContentOffset || 0 }
+    report.next = '本次未请求作者规则正文；需要时用 includeRules=true 及上一页的续读位置读取。'
+  }
+  return report
 }
 
 /** Register foreground tools. The host owns canonical story/MVU commits. */
-export function registerDreamSikeTools({ tools, chatForSession, updateChat, activeTurnOf, publish }) {
+export function registerDreamSikeTools({ tools, chatForSession, updateChat, activeTurnOf, publish, draftModules }) {
   if (!tools || typeof tools.register !== 'function' || typeof chatForSession !== 'function'
     || typeof updateChat !== 'function' || typeof activeTurnOf !== 'function') throw new Error('缺少梦境思客DSH工具依赖')
 
@@ -131,7 +149,10 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       draftOffset: { type: 'integer', description: '长草稿续读位置；首次省略或填 0' },
       ruleOffset: { type: 'integer', description: '作者规则条目起点；首次 0，续读采用 presetRules.nextOffset' },
       ruleContentOffset: { type: 'integer', description: '超长单条规则的字符续读位置；采用 presetRules.nextContentOffset，开始新条目时填 0' },
-      ruleLimit: { type: 'integer', description: '每页最多规则条数；默认及最大 10，内容总额最多 8000 字符' }
+      ruleLimit: { type: 'integer', description: '每页最多规则条数；默认及最大 10，内容总额最多 8000 字符' },
+      includeMaterials: { type: 'boolean', description: '默认 true；连续读取规则续页时可 false，避免重复整套材料与准备回执。压缩、重启或需要补查事实时使用 true。' },
+      includeDraft: { type: 'boolean', description: '默认 true；只续读规则时设 false。读取草稿时设 true，并用 draftOffset 续读。' },
+      includeRules: { type: 'boolean', description: '默认 true；仅读取草稿时设 false，避免再次注入规则第一页。' }
     }, output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       let report
@@ -145,7 +166,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
           materialRefs: material.materialRefs, rules: material.presetRules.rules,
           profileDigest: material.presetRules.profileDigest || material.presetRules.digest
         })
-        material.preparation = dreamSikePreparationView(chat, identity)
+        if (args.includeMaterials !== false) material.preparation = dreamSikePreparationView(chat, identity)
         report = JSON.stringify(material)
       }, 'turn.read')
       return { report, draft }
@@ -191,6 +212,21 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
   }))
 
+  tools.register(defineTool({
+    name: 'sike_run_module',
+    description: '执行本局已启用的独立草稿模块：parallel 按作者原文生成平行事件并合入唯一草稿；review 按作者检查规则独立审阅完整草稿。顺序为主线草稿→parallel→review→检查确认。结果仅作用于匹配版本草稿，不触发正式消息或变量结算；完成结果未变化时直接复用。',
+    parameters: { kind: { type: 'string', required: true, description: 'parallel 或 review' }, expectedVersion: { type: 'integer', required: true, description: '当前未确认草稿版本' } },
+    output, isConcurrencySafe: () => false,
+    async execute(args, exec) {
+      if (!draftModules) throw new Error('当前宿主没有独立草稿模块执行器')
+      const { chat, identity } = await resolve(exec)
+      const result = await draftModules.execute({ chat, identity, kind: args.kind, expectedVersion: args.expectedVersion, signal: exec.signal })
+      return { report: JSON.stringify({ module: result.module, reused: result.reused, version: result.draft.version,
+        text: args.kind === 'parallel' ? result.draft.text.match(/<dream_parallel_event>[\s\S]*?<\/dream_parallel_event>/i)?.[0] : undefined,
+        review: args.kind === 'review' ? result.draft.modules.review.review : undefined,
+        next: '依据当前版本检查完整草稿；存在 revise 时局部修改，模块失效后再次运行。' }), draft: result.draft }
+    }
+  }))
   tools.register(defineTool({
     name: 'sike_check_draft',
     description: '检查正文协议，并记录 Agent 对预设文风、角色、信息差和剧情的可核实审阅。仅 editorialRequired=true 的剧情回合必须提交六维 review；聊天和总结模式免除。工具验证审阅结构和协议，文风判断由 Agent 对照作者规则进行，不等于程序证明质量。',

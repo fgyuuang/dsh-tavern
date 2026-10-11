@@ -13,9 +13,9 @@ const stageDefinitions = [
   ['role-scene', '角色与场景', '读取角色、视角、玩家动作及人物可知信息，沿用已选作者规则。'],
   ['narration', '叙事与文风', '按已选文风、叙事者、字数和附加规则组织正文。'],
   ['planning', '写前决策', '执行作者的设定检索、视角核对、写规检查与事件推进步骤。'],
-  ['output', '正文与附加输出', '按当前输出模式和已启用场景、平行事件等格式建立唯一草稿。'],
+  ['output', '正文与独立剧情模块', '先写主线草稿，独立生成已启用平行事件并合入草稿，整体审稿后提交一次。'],
   ['review-state', '审稿与状态结算', '按已选检查规则修订草稿，最终正文确认后结算状态。'],
-  ['followup', '后续互动', '正文与状态结算完成后，另一次调用按作者规则生成行动选项和剧情共创。'],
+  ['followup', '后续互动', '正文与状态结算完成后，另一次调用按作者规则生成已选共创、行动选项和本回合摘要。'],
   ['model', '模型与材料接入', '管理模型适配及外部数据库、表格材料的兼容状态。']
 ]
 const groupStages = new Map([
@@ -29,8 +29,8 @@ const optionStages = new Map([
   ['e93c52c7-10dc-4c47-88ab-7cc74b31ea60', 'model'], ['cbe5b03e-f488-4afc-bc2b-8650af0f97bf', 'model'],
   ['7cfbff76-346a-400f-b47d-46e55f5fe0fa', 'review-state'], ['4e26a3ac-4d46-45ed-85bf-0110fbe06cd2', 'review-state'],
   ['11cdd506-1513-4008-b6b9-c883dbad65c5', 'followup'], ['f96f47f7-01ef-4676-b0fe-6f254ae7e550', 'followup'],
-  ['f9b03e19-fd96-4782-8867-73ad2cbabfb9', 'output'], ['27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'followup'],
-  ['6a8e799c-9445-44f2-a853-c6c71b92b855', 'output'], ['43f8a625-93e6-46c0-9c20-b635c57e3b19', 'output'],
+  ['f9b03e19-fd96-4782-8867-73ad2cbabfb9', 'followup'], ['27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'followup'],
+  ['6a8e799c-9445-44f2-a853-c6c71b92b855', 'followup'], ['43f8a625-93e6-46c0-9c20-b635c57e3b19', 'output'],
   ['807eefad-93ca-490c-a629-1d51038e3626', 'output'], ['0507e8d7-99e4-4cb6-84d8-e0a467da2ff7', 'planning']
 ])
 const chainIds = new Set(['0da6f4d7-961d-4966-a084-857a3dd876ad', '81b2facd-db99-4bdc-9597-7cc1d08726dd', '25e9984e-02c2-40c7-a095-bf4683f7d04e'])

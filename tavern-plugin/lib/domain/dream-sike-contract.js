@@ -2,11 +2,16 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 8
+const VERSION = 9
 export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
   '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
-  '27bf435f-4283-4937-8c6f-3c31abc4f6d2'
+  '27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'f9b03e19-fd96-4782-8867-73ad2cbabfb9',
+  '6a8e799c-9445-44f2-a853-c6c71b92b855'
 ])
+export const DREAM_SIKE_DRAFT_MODULE_IDS = Object.freeze({
+  parallel: ['807eefad-93ca-490c-a629-1d51038e3626'],
+  review: ['7cfbff76-346a-400f-b47d-46e55f5fe0fa', '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2']
+})
 const str = value => typeof value === 'string' ? value : ''
 
 // These are source prompt identifiers, not keyword matches against user prose.
@@ -50,6 +55,7 @@ export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 原预设的正文/XML/HTML要求约束 sike_put_draft 的完整可渲染文本，保留 dream_plot、dream_body、dream_after_format、dream_scene、dream_parallel_event 等已要求的外壳及卡片 HTML。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
 原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history、dreamer_input、writing_setting 的开闭标签条目已按原生边界移除，这些名称在保留下来的作者原句中表示待核对的材料范围，按 sike_read_turn 的 materialAreas 解析为当前卡片、有效世界书、状态、本回合输入和分支历史；按名称对应的分析职责照旧执行，不因标签不存在而跳过，也不把原生工具消息改为旧酒馆的文本协议。
+首次读取回合保留材料、规则与当前草稿。连续续读作者规则时使用 includeMaterials=false、includeDraft=false，避免每页重复材料；只续读草稿时使用 includeRules=false。压缩、重启后或需要重新核对材料时显式 includeMaterials=true、includeRules=true。引用和摘要不能代替尚未读取的原文。
 已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；再用 sike_prepare_turn 保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，之后才能建立草稿。候选事件链在内部评估，不提交推理过程。这个准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
 建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。发现具体缺陷须局部修订并重新审稿，无问题允许零补丁。不能用“标签没错”代替文风检查。
 简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写、转述、禁止抢话、深度扮演与大纲模式的角色控制范围采用本局选定原文，不能把这些选项写成同一种行为；未授权的重大决定仍留给玩家，深度扮演的明确授权仅在当前回合生效。若选定平行事件，则允许读者看到场外事件，但场内人物不能因此自动知情。
@@ -139,16 +145,26 @@ export function compileDreamSikeContract(snapshot) {
   if (snapshot.agentContract?.version === VERSION) return snapshot
   const evidence = []
   const followupEntries = []
+  const draftEntries = []
   const phases = {}
   const rawPhases = snapshot.front || snapshot.middle || snapshot.back
     ? snapshot : { front: { entries: [{ id: 'legacy', content: str(snapshot.text), role: 'system' }] } }
   for (const phase of ['front', 'middle', 'back']) {
     const entries = []
-    for (const entry of rawPhases[phase]?.entries || []) {
+    const restored = [...(snapshot.deferredFollowup?.entries || []), ...(snapshot.deferredDraft?.entries || [])]
+      .filter(entry => (entry.sourcePhase || entry.phase || 'back') === phase)
+    const sourceEntries = [...(rawPhases[phase]?.entries || []), ...restored]
+      .filter((entry, index, all) => !(entry.id || entry.entryKey) || all.findIndex(other => (other.id || other.entryKey) === (entry.id || entry.entryKey)) === index)
+    for (const entry of sourceEntries) {
       if (!entry || entry.enabled === false || entry.marker === true || !str(entry.content).trim()) continue
       const deferred = DREAM_SIKE_FOLLOWUP_IDS.includes(identifier(entry))
-      if (deferred) followupEntries.push(structuredClone(entry))
-      const adapted = deferred ? { content: '', action: 'deferred-followup' } : adapt(entry)
+      const candidateKind = Object.entries(DREAM_SIKE_DRAFT_MODULE_IDS).find(([, ids]) => ids.includes(identifier(entry)))?.[0]
+      const moduleKind = candidateKind === 'parallel' && /DREAM_PARALLEL|dream_parallel_event/.test(entry.content) ? 'parallel'
+        : candidateKind === 'review' && /DREAM_BAGUCHAOSHA|# 检查范围[\s\S]*# 修复格式/.test(entry.content) ? 'review' : null
+      if (deferred) followupEntries.push({ ...structuredClone(entry), sourcePhase: phase })
+      if (moduleKind) draftEntries.push({ ...structuredClone(entry), sourcePhase: phase, moduleKind })
+      const adapted = deferred ? { content: '', action: 'deferred-followup' }
+        : moduleKind ? { content: '', action: 'draft-module-' + moduleKind } : adapt(entry)
       evidence.push({ id: str(entry.id || entry.entryKey), identifier: identifier(entry), name: str(entry.name || entry.source?.name), phase,
         action: adapted.action, characters: entry.content.length, sourceHash: createHash('sha256').update(entry.content).digest('hex') })
       if (adapted.content.trim()) entries.push({ ...entry, content: adapted.content })
@@ -159,15 +175,19 @@ export function compileDreamSikeContract(snapshot) {
   // When multiple overrides are enabled, their source order determines the last mode.
   const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
   const instruction = outputModeInstruction(outputMode) + (outputMode === 'plot' && followupEntries.length
-    ? '\n【后续互动顺序】本局选定的行动选项与思客大调查由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option 或 dream_big_discuss，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
+    ? '\n【后续互动顺序】本局选定的行动选项与思客大调查、说书共创及小摘要由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option、dream_big_discuss、dream_discuss 或 dream_summary，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
+    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿，禁止前台直接生成平行区块。然后审稿；启用八股超杀或自检修复时调用 sike_run_module(kind="review", expectedVersion) 独立审阅完整草稿。读取简短审稿依据，必要时局部修订；主线修改使模块结果过期时重新执行。最后 sike_check_draft、sike_ready_draft，整体提交一次，变量结算依据包含平行事件的完整最终正文。' : '')
   const deferredFollowup = { entries: outputMode === 'plot' ? followupEntries : [],
     digest: createHash('sha256').update(JSON.stringify(followupEntries)).digest('hex') }
-  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, deferredFollowup, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
+  const deferredDraft = { entries: outputMode === 'plot' ? draftEntries : [],
+    digest: createHash('sha256').update(JSON.stringify(draftEntries)).digest('hex') }
+  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, deferredFollowup, deferredDraft, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
   const agentContract = { version: VERSION, digest, presetPath: str(snapshot.presetPath), presetName: str(snapshot.presetName),
     sourceCharacters: evidence.reduce((sum, entry) => sum + entry.characters, 0), entries: evidence,
     outputMode, followupModules: deferredFollowup.entries.map(entry => ({ id: identifier(entry), name: entry.name || entry.source?.name || '' })),
+    draftModules: deferredDraft.entries.map(entry => ({ id: identifier(entry), kind: entry.moduleKind, name: entry.name || entry.source?.name || '' })),
     reviewAxes: outputMode === 'plot' ? [...DREAM_SIKE_REVIEW_AXES] : [], instruction }
-  return { ...snapshot, ...phases, deferredFollowup, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
+  return { ...snapshot, ...phases, deferredFollowup, deferredDraft, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
 }
 
 export function dreamSikeContractView(snapshot) {
@@ -189,8 +209,8 @@ export function inspectDreamSikeContractDraft(chat, text) {
   const add = (code, message) => issues.push({ code, message })
   const elements = tag => [...str(text).matchAll(new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + tag + '\\s*>', 'gi'))]
   const visibleText = str(text).replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '').replace(/<!--[\s\S]*?-->/g, '')
-  if (contract.followupModules?.length && /<\/?(?:dream_option|dream_big_discuss)\b/i.test(visibleText)) {
-    add('preset-deferred-followup', '行动选项与思客大调查属于结算后的独立调用，请从正文草稿移除；原作者规则将由后台执行，不要在当前回合提前输出。')
+  if (contract.followupModules?.length && /<\/?(?:dream_option|dream_big_discuss|dream_discuss|dream_summary)\b/i.test(visibleText)) {
+    add('preset-deferred-followup', '行动选项、剧情共创与小摘要属于结算后的独立调用，请从正文草稿移除；原作者规则将由后台执行，不要在当前回合提前输出。')
   }
   if (enabled.has(IDS.envelope)) {
     for (const tag of ['dream_plot', 'dream_body', 'dream_after_format']) {

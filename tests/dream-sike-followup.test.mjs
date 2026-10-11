@@ -140,3 +140,19 @@ for (const kind of ['variables', 'preset']) test('后续调用期间' + kind + '
   assert.equal(h.get().messages[1].sourceText, '<dream_body>正文已提交。</dream_body>')
   if (kind === 'variables') assert.equal(h.get().messages[1].variables[0].hp, 9)
 })
+
+test('玩家下一回合可以取消未完成后续生成，释放后台且不重复结算', async t => {
+  let entered
+  const started = new Promise(resolve => { entered = resolve })
+  const h = harness(t, async input => new Promise((resolve, reject) => {
+    input.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }); entered()
+  }))
+  const messages = structuredClone(h.get().messages)
+  await h.pipeline.start('game'); await started
+  assert.equal(await h.pipeline.cancel('game'), true)
+  assert.equal(h.get().dreamSikeFollowup.status, 'failed')
+  assert.match(h.get().dreamSikeFollowup.error, /下一回合/)
+  assert.ok(Object.values(h.get().timeline.operations).every(operation => operation.status !== 'running'))
+  assert.deepEqual(h.get().messages, messages)
+  assert.equal(h.get().settleStatus, 'done')
+})
