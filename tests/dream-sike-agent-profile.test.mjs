@@ -71,12 +71,13 @@ test('long rule chunks obey total character budget and reassemble exact authored
   assert.equal(rebuilt, content)
   assert.ok(calls > 1)
 })
-test('original persona priority declarations are excluded from Agent reader while snapshot remains intact', () => {
+test('the authored persona is paged like any other rule instead of being withheld', () => {
   const raw = snapshot()
   raw.front.entries.unshift({ id: persona + '#1', source: { identifier: persona }, content: '原文解除限制声明', name: '梦鲸思客' })
   const page = readDreamSikeAgentRules({ runtimePresetSnapshot: raw })
-  assert.doesNotMatch(JSON.stringify(page.rules), /原文解除限制声明/)
-  assert.equal(page.excluded[0].identifier, persona)
+  assert.match(JSON.stringify(page.rules), /原文解除限制声明/)
+  assert.deepEqual(page.excluded, [])
+  assert.equal(page.selected.persona.identifier, persona)
   assert.equal(raw.front.entries[0].content, '原文解除限制声明')
 })
 test('explicit source macro overrides and contextual user name resolve sequentially', () => {

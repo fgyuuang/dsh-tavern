@@ -265,3 +265,18 @@ test('persona and thinking chain both survive a full phase compile into the requ
   assert.equal(compiled.agentContract.outputMode, 'plot')
   assert.ok(compiled.agentContract.sourceCharacters > PERSONA.length)
 })
+
+test('the thinking chain stays bound to the authored meta clause, not only to its four chapters', () => {
+  const source = SOURCE_RULES[CHAIN_ID]
+  const compiled = compileDreamSikeContract({ back: { entries: [entry(CHAIN_ID, '默认思维链', source)] } })
+  const chain = resolveRuntimePresetMacros(compiled, { macroState: {}, lastUserMessage: '' }).macroState.local.sleep_var_thought_of_chain
+  // The author binds the pre-writing review to the same meta block as the persona. Removing this
+  // line as an "output format" rule silently detached the chain from the persona.
+  assert.match(chain, /你在思考前，必须需要严格遵守"<meta>"协议进行思考/)
+  // Its creative duties stay: input classification, protocol list and the no-fabricated-format rule.
+  assert.match(chain, /若`<dream_after_format>`中无需要插入的格式，禁止自行编造格式内容/)
+  assert.match(chain, /还是作为以发生内容，或者作为全文大纲/)
+  assert.match(chain, /该步骤必须一步一步进行分析，不可省略与偷懒/)
+  // Only the literal private-reasoning transcript is redirected.
+  assert.doesNotMatch(chain, /<think>|```thinking_step|<thought_of_chain>|吾有一梦|前尘已定/)
+})

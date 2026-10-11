@@ -80,13 +80,12 @@ function adapt(entry) {
     && content.includes('<thought_of_chain>')) {
     return { action: 'agent-planning', content: content
       .replace(/^<\/?thought_of_chain>\s*$/gm, '')
-      .replace(/^在你的思考过程（<think>标签内）中，请遵守以下规则：$/m, '以下为写前内部核对步骤；保留作者任务顺序，不向正文或工具参数展开私有推理。')
-      .replace(/^- 你在思考前，必须需要严格遵守.*$/m, '')
+      .replace(/^在你的思考过程（<think>标签内）中，请遵守以下规则：$/m, '以下为写前内部核对步骤；保留作者任务顺序，在原生推理中完成，不向正文或工具参数展开私有推理。')
       .replace(/^- 你的思考输出必须.*$/m, '')
       .replace(/^- 思考内容仅允许输出一次.*$/m, '')
       .replace(/^```(?:thinking_step)?\s*$/gm, '')
       .replace(/^在思考开始时输出：.*$/m, '')
-      .replace(/^终、定乾坤：.*$/m, '终、定乾坤：完成内部核对后，通过 sike_put_draft 建立唯一正文草稿。')
+      .replace(/^终、定乾坤：.*$/m, '终、定乾坤：完成内部核对后，通过 sike_put_draft 建立唯一正文草稿；草稿只提交一次，不在正文重复或重述核对内容。')
       .replace(/^思考完毕后，开始按照 DREAM_PLOT 协议输出XML文档内容。$/m, 'DREAM_PLOT 协议约束草稿文本；原生工具调用遵循 DSH 工具协议。') }
   }
   // A selected, edited planning module still enables the native preparation gate.

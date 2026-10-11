@@ -4,6 +4,8 @@ import { compileDreamSikeContract } from './dream-sike-contract.js'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 const phases = ['front', 'middle', 'back']
+// The authored persona is a regular author rule: it is paged like every other rule instead of
+// being withheld, and it maps to the role stage because it defines who is writing.
 const personaId = '06b5771b-109d-47b1-94d0-8bbc805bc15e'
 const hash = text => createHash('sha256').update(String(text || '')).digest('hex')
 const identifier = entry => entry.source?.identifier || entry.identifier || String(entry.id || entry.entryKey || '').replace(/#\d+$/, '')
@@ -41,7 +43,6 @@ function resolveRules(snapshot, context = {}) {
   const excluded = [], rules = []
   for (const phase of phases) for (const entry of rendered.snapshot?.[phase]?.entries || []) {
     const id = identifier(entry), key = entry.id || entry.entryKey
-    if (id === personaId) { excluded.push({ key, identifier: id, reason: '原身份模块中的优先级与解除限制声明不作为 Agent 能力授权；原始文本保留在设置原文视图。' }); continue }
     const source = original.get(key), trace = evidence.get(key)
     rules.push({ key, identifier: id, name: entry.name || entry.source?.name || '', phase,
       content: String(entry.content || ''), sourceHash: trace?.sourceHash || hash(source?.content || entry.content),
@@ -86,7 +87,9 @@ export function buildDreamSikeAgentProfile(snapshot, mode = 'tavern', options = 
   }
   const resolved = resolveRules(snapshot, options.context || options.macroContext || options)
   for (const rule of resolved.rules) {
-    const stageId = chainIds.has(rule.identifier) ? 'planning' : selectedStage.get(rule.identifier) || optionStages.get(rule.identifier) || 'output'
+    const stageId = rule.identifier === personaId ? 'role-scene'
+      : chainIds.has(rule.identifier) ? 'planning'
+      : selectedStage.get(rule.identifier) || optionStages.get(rule.identifier) || 'output'
     byStage.get(stageId).authorRuleIds.push({ key: rule.key, identifier: rule.identifier, name: rule.name,
       sourceHash: rule.sourceHash, resolvedHash: rule.resolvedHash, action: rule.action })
   }
@@ -117,7 +120,8 @@ export function readDreamSikeAgentRules(chat, request = {}) {
   const local = resolved.rendered.macroState?.local || {}
   const variable = variableId => ({ variableId, characters: String(local[variableId] || '').length,
     preview: String(local[variableId] || '').slice(0, 240), truncated: String(local[variableId] || '').length > 240, hash: hash(local[variableId]) })
-  const selected = { writer: summary(resolved.rules.find(rule => rule.identifier === '881044e5-cbef-43c7-ad19-c6e7f6d150b4')),
+  const selected = { persona: summary(resolved.rules.find(rule => rule.identifier === personaId)),
+    writer: summary(resolved.rules.find(rule => rule.identifier === '881044e5-cbef-43c7-ad19-c6e7f6d150b4')),
     style: variable('sleep_var_wenfeng'), narrator: variable('sleep_var_tuijin'), charAnalysis: variable('sleep_var_char_analysis'),
     chains: resolved.rules.filter(rule => chainIds.has(rule.identifier)).map(summary) }
   if (offset > resolved.rules.length || (offset === resolved.rules.length && contentOffset !== 0)) throw new Error('作者规则分页位置无效')
