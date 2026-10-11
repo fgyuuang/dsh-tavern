@@ -17,10 +17,13 @@ export function needsDreamSikePreparation(chat) {
 }
 
 /** A receipt of materials actually served by the read tool, not inferred reasoning. */
-export function recordDreamSikeTurnRead(chat, identity, now = Date.now()) {
+export function recordDreamSikeTurnRead(chat, identity, now = Date.now(), served = {}) {
   const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)
   const current = chat.dreamSikePreparation
-  if (same(current, identity) && current.contractDigest === digest) return clone(current)
+  if (same(current, identity) && current.contractDigest === digest) {
+    addServedReferences(current, served)
+    return clone(current)
+  }
   const worldbook = str(chat.preparedWorldBookContext)
   const state = JSON.stringify(chat.variables || {})
   const receipt = {
@@ -31,8 +34,42 @@ export function recordDreamSikeTurnRead(chat, identity, now = Date.now()) {
       recentMessages: Math.min(Array.isArray(chat.messages) ? chat.messages.length : 0, 6)
     }
   }
+  addServedReferences(receipt, served)
   chat.dreamSikePreparation = receipt
   return clone(receipt)
+}
+
+function addServedReferences(receipt, served) {
+  // Persist references and read ranges, never the author's prompts or model reasoning.
+  receipt.materialRefs = [...new Set([...(receipt.materialRefs || []), ...(served.materialRefs || [])])]
+  receipt.servedRuleIds = [...new Set([...(receipt.servedRuleIds || []), ...(served.rules || []).map(rule => rule.identifier || rule.key)])]
+  if (typeof served.profileDigest === 'string') receipt.profileDigest = served.profileDigest
+  const ranges = (served.rules || []).map(rule => ({ key: rule.key, identifier: rule.identifier,
+    sourceHash: rule.sourceHash, resolvedHash: rule.resolvedHash,
+    from: rule.textOffset || 0, to: (rule.textOffset || 0) + str(rule.content).length,
+    total: rule.resolvedCharacters, reachesEnd: rule.nextContentOffset === null }))
+  receipt.ruleReadRanges = [...(receipt.ruleReadRanges || []), ...ranges]
+    .filter((range, index, all) => all.findIndex(other => JSON.stringify(other) === JSON.stringify(range)) === index)
+}
+
+function normalizeCoverage(coverage, receipt) {
+  if (coverage === undefined) return receipt.coverage || null
+  if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)
+    || Object.keys(coverage).some(key => !['contractDigest', 'profileDigest', 'ruleIds', 'materialRefs'].includes(key))) {
+    throw new Error('coverage 仅接受 contractDigest、profileDigest、ruleIds、materialRefs 引用，不接受推理文本')
+  }
+  if (coverage.contractDigest !== undefined && coverage.contractDigest !== receipt.contractDigest) throw new Error('coverage 预设摘要已过期，请重新读取当前规则')
+  if (coverage.profileDigest !== undefined && coverage.profileDigest !== receipt.profileDigest) throw new Error('coverage Agent 规则摘要已过期，请重新读取当前规则')
+  const normalized = { contractDigest: receipt.contractDigest, profileDigest: receipt.profileDigest || '', ruleIds: [], materialRefs: [] }
+  for (const [field, available] of [['ruleIds', receipt.servedRuleIds || []], ['materialRefs', receipt.materialRefs || []]]) {
+    const values = coverage[field] === undefined ? [] : coverage[field]
+    if (!Array.isArray(values) || values.length > 150 || values.some(value => typeof value !== 'string'
+      || value.length < 1 || value.length > 300 || hasPrivateWritingProtocol(value) || !available.includes(value))) {
+      throw new Error('coverage.' + field + ' 只能引用本回合 sike_read_turn 实际提供的材料或规则，不得虚构已读取依据')
+    }
+    normalized[field] = [...new Set(values)]
+  }
+  return normalized
 }
 
 export function dreamSikePreparationView(chat, identity) {
@@ -41,7 +78,7 @@ export function dreamSikePreparationView(chat, identity) {
 }
 
 /** Save the short writing brief. Never accept a transcript of private thinking. */
-export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now()) {
+export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { coverage } = {}) {
   const receipt = chat.dreamSikePreparation
   const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)
   if (!same(receipt, identity) || receipt.contractDigest !== digest) {
@@ -57,12 +94,15 @@ export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now()) {
     }
     normalized[key] = value
   }
+  const normalizedCoverage = normalizeCoverage(coverage, receipt)
   const draft = chat.dreamSikeDraft
   const currentDraft = same(draft, identity) ? draft : null
   if (currentDraft?.status === 'committed') throw new Error('已提交回合不能修改写作准备')
   // Replaying the same brief is harmless, including a ready draft.
-  if (receipt.preparedAt && JSON.stringify(receipt.brief) === JSON.stringify(normalized)) return clone(receipt)
+  if (receipt.preparedAt && JSON.stringify(receipt.brief) === JSON.stringify(normalized)
+    && JSON.stringify(receipt.coverage || null) === JSON.stringify(normalizedCoverage)) return clone(receipt)
   receipt.brief = normalized
+  receipt.coverage = normalizedCoverage
   receipt.preparedAt = now
   if (currentDraft) {
     currentDraft.preparation = clone(receipt)

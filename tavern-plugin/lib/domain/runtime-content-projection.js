@@ -19,6 +19,7 @@ function macroProjection(value, options = {}) {
   const state = macroSnapshot(options.macroState)
   const rendered = renderTavernMacros(str(value), {
     charName: str(options.charName),
+    lastUserMessage: options.lastUserMessage,
     userName: state.userName,
     localVariables: state.local,
     globalVariables: state.global

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 5
+const VERSION = 6
 const str = value => typeof value === 'string' ? value : ''
 
 // These are source prompt identifiers, not keyword matches against user prose.
@@ -20,6 +20,8 @@ const IDS = Object.freeze({
   selfCheck: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2',
   model: '1b440ea8-b60a-4c07-bb38-5cd43a2a97ce'
 })
+const PLANNING_IDS = new Set([IDS.thinking, '81b2facd-db99-4bdc-9597-7cc1d08726dd', '25e9984e-02c2-40c7-a095-bf4683f7d04e'])
+const PREFILL_IDS = new Set(['e59a0f26-6a73-4906-9177-6eb51052adcf', '9e3a3ea9-505f-461c-bc01-acce029cf909', '958ce7b4-2397-44ce-b128-e1c59034bfaa'])
 const OUTPUT_MODES = new Map([
   ['e8e8b082-e3ca-4d4d-afe9-d5632b3b38e0', 'summary'],
   ['dc9d8c8f-2588-47d9-ba16-aa42306c6726', 'chat']
@@ -43,6 +45,7 @@ export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 本局选定的原酒馆预设仍定义人物分析、叙事者、文风、视角、输入转述、字数、场景栏、平行事件及卡片格式。逐项执行已启用规则；未启用条目不加载。Skills 提供方法，不覆盖本局选择。当前玩家明确的修改优先于默认写法。
 原预设的正文/XML/HTML要求约束 sike_put_draft 的完整可渲染文本，保留 dream_plot、dream_body、dream_after_format、dream_scene、dream_parallel_event 等已要求的外壳及卡片 HTML。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
+原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history 等区域按 materialAreas 对应当前卡片、有效世界书、状态和分支历史，不把原生工具消息改为旧酒馆的文本协议。
 已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；再用 sike_prepare_turn 保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，之后才能建立草稿。候选事件链在内部评估，不提交推理过程。这个准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
 建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。发现具体缺陷须局部修订并重新审稿，无问题允许零补丁。不能用“标签没错”代替文风检查。
 简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写玩家已输入的动作与台词由本局转述规则决定；不得替玩家作未选择的重大决定。若选定平行事件，则允许读者看到场外事件，但场内人物不能因此自动知情。
@@ -60,13 +63,22 @@ function adapt(entry) {
     const duty = content.match(/谨记你的首要职责[^。\n]*。/)?.[0]
     if (duty) return { action: 'native-persona', content: '【梦鲸思客】\n' + duty }
   }
-  if (id === IDS.thinking && content.includes('{{setvar::sleep_var_thought_of_chain::')
-    && ['一、检设定', '二、辨视角', '三、遵写规', '四、演叙事'].every(section => content.includes(section))) {
+  if (OUTPUT_MODES.has(id)) return { action: 'native-reply-mode', content: content
+    .replace(/^思考预算：max\r?\n/m, '')
+    .replace(/^在\{\{getvar::sleep_var_thinking_flag\}\}之后，请遵守以下思考规则：$/m, '按以下作者步骤在内部核对本轮任务，回复通过原生草稿工具提交：')
+    .replace(/^- 思考内容以.*$/m, '')
+    .replace(/^- 你的思考输出必须.*$/m, '')
+    .replace(/^- 思考内容仅允许输出一次.*$/m, '')
+    .replace(/^```(?:thinking_step)?\s*$/gm, '')
+    .replace(/^在思考开始时输出：.*$/m, '')
+    .replace(/^终、终始定。.*$/m, '终、终始定。完成内部核对，以原生工具建立回复草稿。') }
+  if (PLANNING_IDS.has(id) && content.includes('{{setvar::sleep_var_thought_of_chain::')
+    && content.includes('<thought_of_chain>')) {
     return { action: 'agent-planning', content: content
       .replace(/^<\/?thought_of_chain>\s*$/gm, '')
       .replace(/^在你的思考过程（<think>标签内）中，请遵守以下规则：$/m, '以下为写前内部核对步骤；保留作者任务顺序，不向正文或工具参数展开私有推理。')
       .replace(/^- 你在思考前，必须需要严格遵守.*$/m, '')
-      .replace(/^- 你的思考输出必须严格.*$/m, '')
+      .replace(/^- 你的思考输出必须.*$/m, '')
       .replace(/^- 思考内容仅允许输出一次.*$/m, '')
       .replace(/^```(?:thinking_step)?\s*$/gm, '')
       .replace(/^在思考开始时输出：.*$/m, '')
@@ -74,7 +86,26 @@ function adapt(entry) {
       .replace(/^思考完毕后，开始按照 DREAM_PLOT 协议输出XML文档内容。$/m, 'DREAM_PLOT 协议约束草稿文本；原生工具调用遵循 DSH 工具协议。') }
   }
   // A selected, edited planning module still enables the native preparation gate.
-  if (id === IDS.thinking) return { action: 'agent-planning', content }
+  if (PLANNING_IDS.has(id)) return { action: 'agent-planning', content }
+  if (id === '0a6df16e-dae5-4522-a885-0b0b34ccdebe') return { action: 'native-model-adapter', content: '' }
+  if (PREFILL_IDS.has(id)) return { action: 'native-model-adapter', content: '' }
+  if (id === '88e12467-534b-47d2-bcef-371030b91b03' && content.includes('{{setvar::sleep_var_schema::')) {
+    return { action: 'native-visible-schema', content: content.replace(/\s*<xs:element\s+name="think"\s+type="xs:string"\s*\/>/, '') }
+  }
+  if (id === 'eee97456-b142-4a3f-a5fd-d09463748341' && content.includes('{{setvar::sleep_var_mvu_format::')) {
+    return { action: 'native-state-settlement', content: '{{setvar::sleep_var_mvu_format::}}\n【变量结算】本局选择了原 MVU 强制要求。草稿仅含剧情与可见卡片格式；最终正文提交后由后台依据人物卡变量规则检查并结算，不能在草稿插入 UpdateVariable 或 JSONPatch。' }
+  }
+  if (id === 'e4b97186-b0ec-4ea3-85b2-ab6e83dd0473' && content.startsWith('{{setvar::sleep_var_mvu_no_update::')) {
+    return { action: 'native-state-settlement', content: content.replace('{{setvar::sleep_var_mvu_no_update::', '').replace(/\}\}\s*$/, '') }
+  }
+  if (id === '7cfbff76-346a-400f-b47d-46e55f5fe0fa' && content.includes('DREAM_BAGUCHAOSHA') && content.includes('## 输出格式规范')) {
+    return { action: 'agent-paragraph-review', content: content
+      .replace('在`<dream_body>`正文中，输出每一段落的内容时，必须先输出`<!-- {正文内容} -->`，然后输出`<!-- {分析} -->`，最后输出修正后的正文。', '对草稿中的每一段按以下作者规则进行检查，并通过原生修订工具保留修正后的正文；段落草稿与完整内部分析不写进正式正文。')
+      .replace('对于作废段落，输出`</dream_delete>`。', '对于作废段落，用唯一定位的局部补丁删除或改写，不在正文输出 dream_delete。')
+      .replace('每次分析开头为：`<!-- 分析之`。', '检查结果采用原生审稿工具的简短可观察依据，不输出分析注释。')
+      .replace('正文的**每一段**都必须先草稿、分析，再输出正文。', '正文的**每一段**都必须经过草稿与检查，正式提交仅使用修正后的正文。')
+      .replace(/## 输出格式规范[\s\S]*?(?=## 范例)/, '## 原生执行格式\n通过 sike_check_draft 检查草稿，发现具体问题时调用 sike_patch_draft 并复查。以下为作者原示例，仅作为规则参照；其中的注释、分析和 dream_delete 不是正式输出格式。\n\n') }
+  }
   if (id === IDS.flash && content.includes('{{setvar::sleep_var_thinking_level::') && content.includes('思考核心在于角色分析和遵守写规')) {
     return { action: 'agent-style-focus', content: content
       .replace(/- 思考强度：low\r?\n/, '')
@@ -92,7 +123,6 @@ function adapt(entry) {
     .replace(/^思考预算为400字。\r?\n/m, '')
     .replace(/<simple_thinking>[\s\S]*?<\/simple_thinking>\s*/g, '') }
   if (id === IDS.writing) return { action: 'native-draft-writing', content: content
-    .replace(/【最新输入】[\s\S]*?<\/dreamer_input>/, '【最新输入】采用本回合前台材料中的实际玩家输入，不以历史末条或宏占位文字代替。')
     .replace(/梦鲸思客，开始根据[\s\S]*?(?=\{\{getvar::sleep_var_thought_of_chain\}\})/, '根据上述写规完成草稿；DREAM_PLOT 文档格式应用于草稿文本，通过原生工具审稿、修订和确认。\n\n') }
   return { content, action: 'preserved' }
 }

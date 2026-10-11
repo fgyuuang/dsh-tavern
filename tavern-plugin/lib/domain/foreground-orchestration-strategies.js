@@ -4,7 +4,7 @@ import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { createEphemeralCompatibilityRequest, isCompatibilityConversationRequest } from './compatibility-request.js'
 import { projectRuntimePresetRequest } from './runtime-preset-lifecycle.js'
 import { markRequestHandled, requestHandledBy } from './request-lineage.js'
-import { DREAM_SIKE_AGENT_PRESET, DREAM_SIKE_AGENT_INSTRUCTION } from './dream-sike-mode.js'
+import { DREAM_SIKE_AGENT_PRESET, dreamSikeAgentInstruction } from './dream-sike-mode.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 
@@ -26,6 +26,16 @@ function isTurnInput(message) {
 
 function userTextOf(messages) {
   return (Array.isArray(messages) ? messages : []).filter(isTurnInput).map(contentText).filter(Boolean).join('\n').trim()
+}
+
+function presetPlayerAction(input) {
+  const chat = input.chat
+  const expectedTurn = Number(input.payload?.turn ?? input.turn)
+  const current = Object.values(chat?.timeline?.operations || {}).filter(operation => operation.kind === 'body'
+    && operation.status === 'running' && operation.basedOn?.branchId === chat.timeline?.branchId
+    && (!Number.isSafeInteger(expectedTurn) || expectedTurn < 1 || Number(operation.turn) === expectedTurn))
+    .sort((a, b) => Number(b.turn) - Number(a.turn))[0]
+  return current ? str(current.userText) : userTextOf(input.payload?.messages)
 }
 
 function replaceTurnInput(messages, text) {
@@ -278,7 +288,7 @@ export function createNativePlayOrchestrationStrategy(options) {
     let agentMessages = visibleMessages
     const rawSnapshot = mode === 'story' || mode === 'script' ? await options.resolvePreset(input.chat) : null
     // Render the three phases together; the persisted preset and prior messages stay authoritative.
-    const snapshot = resolveRuntimePresetMacros(rawSnapshot, { charName: input.chat?.cardName, macroState: input.chat?.macroState }).snapshot
+    const snapshot = resolveRuntimePresetMacros(rawSnapshot, { charName: input.chat?.cardName, macroState: input.chat?.macroState, lastUserMessage: presetPlayerAction(input) }).snapshot
     if (mode === 'story' || mode === 'script') {
       if (Number(payload.step) === 1 && typeof options.synchronizeTail === 'function') {
         await options.synchronizeTail({ sessionId, chat: input.chat, payload })
@@ -393,9 +403,9 @@ export function createNativePlayOrchestrationStrategy(options) {
       if (workspace !== '') sections.push({ name: 'tavern:resource-workspace', text: workspace })
     }
     if (mode === 'story' || mode === 'script') {
-      if (input.chat?.playPresetId === DREAM_SIKE_AGENT_PRESET) sections.unshift({ name: 'tavern:dream-sike-agent', text: DREAM_SIKE_AGENT_INSTRUCTION })
       const raw = await options.resolvePreset(input.chat)
-      const front = presetFrontSections(resolveRuntimePresetMacros(raw, { charName: input.chat?.cardName, macroState: input.chat?.macroState }).snapshot)
+      if (input.chat?.playPresetId === DREAM_SIKE_AGENT_PRESET) sections.unshift({ name: 'tavern:dream-sike-agent', text: dreamSikeAgentInstruction(raw) })
+      const front = presetFrontSections(resolveRuntimePresetMacros(raw, { charName: input.chat?.cardName, macroState: input.chat?.macroState, lastUserMessage: presetPlayerAction(input) }).snapshot)
       sections.unshift(...front)
       frontTexts.set(input.sessionId, front.map(section => section.text))
       renderedFronts.set(input.sessionId, createHash('sha256').update(JSON.stringify(front.map(section => section.text))).digest('hex'))

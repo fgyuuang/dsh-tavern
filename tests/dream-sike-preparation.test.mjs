@@ -92,6 +92,63 @@ test('enabled planning tools enforce read/prepare in the registered native tool 
   await registered.get('sike_check_draft').execute({ expectedVersion: 1, review: review() }, exec)
   assert.equal((await registered.get('sike_ready_draft').execute({ expectedVersion: 1 }, exec)).draft.status, 'ready')
 })
+
+test('turn reader exposes current action, real history references and complete bounded rule continuations', async () => {
+  const { chat } = fixture(), registered = new Map()
+  chat.timeline.operations.op.userText = '这是当前回合行动，不采用历史末条。'
+  chat.messages = [{ id: 'saved-message-7', uid: 'original-uid', turn: 7, role: 'assistant', text: '历史原文'.repeat(300) },
+    { role: 'user', text: '历史末条不能作为本轮行动。' }]
+  const longRule = '作者原文逐项核对。'.repeat(1300)
+  chat.runtimePresetSnapshot.front.entries.push({ id: 'exact-author-rule', content: longRule })
+  registerDreamSikeTools({ tools: { register(t) { registered.set(t.name, t) } }, chatForSession: async () => chat, updateChat: async (_id, mutate) => mutate(chat), activeTurnOf: () => 1 })
+  const read = args => registered.get('sike_read_turn').execute(args, { agent: { session: { id: 's' } } }).then(value => JSON.parse(value.report))
+  const first = await read({})
+  assert.equal(first.playerAction, chat.timeline.operations.op.userText)
+  assert.equal(first.recent[0].ref, 'message:saved-message-7')
+  assert.equal(first.recent[0].uid, 'original-uid')
+  assert.equal(first.recent[0].floor, 0)
+  assert.equal(first.recent[0].floorUidKind, 'branch-floor-alias')
+  assert.equal(first.recent[0].textTruncated, true)
+  assert.equal(first.recent[1].ref, 'floor:b:1')
+  assert.equal(first.materialAreas.dreamer_input.reference, 'action:op')
+  assert.equal(first.materialAreas.writing_setting.rulePage, 'presetRules')
+  assert.ok(first.presetRules.rules.reduce((sum, rule) => sum + rule.content.length, 0) <= 8000)
+  assert.equal(first.presetRules.hasMore, true)
+  let page = first, restored = '', count = 0
+  while (true) {
+    restored += page.presetRules.rules.filter(rule => rule.key === 'exact-author-rule' || rule.identifier === 'exact-author-rule').map(rule => rule.content).join('')
+    if (!page.presetRules.hasMore) break
+    assert.ok(++count < 20)
+    page = await read({ ruleOffset: page.presetRules.nextOffset, ruleContentOffset: page.presetRules.nextContentOffset ?? 0 })
+  }
+  assert.equal(restored, longRule)
+  assert.ok(chat.dreamSikePreparation.servedRuleIds.includes('exact-author-rule'))
+  assert.ok(chat.dreamSikePreparation.ruleReadRanges.length >= 3)
+  assert.ok(!JSON.stringify(chat.dreamSikePreparation).includes(longRule))
+  await assert.rejects(read({ ruleOffset: -1 }))
+})
+
+test('preparation coverage records observable served references and rejects fabricated or stale evidence', () => {
+  const { chat, identity } = fixture()
+  const receipt = recordDreamSikeTurnRead(chat, identity, 10, {
+    materialRefs: ['action:op', 'message:actual-message'], profileDigest: 'profile-digest',
+    rules: [{ key: 'rule-key', identifier: 'author-rule', sourceHash: 'source-hash', resolvedHash: 'resolved-hash',
+      content: '作者原文无需保存于准备记录。', textOffset: 0, nextContentOffset: null, resolvedCharacters: 15 }]
+  })
+  const coverage = { contractDigest: receipt.contractDigest, profileDigest: receipt.profileDigest,
+    ruleIds: ['author-rule'], materialRefs: ['message:actual-message'] }
+  prepareDreamSikeTurn(chat, identity, brief(), 20, { coverage })
+  assert.deepEqual(chat.dreamSikePreparation.coverage.ruleIds, ['author-rule'])
+  assert.equal(chat.dreamSikePreparation.coverage.profileDigest, 'profile-digest')
+  assert.equal(chat.dreamSikePreparation.ruleReadRanges[0].sourceHash, 'source-hash')
+  assert.ok(!JSON.stringify(chat.dreamSikePreparation).includes('作者原文无需保存'))
+  for (const invalid of [{ ...coverage, contractDigest: 'old' }, { ...coverage, profileDigest: 'old' },
+    { ...coverage, ruleIds: ['not-read'] }, { ...coverage, materialRefs: ['invented-message'] },
+    { ...coverage, reasoning: '完整思考内容' }]) {
+    assert.throws(() => prepareDreamSikeTurn(chat, identity, brief(), 30, { coverage: invalid }))
+  }
+  assert.deepEqual(chat.dreamSikePreparation.coverage, coverage)
+})
 test('failure recovery rebinds the same prepared draft, including after persistence reload', () => {
   const { chat, identity } = fixture()
   recordDreamSikeTurnRead(chat, identity)

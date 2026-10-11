@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { nativeRegexScriptsOf } from './preset-reading.js'
 import { compileDreamSikeContract } from './dream-sike-contract.js'
 import { dreamSikeSourceSettings, applyDreamSikeSourceAction } from './dream-sike-source-settings.js'
+import { buildDreamSikeAgentProfile } from './dream-sike-agent-profile.js'
 
 const phases = ['front', 'middle', 'back']
 function regexCatalog(snapshot) {
@@ -37,6 +38,7 @@ export function conversationPresetSettings(snapshot, mode = 'tavern') {
   return {
     presetName: snapshot.presetName, digest: snapshot.digest,
     sourceSettings: sourceSettings.groups.length ? sourceSettings : null,
+    agentPreset: sourceSettings.groups.length ? buildDreamSikeAgentProfile(snapshot, mode) : null,
     entries: orderedEntries(snapshot).filter(({ entry }) => entry && entry.marker !== true && entry.injectable === true).map(({ phase, entry }) => ({
       key: entry.entryKey, name: entry.name || entry.entryKey, phase, role: entry.role,
       enabled: active.has(entry.entryKey), content: active.get(entry.entryKey)?.content ?? entry.content ?? '',

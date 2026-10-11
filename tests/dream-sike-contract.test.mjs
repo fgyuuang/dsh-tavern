@@ -41,7 +41,7 @@ test('known chain is adapted to planning while writing macros and visible parall
     entry('881044e5-cbef-43c7-ad19-c6e7f6d150b4', '写作模式', '【最新输入】\n<dreamer_input>{{lastUserMessage}}</dreamer_input>\n<writing_setting>自定义文风</writing_setting>\n梦鲸思客，开始根据旧格式进行思考。\n{{getvar::sleep_var_thought_of_chain}}'),
     entry('807eefad-93ca-490c-a629-1d51038e3626', '平行', SOURCE_RULES['807eefad-93ca-490c-a629-1d51038e3626'])
   ] } }
-  const rendered = resolveRuntimePresetMacros(compileDreamSikeContract(raw)).snapshot.text
+  const rendered = resolveRuntimePresetMacros(compileDreamSikeContract(raw), { lastUserMessage: '本回合实际输入' }).snapshot.text
   assert.match(rendered, /自定义文风/)
   assert.match(rendered, /至少列举 3 条事件链/)
   assert.match(rendered, /<dream_parallel_event>/)

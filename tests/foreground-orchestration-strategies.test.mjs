@@ -49,6 +49,24 @@ function strategies(overrides = {}) {
   return { value: createForegroundOrchestrationStrategies(options), compatibility: createCompatibilityOrchestrationStrategy(options.compatibility), calls, chats }
 }
 
+test('原作者输入宏绑定当前回合，忽略同分支残留的旧运行任务', async () => {
+  const chat = { mode: 'story', timeline: { branchId: 'b', operations: {
+    stale: { kind: 'body', status: 'running', turn: 1, userText: '旧任务输入', basedOn: { branchId: 'b' } },
+    current: { kind: 'body', status: 'running', turn: 2, userText: '本回合真实动作', basedOn: { branchId: 'b' } }
+  } } }
+  const run = createNativePlayOrchestrationStrategy({
+    async modeFor() { return 'story' }, filterMessages(messages) { return messages },
+    async resolvePreset() { return { front: { entries: [] }, back: { entries: [{ content: '<dreamer_input>{{lastUserMessage}}</dreamer_input>' }] } } },
+    async ensureSessionPrefix() {}
+  })
+  const messages = [userMessage('模型输入')]
+  await run.prepareStep({ sessionId: 'native', chat, payload: { turn: 2, step: 2, messages }, decision: { messages } })
+  const request = run.projectRequest({ sessionId: 'native', messages })
+  const last = request.messages.at(-1).content.map(block => block.text || '').join('\n')
+  assert.match(last, /<dreamer_input>本回合真实动作<\/dreamer_input>/)
+  assert.doesNotMatch(last, /旧任务输入|lastUserMessage/)
+})
+
 test('游玩固定背景来自原生系统装配，预设前后段保持顺序，快照不重复发送', async () => {
   const session = Session.create('native')
   const savedPrefixes = new Map()

@@ -103,6 +103,7 @@ export function resolveRuntimePresetMacros(snapshot, options = {}) {
     for (const entry of rawPhases[phase].entries) {
       const rendered = resolveRuntimeMacroText(entry.content, {
         charName: typeof options.charName === 'string' ? options.charName : '',
+        lastUserMessage: options.lastUserMessage,
         macroState: state
       })
       state = rendered.macroState
