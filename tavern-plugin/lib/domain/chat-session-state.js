@@ -28,7 +28,7 @@ export function projectChatSessionState(chat, options = {}) {
   if (Object.values(chat.timeline?.operations || {}).some(operation =>
     operation?.kind === 'body' && operation.status === 'foreground-completed')) return { ...copyJsonTree(chat), pendingMvuSettlement }
   const selected = { pendingMvuSettlement, dreamSikeDraftState: dreamSikeDraftStatus(chat) }
-  for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision', 'playPresetId', 'playPresetRevision', 'gameMemory', 'projectId',
+  for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision', 'playPresetId', 'playPresetRevision', 'playPresetSettingsIndependent', 'gameMemory', 'projectId',
     'backgroundConfigVersion', 'conversationFeaturesVersion', 'disabledWritingSkills', 'contextCompaction', 'updatedAt', 'timeline', 'candidateAgent',
     'cardName', 'requestMode', 'statusBarPlacement', 'webSearchEnabled', 'candidates', 'taskMailbox', 'regenInProgress',
     'settleError', 'scriptState', 'hiddenDshErrorTurns', 'suppressedDshTurns', 'regeneratedDshTurns', 'tavernHelperLifecycleRevision']) {

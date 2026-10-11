@@ -26,18 +26,33 @@ export function normalizePlayPresetId(value) {
   return PLAY_PRESETS.has(value) ? value : BASE_PLAY_PRESET
 }
 
+/** Native gameplay identity is independent of imported prompt resources. */
+export function playPresetInteractionProfile(presetId) {
+  return normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET ? {
+    id: 'dream-sike-workbench', title: '梦境思客创作台',
+    workflow: 'read-plan-draft-review-commit', candidateMode: 'optional',
+    draftWorkspace: true, authorSettings: true, backgroundSettlement: true
+  } : {
+    id: 'dsh-original', title: 'DSH 原版',
+    workflow: 'reply-settle-candidates', candidateMode: 'original',
+    draftWorkspace: false, authorSettings: false, backgroundSettlement: true
+  }
+}
+
 /** The imported ST preset is a separate resource, represented by runtimePresetSnapshot. */
 export function listPlayPresets({ chat, settings, legacyPresetTitle } = {}) {
   const selected = normalizePlayPresetId(object(chat).playPresetId)
   const fallback = normalizePlayPresetId(object(settings).defaultPlayPresetId)
-  const originalName = typeof legacyPresetTitle === 'string' && legacyPresetTitle.trim()
-    ? legacyPresetTitle.trim()
-    : '原酒馆预设'
+  const originalTitle = selected === BASE_PLAY_PRESET ? legacyPresetTitle
+    : object(chat).playPresetConfigurations?.[BASE_PLAY_PRESET]?.runtimePresetSnapshot?.presetName
+  const originalName = typeof originalTitle === 'string' ? originalTitle.trim() : ''
   return [
     {
       id: BASE_PLAY_PRESET,
-      name: originalName,
-      description: '沿用本局导入的酒馆预设与原有请求流程。',
+      name: 'DSH 原版',
+      description: '保留 DSH Tavern 原生对话、后台结算与候选选项交互。',
+      sourcePresetName: originalName,
+      interactionProfile: playPresetInteractionProfile(BASE_PLAY_PRESET),
       nativeAgentPreset: BASE_PLAY_PRESET,
       selected: selected === BASE_PLAY_PRESET,
       isDefault: fallback === BASE_PLAY_PRESET
@@ -46,6 +61,7 @@ export function listPlayPresets({ chat, settings, legacyPresetTitle } = {}) {
       id: DREAM_SIKE_AGENT_PRESET,
       name: '梦境思客DSH',
       description: '由 DSH Agent 按需检索、规划、起草、检查与修订。',
+      interactionProfile: playPresetInteractionProfile(DREAM_SIKE_AGENT_PRESET),
       nativeAgentPreset: DREAM_SIKE_AGENT_PRESET,
       selected: selected === DREAM_SIKE_AGENT_PRESET,
       isDefault: fallback === DREAM_SIKE_AGENT_PRESET
@@ -67,6 +83,23 @@ export function selectPlayPreset(chat, presetId, readiness = {}) {
   }
   const previousPresetId = normalizePlayPresetId(source.playPresetId)
   const changed = previousPresetId !== id
+  // Keep complete source snapshots, including switches, macro variables and regexes,
+  // per native preset. Only the active copy is used by existing runtime readers.
+  const configurations = structuredClone(object(source.playPresetConfigurations))
+  configurations[previousPresetId] = {
+    runtimePresetPath: String(source.runtimePresetPath || ''),
+    runtimePresetSnapshot: structuredClone(source.runtimePresetSnapshot ?? null),
+    bypassPlanId: String(source.bypassPlanId || ''),
+    disabledWritingSkills: structuredClone(source.disabledWritingSkills || [])
+  }
+  const target = object(configurations[id])
+  const seeded = Object.hasOwn(readiness, 'initialRuntimePresetSnapshot') ? {
+    runtimePresetSnapshot: readiness.initialRuntimePresetSnapshot,
+    runtimePresetPath: readiness.initialRuntimePresetSnapshot?.presetPath || ''
+  } : object(readiness.initialConfiguration)
+  const nextConfiguration = Object.hasOwn(target, 'runtimePresetSnapshot') ? target
+    : Object.hasOwn(seeded, 'runtimePresetSnapshot') ? seeded : configurations[previousPresetId]
+  if (changed) configurations[id] = structuredClone(nextConfiguration)
   return {
     changed,
     presetId: id,
@@ -77,6 +110,12 @@ export function selectPlayPreset(chat, presetId, readiness = {}) {
       playPresetId: id,
       playPresetRevision: (Number.isSafeInteger(source.playPresetRevision) ? source.playPresetRevision : 0) + 1,
       tavernHelperLifecycleRevision: (Number.isSafeInteger(source.tavernHelperLifecycleRevision) ? source.tavernHelperLifecycleRevision : 0) + 1,
+      playPresetConfigurations: configurations,
+      playPresetSettingsIndependent: true,
+      runtimePresetPath: String(nextConfiguration.runtimePresetPath || ''),
+      runtimePresetSnapshot: structuredClone(nextConfiguration.runtimePresetSnapshot ?? null),
+      bypassPlanId: String(nextConfiguration.bypassPlanId || nextConfiguration.runtimePresetSnapshot?.planId || ''),
+      disabledWritingSkills: structuredClone(nextConfiguration.disabledWritingSkills || []),
       ...(source.dreamSikeResume ? { dreamSikeResume: null } : {})
     } : {}
   }
@@ -126,6 +165,7 @@ export function resolvePlayPresetRuntime(chat) {
   return {
     presetId,
     nativeAgentPreset: presetId,
+    interactionProfile: playPresetInteractionProfile(presetId),
     runtimePresetSnapshot: projectPlayPresetSnapshot(source.runtimePresetSnapshot, presetId),
     helperScriptPolicy: presetId === DREAM_SIKE_AGENT_PRESET ? 'card-and-agent' : 'card-and-legacy-preset',
     presetHelperScripts: resolvePresetHelperScripts(source.runtimePresetSnapshot, presetId),

@@ -78,7 +78,8 @@ export function createConversationInitialization(options) {
     return timeline.apply({ chat, intent: { kind: 'ensure' } }).chat
   }
 
-  async function playPresetSnapshot() {
+  async function playPresetSnapshot(playPresetId) {
+    if (typeof presets.fullSnapshotForPlayPreset === 'function') return await presets.fullSnapshotForPlayPreset(playPresetId)
     const prepared = typeof presets.claimPreparedFullSnapshot === 'function'
       ? await presets.claimPreparedFullSnapshot()
       : undefined
@@ -111,7 +112,8 @@ export function createConversationInitialization(options) {
       }
     }
     const macroState = { userName: str(userName).trim().slice(0, 80) || defaults.playerName, local: {}, global: {} }
-    const runtimePresetSnapshot = groupOfMode(chatMode) === 'play' ? await playPresetSnapshot() : null
+    const selectedPlayPresetId = groupOfMode(chatMode) === 'play' ? normalizePlayPresetId(playPresetId || currentSettings.defaultPlayPresetId) : 'tavern'
+    const runtimePresetSnapshot = groupOfMode(chatMode) === 'play' ? await playPresetSnapshot(selectedPlayPresetId) : null
     // The card workbench opens empty: no greeting is shown or sent to the model.
     let openingSourceText = chatMode === 'card' ? '' : resolveCardOpening(card, openingId)
     const openingExtensions = chatMode === 'card' ? null : await cards.extensions(cardPath)
@@ -149,7 +151,7 @@ export function createConversationInitialization(options) {
     // 再落盘 Tavern 对话，避免失败时留下只有映射、没有原生开场白的半初始化记录。
     const openingTarget = typeof sessionId === 'string' && sessionId !== '' ? await native.wait(sessionId) : undefined
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
-    chat.playPresetId = groupOfMode(chatMode) === 'play' ? normalizePlayPresetId(playPresetId || currentSettings.defaultPlayPresetId) : 'tavern'
+    chat.playPresetId = selectedPlayPresetId
     chat.bypassPlanId = runtimePresetSnapshot && runtimePresetSnapshot.planId || ''
     chat.runtimePresetSnapshot = runtimePresetSnapshot
     chat.runtimePresetPath = str(runtimePresetSnapshot && runtimePresetSnapshot.presetPath)

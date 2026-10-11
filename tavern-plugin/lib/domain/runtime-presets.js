@@ -429,6 +429,30 @@ export function createRuntimePresetModule(options = {}) {
     return snapshot
   }
 
+  // The Agent's authored rule pack is independent of the original DSH selection.
+  // Resolve by source identifiers as well as name; never silently adopt another
+  // author's globally selected preset or change that global selection.
+  async function fullSnapshotForPlayPreset(playPresetId) {
+    if (playPresetId !== 'dream-sike-dsh') {
+      const prepared = await claimPreparedFullSnapshot()
+      return prepared === undefined ? await fullSnapshot() : prepared
+    }
+    const candidates = []
+    for (const path of await listPaths()) {
+      if (!/梦[鲸境]思客/i.test(path)) continue
+      const source = await readPreset(path)
+      const identifiers = new Set((source?.entries || []).map(entry => entry.identifier))
+      if (source?.valid === true && source.recognized === true
+        && identifiers.has('0da6f4d7-961d-4966-a084-857a3dd876ad')) candidates.push(path)
+    }
+    const exact = candidates.filter(path => /(?:^|[/\\])梦鲸思客V4-0915\.json$/i.test(path))
+    const choices = exact.length ? exact : candidates
+    if (choices.length !== 1) throw new Error(choices.length
+      ? '梦境思客 Agent 找到多份写作规则，请保留一份明确命名为“梦鲸思客V4-0915.json”的来源。'
+      : '梦境思客 Agent 缺少原作者写作规则，请先导入“梦鲸思客V4-0915.json”。')
+    return await fullSnapshot(choices[0])
+  }
+
   async function claimPreparedFullSnapshot() {
     const prepared = preparedFullSnapshot
     preparedFullSnapshot = null
@@ -491,5 +515,5 @@ export function createRuntimePresetModule(options = {}) {
     })
   }
 
-  return { register, state, view, select, toggle, toggleRegex, disablePreset, disableAll, snapshot, fullSnapshot, prepareFullSnapshot, claimPreparedFullSnapshot, regexScriptsFor, rename, remove }
+  return { register, state, view, select, toggle, toggleRegex, disablePreset, disableAll, snapshot, fullSnapshot, fullSnapshotForPlayPreset, prepareFullSnapshot, claimPreparedFullSnapshot, regexScriptsFor, rename, remove }
 }

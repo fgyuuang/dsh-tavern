@@ -5,6 +5,7 @@ import {
   BASE_PLAY_PRESET,
   DREAM_SIKE_AGENT_PRESET,
   listPlayPresets,
+  playPresetInteractionProfile,
   projectPlayPresetSnapshot,
   resolvePlayPresetRuntime,
   resolvePresetHelperScripts,
@@ -23,7 +24,11 @@ test('switching a play chat returns a revisioned patch without changing its hist
   const chat = { id: 'chat-1', mode: 'story', _storageRevision: 7, runtimePresetPath: 'presets/old.json', messages: [{ text: 'existing' }], tavernHelperLifecycleRevision: 2 }
   const result = selectPlayPreset(chat, DREAM_SIKE_AGENT_PRESET, { foregroundIdle: true, backgroundIdle: true })
   assert.equal(result.expectedStorageRevision, 7)
-  assert.deepEqual(result.patch, { playPresetId: DREAM_SIKE_AGENT_PRESET, playPresetRevision: 1, tavernHelperLifecycleRevision: 3 })
+  assert.equal(result.patch.playPresetId, DREAM_SIKE_AGENT_PRESET)
+  assert.equal(result.patch.playPresetRevision, 1)
+  assert.equal(result.patch.tavernHelperLifecycleRevision, 3)
+  assert.equal(result.patch.runtimePresetPath, 'presets/old.json')
+  assert.equal(result.patch.playPresetConfigurations.tavern.runtimePresetPath, 'presets/old.json')
   assert.equal(chat.messages[0].text, 'existing')
   assert.equal(chat.runtimePresetPath, 'presets/old.json')
   assert.throws(() => selectPlayPreset(chat, DREAM_SIKE_AGENT_PRESET, { foregroundIdle: false, backgroundIdle: true }), /等待/)
@@ -49,9 +54,56 @@ test('the default is separate from the active chat selection', () => {
   assert.deepEqual(setDefaultPlayPreset(settings, DREAM_SIKE_AGENT_PRESET), { defaultPlayPresetId: DREAM_SIKE_AGENT_PRESET })
   assert.equal(settings.defaultPlayPresetId, BASE_PLAY_PRESET)
   const rows = listPlayPresets({ chat: { playPresetId: DREAM_SIKE_AGENT_PRESET }, settings, legacyPresetTitle: '梦鲸思客V4-0915' })
-  assert.equal(rows[0].name, '梦鲸思客V4-0915')
+  assert.equal(rows[0].name, 'DSH 原版')
+  assert.equal(rows[0].sourcePresetName, '')
   assert.equal(rows[0].isDefault, true)
   assert.equal(rows[1].selected, true)
+})
+
+test('native presets keep independent complete source configurations across repeated switches', () => {
+  const idle = { foregroundIdle: true, backgroundIdle: true }
+  const original = { digest: 'original', presetPath: 'presets/original.json', regexScripts: [{ id: 'one', enabled: true }] }
+  const dream = { digest: 'dream-source', presetPath: 'presets/dream.json', sourceMacroOverrides: { local: { length: 1000 } } }
+  let chat = { id: 'independent', mode: 'story', bypassPlanId: 'original-plan', disabledWritingSkills: ['original-skill'], messages: [{ text: 'history' }], runtimePresetPath: original.presetPath, runtimePresetSnapshot: original }
+  chat = { ...chat, ...selectPlayPreset(chat, DREAM_SIKE_AGENT_PRESET, { ...idle, initialRuntimePresetSnapshot: dream }).patch }
+  assert.equal(chat.runtimePresetSnapshot.digest, 'dream-source')
+  assert.equal(chat.bypassPlanId, '')
+  assert.deepEqual(chat.disabledWritingSkills, [])
+  chat.disabledWritingSkills = ['dream-sike-prose']
+  chat.runtimePresetSnapshot.sourceMacroOverrides.local.length = 3000
+  chat.runtimePresetSnapshot.digest = 'dream-custom'
+  chat = { ...chat, ...selectPlayPreset(chat, BASE_PLAY_PRESET, idle).patch }
+  assert.deepEqual(chat.runtimePresetSnapshot, original)
+  assert.equal(chat.bypassPlanId, 'original-plan')
+  assert.deepEqual(chat.disabledWritingSkills, ['original-skill'])
+  chat.runtimePresetSnapshot.regexScripts[0].enabled = false
+  chat.runtimePresetSnapshot.digest = 'original-custom'
+  chat = { ...chat, ...selectPlayPreset(chat, DREAM_SIKE_AGENT_PRESET, { ...idle, initialRuntimePresetSnapshot: { digest: 'new-library-version' } }).patch }
+  assert.equal(chat.runtimePresetSnapshot.digest, 'dream-custom')
+  assert.deepEqual(chat.disabledWritingSkills, ['dream-sike-prose'])
+  assert.equal(chat.runtimePresetSnapshot.sourceMacroOverrides.local.length, 3000)
+  assert.equal(chat.playPresetConfigurations.tavern.runtimePresetSnapshot.regexScripts[0].enabled, false)
+  assert.equal(original.regexScripts[0].enabled, true)
+  assert.equal(chat.messages[0].text, 'history')
+})
+
+test('an existing Dream game retains its source settings and uses a separate original copy on first switch', () => {
+  const chat = { id: 'legacy-dream', mode: 'story', playPresetId: DREAM_SIKE_AGENT_PRESET,
+    runtimePresetSnapshot: { digest: 'already-customized' }, runtimePresetPath: 'presets/dream.json' }
+  const patch = selectPlayPreset(chat, BASE_PLAY_PRESET, { foregroundIdle: true, backgroundIdle: true }).patch
+  assert.equal(patch.runtimePresetSnapshot.digest, 'already-customized')
+  patch.runtimePresetSnapshot.digest = 'separate'
+  assert.equal(patch.playPresetConfigurations[DREAM_SIKE_AGENT_PRESET].runtimePresetSnapshot.digest, 'already-customized')
+  assert.equal(chat.runtimePresetSnapshot.digest, 'already-customized')
+  assert.deepEqual(selectPlayPreset(chat, DREAM_SIKE_AGENT_PRESET, { foregroundIdle: true, backgroundIdle: true }).patch, {})
+})
+
+test('original candidate workflow and independent Agent workspace are explicit profiles', () => {
+  assert.equal(playPresetInteractionProfile(BASE_PLAY_PRESET).candidateMode, 'original')
+  assert.equal(playPresetInteractionProfile(BASE_PLAY_PRESET).draftWorkspace, false)
+  assert.equal(playPresetInteractionProfile(DREAM_SIKE_AGENT_PRESET).candidateMode, 'optional')
+  assert.equal(playPresetInteractionProfile(DREAM_SIKE_AGENT_PRESET).draftWorkspace, true)
+  assert.equal(resolvePlayPresetRuntime({}).interactionProfile.id, 'dsh-original')
 })
 
 test('switching modes changes preset script ownership without changing card scripts', () => {

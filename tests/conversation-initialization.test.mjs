@@ -6,6 +6,21 @@ import { createUserPreferenceProfile } from '../tavern-plugin/lib/domain/user-pr
 
 const messages = session => session.events.filter(event => event.type === 'assistant/message' && event.data?.message?.source?.model === 'character-card')
 
+test('新局按独立 Agent 预设选择规则包，已有会话重入保留原选择', async () => {
+  const requested = []
+  const h = initializationFixture({ presets: { fullSnapshotForPlayPreset: async id => {
+    requested.push(id)
+    return { presetPath: 'presets/' + id + '.json', regexScripts: [] }
+  } } })
+  const dream = await h.make().start({ ...h.input, playPresetId: 'dream-sike-dsh' })
+  assert.equal(dream.runtimePresetPath, 'presets/dream-sike-dsh.json')
+  const same = await h.make().start({ ...h.input, playPresetId: 'tavern' })
+  assert.equal(same.playPresetId, 'dream-sike-dsh')
+  const original = await h.make().start({ ...h.input, sessionId: 'original', playPresetId: 'tavern' })
+  assert.equal(original.runtimePresetPath, 'presets/tavern.json')
+  assert.deepEqual(requested, ['dream-sike-dsh', 'tavern'])
+})
+
 const seedMessages = session => session.events.filter(event => {
   const source = event.type === 'assistant/message' ? event.data?.message?.source : event.data?.source
   return source?.form === 'synthetic-trajectory' || source?.model === 'synthetic-trajectory'

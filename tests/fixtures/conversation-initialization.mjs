@@ -50,7 +50,7 @@ export function initializationFixture(options = {}) {
       chats: { resolve: registry.resolve, publish: registry.publish, write }, snapshots,
       timeline,
       userPreferenceProfile: options.userPreferenceProfile,
-      presets: { fullSnapshot: async () => { state.presetReads++; await fail('preset'); return structuredClone(state.preset) } },
+      presets: options.presets || { fullSnapshot: async () => { state.presetReads++; await fail('preset'); return structuredClone(state.preset) } },
       settings: async () => state.settings, emptyCardWorkspace: () => ({ mountedResources: [], draft: {} }),
       id: prefix => prefix + '-' + ++sequence, now: () => 123,
       native: {

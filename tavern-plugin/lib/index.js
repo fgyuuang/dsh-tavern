@@ -12,7 +12,7 @@ import { createGameMemoryWorkspace } from './domain/game-memory-workspace.js'
 import { createCardProjects } from './domain/card-projects.js'
 import { createGameMemoryTask, gameMemoryEnabled, readGameMemory, GAME_MEMORY_READ_TOOL, GAME_MEMORY_SUBMIT_TOOL } from './domain/game-memory-task.js'
 import { dreamSikeDraftView, dreamSikeDraftStatus, dreamSikeDraftWorkTarget, dreamSikeExecutionTrace } from './domain/dream-sike-draft.js'
-import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts } from './domain/dream-sike-mode.js'
+import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts, playPresetInteractionProfile } from './domain/dream-sike-mode.js'
 import { registerUserProfileTools } from './tools/user-profile.js'
 import { registerSkillTools } from './tools/skills.js'
 import { registerCardReadingTools } from './tools/card-reading.js'
@@ -1896,6 +1896,7 @@ export async function apply(ctx) {
       contextCompaction: chat.contextCompaction || null,
       mode: chat.mode || 'story',
       playPresetId: normalizePlayPresetId(chat.playPresetId),
+      interactionProfile: playPresetInteractionProfile(chat.playPresetId),
       dreamSikeDraftState: dreamSikeDraftStatus(chat),
       requestMode: chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
       playerName: str(chat.macroState && chat.macroState.userName).trim() || '你',
@@ -2053,6 +2054,7 @@ export async function apply(ctx) {
   function volatileSessionViewFields(chat, activity, changes) {
     return { ...sessionStateView.volatile(chat, activity, changes),
       playPresetId: normalizePlayPresetId(chat.playPresetId),
+      interactionProfile: playPresetInteractionProfile(chat.playPresetId),
       dreamSikeDraftState: chat.dreamSikeDraftState || dreamSikeDraftStatus(chat),
       forkTurnsByMessageId: forkTurnsForChat(chat) }
   }
@@ -3807,8 +3809,13 @@ export async function apply(ctx) {
         const foregroundIdle = agentRegistry.get(sessionId)?.phase?.kind !== 'running'
         const backgroundIdle = !(await sessionActivity(sessionId))?.busy && !tavernScriptDispatch.status(sessionId).busy
           && !['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) && !chat.regenInProgress
-        const selection = selectPlayPreset(chat, args?.presetId, { foregroundIdle, backgroundIdle, replayIdle: !replayFailedTurnActive(chat.id) })
+        const readiness = { foregroundIdle, backgroundIdle, replayIdle: !replayFailedTurnActive(chat.id) }
+        let selection = selectPlayPreset(chat, args?.presetId, readiness)
         if (!selection.changed) return { playPresetId: selection.presetId, changed: false }
+        if (!Object.hasOwn(chat.playPresetConfigurations?.[args.presetId] || {}, 'runtimePresetSnapshot')) {
+          selection = selectPlayPreset(chat, args.presetId, { ...readiness,
+            initialRuntimePresetSnapshot: await runtimePresets.fullSnapshotForPlayPreset(args.presetId) })
+        }
         const saved = await updateChat(chat.id, current => {
           if (current.id !== selection.expectedChatId || current._storageRevision !== selection.expectedStorageRevision
             || agentRegistry.get(sessionId)?.phase?.kind === 'running'
@@ -4511,6 +4518,9 @@ export async function apply(ctx) {
     if (!chat || groupOfMode(chat.mode) !== 'play') return null
     const project = snapshot => projectPlayPresetSnapshot(snapshot, chat.playPresetId)
     const saved = chat.runtimePresetSnapshot && typeof chat.runtimePresetSnapshot === 'object' ? chat.runtimePresetSnapshot : null
+    // Independent Agent presets own their per-game settings. Library changes are
+    // adopted explicitly, never silently replacing switches saved in either mode.
+    if (chat.playPresetId === DREAM_SIKE_AGENT_PRESET || chat.playPresetSettingsIndependent || chat.playPresetConfigurations) return project(saved)
     if (!saved?.presetPath || !chat.id) return project(saved)
     let text
     try { text = await fileResources.readText(normalizeResourcePath(saved.presetPath, 'preset')) } catch { return project(saved) }
@@ -4521,9 +4531,10 @@ export async function apply(ctx) {
     if (!fresh) return project(saved)
     let refreshed = false
     for (let attempt = 0; attempt < 3; attempt++) {
-      const head = (await chatPersistence.readSlice(chat.id, [], ['_storageRevision', 'runtimePresetSnapshot.presetPath', 'tavernHelperLifecycleRevision']))?.chat
+      const head = (await chatPersistence.readSlice(chat.id, [], ['_storageRevision', 'runtimePresetSnapshot.presetPath', 'tavernHelperLifecycleRevision', 'playPresetId', 'playPresetSettingsIndependent']))?.chat
       // Applying another preset meanwhile wins over refreshing this one.
       if (!head || head.runtimePresetSnapshot?.presetPath !== saved.presetPath) return project(saved)
+      if (head.playPresetId === DREAM_SIKE_AGENT_PRESET || head.playPresetSettingsIndependent) return project(saved)
       if (await patchChat(chat.id, head._storageRevision, [
         { op: 'set', path: ['runtimePresetSnapshot'], value: fresh },
         { op: 'set', path: ['runtimePresetPath'], value: fresh.presetPath },

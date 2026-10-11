@@ -61,6 +61,30 @@ function harness() {
   return { module, presets, getState: () => structuredClone(state), getWrites: () => writes }
 }
 
+test('独立 Agent 规则来源不跟随原版的全局提示词选择，也不覆盖原版预热快照', async () => {
+  const h = harness()
+  const path = 'presets/梦鲸思客V4-0915.json'
+  h.presets.set(path, preset(path, [{ identifier: '0da6f4d7-961d-4966-a084-857a3dd876ad', content: '原作者写作程序' }]))
+  await h.module.select('presets/先导入.json')
+  const original = await h.module.prepareFullSnapshot()
+  const agent = await h.module.fullSnapshotForPlayPreset('dream-sike-dsh')
+  assert.equal(agent.presetPath, path)
+  assert.equal(agent.front.text, '原作者写作程序')
+  assert.equal((await h.module.state()).activePreset, 'presets/先导入.json')
+  assert.deepEqual(await h.module.fullSnapshotForPlayPreset('tavern'), original)
+})
+
+test('Agent 缺少或无法唯一定位作者规则时明确报错，不静默借用其他预设', async () => {
+  const h = harness()
+  await h.module.select('presets/先导入.json')
+  await assert.rejects(h.module.fullSnapshotForPlayPreset('dream-sike-dsh'), /缺少原作者/)
+  for (const path of ['presets/梦境思客副本一.json', 'presets/梦境思客副本二.json']) {
+    h.presets.set(path, preset(path, [{ identifier: '0da6f4d7-961d-4966-a084-857a3dd876ad', content: '写规' }]))
+  }
+  await assert.rejects(h.module.fullSnapshotForPlayPreset('dream-sike-dsh'), /多份写作规则/)
+  assert.equal((await h.module.state()).activePreset, 'presets/先导入.json')
+})
+
 test('请求投影保留绑定路径，正则开关可在旧对话中实时解析', async () => {
   const value = harness()
   await value.module.register('presets/先导入.json')

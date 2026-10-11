@@ -124,6 +124,7 @@ export function createNativeConversationStorage({dataRoot,onIO}){
   const result={}
   const paths=Array.isArray(fields)?fields:await t.keys(root)
   for(const field of paths){
+   if(fields==='settlement'&&field==='playPresetConfigurations')continue
    const parts=complete?[field]:String(field).split('.').filter(Boolean)
    if(!parts.length||parts[0]==='messages'||!complete&&parts.some(part=>['__proto__','prototype','constructor'].includes(part)))continue
    let value
@@ -419,7 +420,7 @@ export function createNativeConversationStorage({dataRoot,onIO}){
  async function readSessionState(id,options={}){
   const view=await head(id)
   if(!view)return null
-  const chat=await selectedHeader(id,view,['id','sessionId','_storageRevision','mode','cardPath','cardContextRevision','playPresetId','playPresetRevision','gameMemory','projectId',
+  const chat=await selectedHeader(id,view,['id','sessionId','_storageRevision','mode','cardPath','cardContextRevision','playPresetId','playPresetRevision','playPresetSettingsIndependent','gameMemory','projectId',
    'backgroundConfigVersion','conversationFeaturesVersion','disabledWritingSkills','contextCompaction','updatedAt','timeline','candidateAgent',
    'cardName','requestMode','statusBarPlacement','webSearchEnabled','candidates','taskMailbox','regenInProgress','settleError','scriptState',
    'hiddenDshErrorTurns','suppressedDshTurns','regeneratedDshTurns','tavernHelperLifecycleRevision','importHistory','rollbackUndo','pendingMvuSettlement'])

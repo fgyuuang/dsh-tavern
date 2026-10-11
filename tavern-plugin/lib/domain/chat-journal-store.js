@@ -589,6 +589,10 @@ export function createChatJournalStore(options = {}) {
     // and in full reads, but do not copy them into each scoped transaction.
     let head = fields === 'settlement' && allHead.timeline
       ? {...allHead, timeline:{...allHead.timeline, checkpoints:[]}} : allHead
+    if (fields === 'settlement' && Object.hasOwn(head, 'playPresetConfigurations')) {
+      const { playPresetConfigurations, ...activeHead } = head
+      head = activeHead
+    }
     if (Array.isArray(fields)) {
       head = {}
       for (const field of fields) {

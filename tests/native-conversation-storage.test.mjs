@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {spawnSync} from 'node:child_process'
 import {createChatJournalStore} from '../tavern-plugin/lib/domain/chat-journal-store.js'
-import {createChatPersistence} from '../tavern-plugin/lib/domain/chat-persistence.js'
+import {createChatPersistence,captureChatHeader} from '../tavern-plugin/lib/domain/chat-persistence.js'
 import {createConversationPageStore} from '../tavern-plugin/lib/domain/conversation-page-store.js'
 import {createConversationState} from '../tavern-plugin/lib/domain/conversation-state.js'
 import { projectChatSessionState, projectChatBackgroundConfig } from '../tavern-plugin/lib/domain/chat-session-state.js'
@@ -43,7 +43,8 @@ test('cold selected reads skip historical variables and return the same session 
  const historical=row(1)
  historical.variables[0].stat_data.archive='history-only'.repeat(15000)
  const chat=await persistence.write({id:'a',sessionId:'s',messages:[historical,...Array.from({length:128},()=>row(2)),{...row(3),mvu:{pending:true,pendingSubmission:{ops:[]}}}],
-  timeline:{schemaVersion:1,operations:{},checkpoints:['large-checkpoint'.repeat(15000)],participants:{background:{status:'idle'}}},mode:'story'})
+  timeline:{schemaVersion:1,operations:{},checkpoints:['large-checkpoint'.repeat(15000)],participants:{background:{status:'idle'}}},mode:'story',
+  playPresetSettingsIndependent:true,playPresetConfigurations:{tavern:{runtimePresetSnapshot:{text:'private-source'.repeat(15000)}}}})
  let io=[]
  const fresh=createChatJournalStore({dataRoot:root,onNativeIO:e=>io.push(e)})
  const selected=await fresh.readSlice('a',[129],'settlement')
@@ -65,6 +66,8 @@ test('cold selected reads skip historical variables and return the same session 
  assert.ok(io.every(e=>e.bytes<65536))
  io=[]
  assert.deepEqual(await fresh.readSessionState('a'),projectChatSessionState(chat))
+ assert.equal((await fresh.readSessionState('a')).playPresetSettingsIndependent,true)
+ assert.equal(Object.hasOwn(await fresh.readSessionState('a'),'playPresetConfigurations'),false,'lightweight state must not carry archived prompt snapshots')
  // Session's public contract includes checkpoints, but never historical variables.
  const historyBytes=Buffer.byteLength(JSON.stringify({kind:'record',value:{type:'scalar',value:historical.variables[0].stat_data.archive}}))
  assert.ok(!io.some(e=>e.bytes===historyBytes),'session metadata must not hydrate history-only payload')
@@ -243,4 +246,21 @@ test('scoped mailbox commit preserves story, world and historical revisions',asy
  assert.deepEqual((await domain.readWorld('mailbox')).variables.stat_data,{gold:7})
  assert.deepEqual(await cold.readRevision('mailbox',original._storageRevision),original)
  assert.equal(await cold.patch('mailbox',original._storageRevision,[{op:'set',path:['taskMailbox'],value:{version:99}}],{returnProjection:['id']}),undefined)
+})
+
+test('settlement header writes preserve independent preset archives omitted from the read view',async t=>{
+ const {root,persistence}=await fixture(t)
+ const configs={tavern:{runtimePresetSnapshot:{digest:'original',sourceMacroOverrides:{local:{length:1000}}}},'dream-sike-dsh':{runtimePresetSnapshot:{digest:'dream'}}}
+ await persistence.write({id:'preset-archive',sessionId:'session',playPresetSettingsIndependent:true,playPresetConfigurations:configs,messages:[row(7)]})
+ const cold=createChatPersistence({store:createChatJournalStore({dataRoot:root})})
+ const base=await cold.readSettlementBase('preset-archive')
+ assert.equal(Object.hasOwn(base.chat,'playPresetConfigurations'),false)
+ const header=captureChatHeader(base.chat)
+ base.chat.settleStatus='done'
+ await cold.writeHeader(base.chat,header)
+ const saved=await cold.read('preset-archive')
+ assert.equal(saved.settleStatus,'done')
+ assert.deepEqual(saved.playPresetConfigurations,configs)
+ assert.equal(saved.playPresetSettingsIndependent,true)
+ assert.equal(saved.messages[0].variables[0].stat_data.gold,7)
 })
