@@ -213,12 +213,12 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   tools.register(defineTool({
     name: 'sike_ready_draft',
-    description: '确认已检查且无协议问题的当前版本正文，交由 Tavern 正式回合流程提交一次。此工具不会自行写入正式消息。',
+    description: '所有检查和修订完成后，最后确认当前版本正文。成功后草稿锁定，应立即结束回合并返回一句简短完成提示；正式正文由宿主提交一次。',
     parameters: { expectedVersion: { type: 'integer', required: true, description: '已检查通过的草稿版本' } },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, args.expectedVersion), 'draft.ready')
-      return { report: '版本 ' + draft.version + ' 已就绪，等待正式回合提交。', draft }
+      return { report: '版本 ' + draft.version + ' 已确认并锁定。停止工具调用，结束本回合，返回一句简短完成提示；宿主将从已确认草稿提交正式正文一次。', draft }
     }
   }))
 }
