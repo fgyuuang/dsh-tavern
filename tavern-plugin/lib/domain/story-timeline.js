@@ -20,7 +20,7 @@ function sameBasedOn(left, right) {
 }
 
 function participantRole(role) {
-  return role === 'candidate' || role === 'settlement' || role === 'character-design' || role === 'ledger' || role === 'worldbook-filter' ? 'background' : role
+  return role === 'candidate' || role === 'settlement' || role === 'character-design' || role === 'ledger' || role === 'worldbook-filter' || role === 'dream-followup' ? 'background' : role
 }
 
 function participantLifetime(value) {
@@ -118,6 +118,7 @@ export function createStoryTimeline(options = {}) {
       gameMemory: chat.gameMemory || null,
       scriptState: chat.scriptState === undefined ? null : chat.scriptState,
       candidates: chat.candidates === undefined ? null : chat.candidates,
+      dreamSikeFollowup: chat.dreamSikeFollowup || null,
       settleStatus: str(chat.settleStatus) || 'idle',
       settleError: chat.settleError === undefined ? null : chat.settleError,
       lastSettle: chat.lastSettle === undefined ? null : chat.lastSettle,
@@ -148,6 +149,7 @@ export function createStoryTimeline(options = {}) {
     else delete chat.gameMemory
     chat.scriptState = clone(source.scriptState === undefined ? null : source.scriptState)
     chat.candidates = clone(source.candidates === undefined ? null : source.candidates)
+    chat.dreamSikeFollowup = clone(source.dreamSikeFollowup || null)
     chat.settleStatus = str(source.settleStatus) || 'idle'
     chat.settleError = clone(source.settleError === undefined ? null : source.settleError)
     chat.lastSettle = clone(source.lastSettle === undefined ? null : source.lastSettle)
@@ -201,6 +203,7 @@ export function createStoryTimeline(options = {}) {
     })
     chat.timeline.checkpoints = chat.timeline.checkpoints.slice(-40)
     chat.candidates = null
+    chat.dreamSikeFollowup = null
     chat.timeline.revision++
     operation.status = 'completed'
     operation.completedAt = now()
@@ -474,6 +477,7 @@ export function createStoryTimeline(options = {}) {
       }
     }
     chat.timeline.branchId = branchId
+    if (chat.dreamSikeFollowup?.status === 'done') chat.dreamSikeFollowup.branchId = branchId
     chat.timeline.revision = oldRevision + 1
     chat.timeline.checkpoints = checkpoints.slice(0, -1)
     chat.timeline.participants = nextParticipants
@@ -518,6 +522,7 @@ export function createStoryTimeline(options = {}) {
       }
       chat.timeline.updatedAt = now()
       chat.candidates = null
+      chat.dreamSikeFollowup = null
       // Prose is authoritative. The previous settlement must not overrule the
       // edited scene in foreground requests or in the resident background Agent.
       chat.posture = ''
@@ -588,6 +593,7 @@ export function createStoryTimeline(options = {}) {
         }
       }
       chat.timeline.branchId = branchId
+      if (chat.dreamSikeFollowup?.status === 'done') chat.dreamSikeFollowup.branchId = branchId
       chat.timeline.revision = Math.max(currentRevision, chat.timeline.revision) + 1
       chat.timeline.participants = participants
       for (const operation of Object.values(chat.timeline.operations)) {

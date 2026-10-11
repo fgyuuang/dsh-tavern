@@ -262,3 +262,17 @@ test('body edit invalidates stale posture and rewinds background before the edit
   assert.equal(task.value.participant.sessionId, 'bg')
   assert.equal(task.value.participant.rewindTo, 19)
 })
+
+test('后续互动随正文检查点恢复，新正文清理旧面板并沿用共享后台 Agent', () => {
+  const { timeline, chat } = harness()
+  let current = beginAndCommitBody(timeline, chat, 1, '开门', '第一段正文')
+  current.dreamSikeFollowup = { status: 'done', turn: 1, branchId: current.timeline.branchId, key: 'first', projection: { text: '第一轮互动' } }
+  current.timeline.participants.background = { role: 'background', lifetime: 'chat', sessionId: 'background', boundary: 9, branchId: current.timeline.branchId, status: 'current' }
+  current = beginAndCommitBody(timeline, current, 2, '等候', '第二段正文')
+  assert.equal(current.dreamSikeFollowup, null)
+  const restored = rollback(timeline, current).chat
+  assert.equal(restored.dreamSikeFollowup.projection.text, '第一轮互动')
+  assert.equal(restored.dreamSikeFollowup.branchId, restored.timeline.branchId)
+  const task = timeline.apply({ chat: restored, intent: { kind: 'agent.begin', role: 'dream-followup' } })
+  assert.equal(task.value.participant.sessionId, 'background')
+})

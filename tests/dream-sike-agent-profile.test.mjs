@@ -10,7 +10,7 @@ function snapshot(content = '作者原句：角色只能知道亲历信息。') 
     { id: chain + '#1', content: '作者检设定、辨视角、遵写规、演叙事。', name: '默认思维链', source: { identifier: chain } }] },
     compatibilityPreset: { entries: [{ entryKey: 'style#1', identifier: 'style' }] } }
 }
-test('six native stages map source groups and split options by original identifiers with complete coverage', () => {
+test('native stages map source groups and split options by original identifiers with complete coverage', () => {
   const sourceSettings = { errors: [], groups: [
     { id: '角色设定', options: [sourceOption('role')], variableInputs: [{ id: 'customRole' }] },
     { id: '文风设置', options: [sourceOption('style', true)], variableInputs: [] },
@@ -19,7 +19,7 @@ test('six native stages map source groups and split options by original identifi
       sourceOption('4e26a3ac-4d46-45ed-85bf-0110fbe06cd2')], variableInputs: [] }
   ] }
   const view = buildDreamSikeAgentProfile(snapshot(), 'dream-sike-dsh', { sourceSettings })
-  assert.equal(view.stages.length, 6)
+  assert.equal(view.stages.length, 7)
   assert.equal(view.enabled, true)
   assert.equal(view.coverage.complete, true)
   assert.equal(view.coverage.mappedOptionCount, 6)

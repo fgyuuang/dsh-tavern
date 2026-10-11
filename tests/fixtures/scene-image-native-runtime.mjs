@@ -18,7 +18,7 @@ import { createSceneImageDiagnostics } from '../../tavern-plugin/lib/domain/scen
 import { createMvuDiagnosticStore, createMvuDiagnosticExport } from '../../tavern-plugin/lib/domain/mvu-diagnostics.js'
 import { assertImageToolSchema } from './assert-image-tool-schema.mjs'
 
-export async function createSceneImageNativeRuntime(bootPath, { unifiedPlugin = false, systemAppend, resolveModelSelection, beforeModelRequest, residentOptions = {}, setupHost } = {}) {
+export async function createSceneImageNativeRuntime(bootPath, { unifiedPlugin = false, systemAppend, resolveModelSelection, beforeModelRequest, scriptedModelResponse, residentOptions = {}, setupHost } = {}) {
   const bootUrl = pathToFileURL(bootPath)
   const { boot } = await import(bootUrl.href)
   const { LlmAdapter } = await import(new URL('../../dsh-llm/lib/index.js', bootUrl))
@@ -47,6 +47,15 @@ export async function createSceneImageNativeRuntime(bootPath, { unifiedPlugin = 
       await beforeModelRequest?.(input)
       requests.push(structuredClone({ model: input.model, reasoningEffort: input.reasoningEffort, maxTokens: input.maxTokens, system: input.messages.filter(message => message.role === 'system').flatMap(message => message.content).map(block => block.text || '').join('\n\n'), messages: input.messages, tools: input.tools }))
       for (const tool of input.tools || []) assertImageToolSchema(tool)
+      if (scriptedModelResponse) {
+        const blocks = await scriptedModelResponse(input)
+        for (const [index, block] of blocks.entries()) {
+          yield { type: 'block-start', index, blockType: block.type }
+          yield { type: 'block-end', index, block }
+        }
+        yield { type: 'finish', reason: { kind: blocks.some(block => block.type === 'tool-call') ? 'tool-calls' : 'stop' } }
+        return
+      }
       const currentMessages = input.messages.slice(Math.max(0, input.messages.findLastIndex(message => message.source?.kind === 'plugin')))
       const referenceResult = currentMessages.flatMap(message => message.content || []).find(block => block.type === 'tool-result' && block.toolCallId === 'reference-call')
       const referenceTool = !referenceResult && (characterQuery

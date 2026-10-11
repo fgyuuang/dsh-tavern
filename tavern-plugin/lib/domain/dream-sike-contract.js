@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 7
+const VERSION = 8
+export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
+  '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
+  '27bf435f-4283-4937-8c6f-3c31abc4f6d2'
+])
 const str = value => typeof value === 'string' ? value : ''
 
 // These are source prompt identifiers, not keyword matches against user prose.
@@ -134,6 +138,7 @@ export function compileDreamSikeContract(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
   if (snapshot.agentContract?.version === VERSION) return snapshot
   const evidence = []
+  const followupEntries = []
   const phases = {}
   const rawPhases = snapshot.front || snapshot.middle || snapshot.back
     ? snapshot : { front: { entries: [{ id: 'legacy', content: str(snapshot.text), role: 'system' }] } }
@@ -141,7 +146,9 @@ export function compileDreamSikeContract(snapshot) {
     const entries = []
     for (const entry of rawPhases[phase]?.entries || []) {
       if (!entry || entry.enabled === false || entry.marker === true || !str(entry.content).trim()) continue
-      const adapted = adapt(entry)
+      const deferred = DREAM_SIKE_FOLLOWUP_IDS.includes(identifier(entry))
+      if (deferred) followupEntries.push(structuredClone(entry))
+      const adapted = deferred ? { content: '', action: 'deferred-followup' } : adapt(entry)
       evidence.push({ id: str(entry.id || entry.entryKey), identifier: identifier(entry), name: str(entry.name || entry.source?.name), phase,
         action: adapted.action, characters: entry.content.length, sourceHash: createHash('sha256').update(entry.content).digest('hex') })
       if (adapted.content.trim()) entries.push({ ...entry, content: adapted.content })
@@ -151,12 +158,16 @@ export function compileDreamSikeContract(snapshot) {
   // The source helper selects a reply mode independently of the shared plot modules.
   // When multiple overrides are enabled, their source order determines the last mode.
   const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
-  const instruction = outputModeInstruction(outputMode)
-  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
+  const instruction = outputModeInstruction(outputMode) + (outputMode === 'plot' && followupEntries.length
+    ? '\n【后续互动顺序】本局选定的行动选项与思客大调查由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option 或 dream_big_discuss，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
+  const deferredFollowup = { entries: outputMode === 'plot' ? followupEntries : [],
+    digest: createHash('sha256').update(JSON.stringify(followupEntries)).digest('hex') }
+  const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, deferredFollowup, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
   const agentContract = { version: VERSION, digest, presetPath: str(snapshot.presetPath), presetName: str(snapshot.presetName),
     sourceCharacters: evidence.reduce((sum, entry) => sum + entry.characters, 0), entries: evidence,
-    outputMode, reviewAxes: outputMode === 'plot' ? [...DREAM_SIKE_REVIEW_AXES] : [], instruction }
-  return { ...snapshot, ...phases, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
+    outputMode, followupModules: deferredFollowup.entries.map(entry => ({ id: identifier(entry), name: entry.name || entry.source?.name || '' })),
+    reviewAxes: outputMode === 'plot' ? [...DREAM_SIKE_REVIEW_AXES] : [], instruction }
+  return { ...snapshot, ...phases, deferredFollowup, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
 }
 
 export function dreamSikeContractView(snapshot) {
@@ -177,6 +188,10 @@ export function inspectDreamSikeContractDraft(chat, text) {
   const issues = []
   const add = (code, message) => issues.push({ code, message })
   const elements = tag => [...str(text).matchAll(new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + tag + '\\s*>', 'gi'))]
+  const visibleText = str(text).replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '').replace(/<!--[\s\S]*?-->/g, '')
+  if (contract.followupModules?.length && /<\/?(?:dream_option|dream_big_discuss)\b/i.test(visibleText)) {
+    add('preset-deferred-followup', '行动选项与思客大调查属于结算后的独立调用，请从正文草稿移除；原作者规则将由后台执行，不要在当前回合提前输出。')
+  }
   if (enabled.has(IDS.envelope)) {
     for (const tag of ['dream_plot', 'dream_body', 'dream_after_format']) {
       if (elements(tag).length !== 1) add('preset-' + tag, '本局已启用 DREAM_PLOT：需要且只能有一个完整 ' + tag + ' 区块')

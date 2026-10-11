@@ -175,6 +175,7 @@ import { projectTavernHelperScripts, hasTavernScriptRuntime } from './domain/tav
 import { createTavernScriptDispatch } from './domain/tavern-script-dispatch.js'
 import { createTavernExtensionSettings } from './domain/tavern-extension-settings.js'
 import { createTavernScriptHostAdapter } from './domain/tavern-script-host-adapter.js'
+import { createDreamSikeFollowups, dreamSikeFollowupView, DREAM_SIKE_FOLLOWUP_TOOL } from './domain/dream-sike-followup.js'
 import { createTavernRemoteAssetPinStore } from './domain/tavern-remote-assets.js'
 import { OFFICIAL_MVU_VERSION, inspectOfficialMvuAsset } from './domain/official-mvu-assets.js'
 import { createTavernStaticResourceCache } from './domain/tavern-static-resource-cache.js'
@@ -1901,6 +1902,7 @@ export async function apply(ctx) {
       playPresetId: normalizePlayPresetId(chat.playPresetId),
       interactionProfile: playPresetInteractionProfile(chat.playPresetId),
       dreamSikeDraftState: dreamSikeDraftStatus(chat),
+      dreamSikeFollowup: dreamSikeFollowupView(chat),
       requestMode: chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
       playerName: str(chat.macroState && chat.macroState.userName).trim() || '你',
       userProfile: {
@@ -1952,7 +1954,7 @@ export async function apply(ctx) {
       foregroundError: chat.foregroundError || null,
       lastWorldBookRecall: chat.lastWorldBookRecall || null,
       activity,
-      settleStatus: activity.busy ? 'running' : (activity.phase === 'failed' && activity.role === 'settlement' ? 'error' : 'done'),
+      settleStatus: activity.busy && activity.role !== 'dream-followup' ? 'running' : (activity.phase === 'failed' && activity.role === 'settlement' ? 'error' : 'done'),
       settleError: activity.reason === 'interrupted' ? '后台结算已中断，请重试结算。' : (chat.settleError || null),
       settlementTurn: settlementTurn(chat),
       scriptProgress: scriptProgress,
@@ -2059,6 +2061,7 @@ export async function apply(ctx) {
       playPresetId: normalizePlayPresetId(chat.playPresetId),
       interactionProfile: playPresetInteractionProfile(chat.playPresetId),
       dreamSikeDraftState: chat.dreamSikeDraftState || dreamSikeDraftStatus(chat),
+      dreamSikeFollowup: dreamSikeFollowupView(chat),
       forkTurnsByMessageId: forkTurnsForChat(chat) }
   }
 
@@ -2325,7 +2328,7 @@ export async function apply(ctx) {
     imageSystemPrompt: () => runtimePrompt('scene-image-system'),
     resolveModelSelection: async input => backgroundModelSelection(await backgroundConfigForSession(input.sessionId)) || input.selection,
     resolveWebSearch: async input => (await backgroundConfigForSession(input.sessionId))?.webSearchEnabled === true,
-    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL, GAME_MEMORY_SUBMIT_TOOL],
+    backgroundTools: [...WORLD_BOOK_FILTER_TOOLS, POSTURE_SUBMIT_TOOL, CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL, CHARACTER_DESIGN_REUSE_TOOL, MVU_SUBMIT_UPDATE_TOOL, CANDIDATE_SUBMIT_TOOL, SCRIPT_READ_TOOL, SCRIPT_POINT_TOOL, LEDGER_SUBMIT_TOOL, GAME_MEMORY_SUBMIT_TOOL, DREAM_SIKE_FOLLOWUP_TOOL],
     sharedTools: [{
       tool: GAME_MEMORY_READ_TOOL,
       async execute({ input, args }) {
@@ -2345,7 +2348,7 @@ export async function apply(ctx) {
       return chat?.backgroundSessionStatus === 'needs-session'
     },
     resolveForegroundWorldbookReads: async input => {
-      if (!['settlement', 'candidate', 'character-design'].includes(input.task)) return ''
+      if (!['settlement', 'candidate', 'character-design', 'dream-followup'].includes(input.task)) return ''
       const chat = await sessionStateForSession(input.sessionId)
       const session = agentRegistry.get(input.sessionId)?.session || sessionStore.get(input.sessionId)
       return foregroundWorldbookReads(chat, session)
@@ -2811,6 +2814,15 @@ export async function apply(ctx) {
     },
     prepareLegacy: pullBackgroundCycle
   })
+  const dreamSikeFollowups = createDreamSikeFollowups({
+    read: readChat, update: updateChat, tasks: backgroundTasks,
+    run: input => backgroundAgentRunner.run(input), selection: backgroundModelSelection,
+    busy: chat => agentRegistry.get(chat.sessionId)?.phase?.kind === 'running' || Boolean(chat.regenInProgress),
+    project: async (text, chat) => projectRuntimeReply(text, { charName: chat.cardName, macroState: chat.macroState,
+      regexScripts: composeTavernRegexScripts(await readCardExtensions(chat.cardPath, chat), chat.runtimePresetSnapshot?.regexScripts), placement: 2, depth: 0 }),
+    publish: sessionId => sessionSignals.publish(sessionId, { kind: 'tavern-state', version: 'sike-followup:' + Date.now() })
+  })
+  ctx.effect(() => () => dreamSikeFollowups.dispose())
   const ledgerEditor = createLedgerEditor({
     chats: { forSession: chatForSession, update: updateChat }, timeline: storyTimeline,
     isBusy: chat => backgroundTasks.activity(chat).busy || Boolean(chat.regenInProgress) || agentRegistry.get(chat.sessionId)?.phase?.kind === 'running'
@@ -3270,6 +3282,7 @@ export async function apply(ctx) {
     try {
       const latest = await chatPersistence.readSessionState(chatId)
       if (!signal.aborted && latest) {
+        await dreamSikeFollowups.start(chatId).catch(error => console.warn('dsh-tavern: 后续互动调度失败:', str(error?.message || error)))
         void mvuSettlementReconciler.wake(latest.sessionId)
         void candidateWorldbookPreparation.warm(latest.sessionId)
         void worldbookPrefilter.start(chatId)
@@ -3279,7 +3292,10 @@ export async function apply(ctx) {
       if (!signal.aborted) void mvuSettlementReconciler.scan()
     }
   }
-  function queueSettlement(chatId) { return settlementJobs.start(chatId) }
+  async function queueSettlement(chatId) {
+    await dreamSikeFollowups.wait(chatId).catch(error => console.warn('dsh-tavern: 后续互动准备失败:', str(error?.message || error)))
+    return settlementJobs.start(chatId)
+  }
   function cancelSettlement(chatId, options) { return settlementJobs.cancel(chatId, options) }
   const mvuSettlementReconciler = createMvuSettlementReconciler({
     list: () => conversationRegistry.list(),
@@ -3565,6 +3581,7 @@ export async function apply(ctx) {
     }
     await foregroundHandoff.recover(activeChatIds)
     await candidateTasks.recover(activeChatIds)
+    await dreamSikeFollowups.recover(activeChatIds)
     // Recovery must first convert durable running operations back to pending.
     void mvuSettlementReconciler.scan()
   }
@@ -4329,6 +4346,15 @@ export async function apply(ctx) {
       case 'setPlayerName': return { playerName: await setPlayerName(args && args.sessionId, args && args.userName) }
       case 'setRequestMode': return { requestMode: await setRequestMode(args && args.sessionId, args && args.requestMode) }
       case 'ensureOpening': return { view: await ensureNativeOpening(args && args.sessionId) }
+      case 'retryDreamSikeFollowup': {
+        const chat = await chatForSession(args?.sessionId)
+        if (!chat) throw new Error('当前会话没有绑定游戏')
+        if (chat.settleStatus !== 'done') throw new Error('请等待正文与变量结算完成')
+        const record = dreamSikeFollowupView(chat)
+        if (!record || record.key !== args?.key || record.turn !== args?.turn || record.status !== 'failed') throw new Error('后续互动已变化，请使用当前回合的重试入口')
+        await dreamSikeFollowups.start(chat.id, { force: true })
+        return { queued: true }
+      }
       case 'getChoices': return { candidates: await candidateGenerator.find({ sessionId: args && args.sessionId, messageId: args && args.messageId }) }
       case 'startChoices': return await candidateTasks.startLegacy(args)
       case 'exportCard': {

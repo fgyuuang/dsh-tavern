@@ -30,7 +30,7 @@ export function projectChatSessionState(chat, options = {}) {
   const selected = { pendingMvuSettlement, dreamSikeDraftState: dreamSikeDraftStatus(chat) }
   for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision', 'playPresetId', 'playPresetRevision', 'playPresetSettingsIndependent', 'gameMemory', 'projectId',
     'backgroundConfigVersion', 'conversationFeaturesVersion', 'disabledWritingSkills', 'contextCompaction', 'updatedAt', 'timeline', 'candidateAgent',
-    'cardName', 'requestMode', 'statusBarPlacement', 'webSearchEnabled', 'candidates', 'taskMailbox', 'regenInProgress',
+    'cardName', 'requestMode', 'statusBarPlacement', 'webSearchEnabled', 'candidates', 'dreamSikeFollowup', 'taskMailbox', 'regenInProgress',
     'settleError', 'scriptState', 'hiddenDshErrorTurns', 'suppressedDshTurns', 'regeneratedDshTurns', 'tavernHelperLifecycleRevision']) {
     if (Object.hasOwn(chat, key)) selected[key] = chat[key]
   }
@@ -161,7 +161,7 @@ export function createSessionStateView({ activity: activityOf, evidence: evidenc
     return {
       ...rollback,
       activity,
-      settleStatus: activity.busy ? 'running' : (activity.phase === 'failed' && activity.role === 'settlement' ? 'error' : 'done'),
+      settleStatus: activity.busy && activity.role !== 'dream-followup' ? 'running' : (activity.phase === 'failed' && activity.role === 'settlement' ? 'error' : 'done'),
       settleError: activity.reason === 'interrupted' ? '后台结算已中断，请重试结算。' : (chat.settleError || null),
       settlementTurn: rollback.rollbackTargetTurn,
       scriptProgress,

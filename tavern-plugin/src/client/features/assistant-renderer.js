@@ -562,7 +562,8 @@
 					return React.createElement(TavernPluginMediaItem, { key: item.id, item: item, sessionId: props.sessionId, turn: storyTurn });
 				})) : null;
 				const pluginActions = playView && settled ? React.createElement(TavernPluginMessageActions, { sessionId: props.sessionId, turn: storyTurn, settled: settled }) : null;
-				return React.createElement("div", { ref:historyNode, className: "dsh-tavern-assistant", "data-streaming": data.status === "running" || undefined }, body, refusalNode, pendingMessage, pluginMediaNode, trailingIllustration, pluginActions, mvuReceiptNode, inlineStatus);
+				const followup = dreamSikeMode && settled && finalAssistantStep && !sessionTransitioning ? React.createElement(DreamSikeFollowup, { sessionId: props.sessionId, turn: storyTurn, latest: storyTurn === latestProjectionTurn, frameOwner: props.frameOwner, frameSizing: liveState.view?.tavernRuntimePolicy?.frameSizing, trustedCardMode: Boolean(liveState.view?.tavernRuntimePolicy?.trustedCardMode), executeSlash: props.executeSlash }) : null;
+				return React.createElement("div", { ref:historyNode, className: "dsh-tavern-assistant", "data-streaming": data.status === "running" || undefined }, body, refusalNode, pendingMessage, pluginMediaNode, trailingIllustration, pluginActions, mvuReceiptNode, followup, inlineStatus);
 			}
 			function TavernForkAssistantAction(props) {
 				const liveState = useScopedLiveTavernView(props.sessionId, String(props.messageId || ""), [["mode"], ["forkTurnsByMessageId", String(props.messageId || "")]]);
