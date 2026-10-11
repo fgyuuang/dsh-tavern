@@ -83,6 +83,31 @@
                 Object.assign(merged, window.getVariables({ type: "message", message_id: window.getCurrentMessageId() }));
                 return merged;
 			};
+			// Some legacy cards use this nonstandard two-argument setter before
+			// falling back to insertOrAssignVariables({[path]: value}). That Helper
+			// API merges literal keys; keep its semantics and adapt only the setter.
+			if (window.Mvu && typeof window.updateVariable !== "function") {
+				let writes = Promise.resolve();
+				window.updateVariable = function (path, value) {
+					const parts = window._.toPath(String(path || ""));
+					if (parts[0] === "stat_data") parts.shift();
+					if (!parts.length || parts.some(part => !part || ["__proto__", "prototype", "constructor"].includes(part))) {
+						return Promise.reject(new Error("无效的 MVU 变量路径"));
+					}
+					const option = { type: "message", message_id: window.getCurrentMessageId() };
+					const assigned = window._.cloneDeep(value);
+					const next = writes.then(async function () {
+						const variables = window.getVariables(option);
+						if (!variables.stat_data || typeof variables.stat_data !== "object" || Array.isArray(variables.stat_data)) variables.stat_data = {};
+						window._.set(variables.stat_data, parts, assigned);
+						await window.replaceVariables(variables, option);
+						return window._.cloneDeep(assigned);
+					});
+					// A failed write must reject its caller without blocking later edits.
+					writes = next.catch(function () {});
+					return next;
+				};
+			}
 		}
 
 		function installTavernStatusRefresh(token) {

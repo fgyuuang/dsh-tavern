@@ -23,6 +23,7 @@ function fixture() {
   let script = html.match(/<script data-dsh-tavern-helper>([\s\S]*?)<\/script>/)[1]
   script = stubFrameDependencyImports(script)
   vm.runInContext(script, context)
+  vm.runInContext(html.match(/<script data-dsh-tavern-frame-variable-aliases>([\s\S]*?)<\/script>/)[1], context)
   return { w, calls, reply(result = { updated: true }, ok = true) { for (const fn of listeners) fn({ source: parent, data: { type: 'dsh-tavern-helper-response', token: 'frame', requestId: calls.at(-1).requestId, ok, result, error: '保存失败' } }) } }
 }
 test('状态栏 script 作用域读写隔离，失败回滚不污染消息或其他脚本', async () => {
@@ -39,6 +40,43 @@ test('状态栏 script 作用域读写隔离，失败回滚不污染消息或其
   await assert.rejects(failed,/保存失败/)
   assert.equal(w.getVariables(option).count,2)
   assert.equal(JSON.stringify(w.getVariables({type:'message'})),message)
+})
+
+test('前端非标准 updateVariable 写入本楼 stat_data 嵌套路径，保留 Helper 字面键语义', async () => {
+  const h = fixture()
+  const pending = h.w.updateVariable('环境与剧情.开局激活', true)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(h.calls.at(-1).args.option.message_id, 0)
+  assert.equal(h.calls.at(-1).args.variables.stat_data.环境与剧情.开局激活, true)
+  assert(!Object.hasOwn(h.calls.at(-1).args.variables, '环境与剧情.开局激活'))
+  h.reply(); await pending
+  assert.equal(h.w.getAllVariables().stat_data.环境与剧情.开局激活, true)
+  assert.equal(h.w.getAllVariables().stat_data.主角.姓名, '旧')
+  const literal = h.w.insertOrAssignVariables({ 'custom.literal': 1 })
+  h.reply(); await literal
+  assert.equal(h.w.getVariables()['custom.literal'], 1)
+})
+
+test('前端路径写入串行合并，失败回滚后仍可继续，拒绝原型路径', async () => {
+  const h = fixture()
+  const first = h.w.updateVariable('stat_data.环境与剧情.基础世界', '验证世界')
+  const second = h.w.updateVariable('环境与剧情.开局模式', '验证模式')
+  await new Promise(resolve => setImmediate(resolve))
+  h.reply(); await first
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(h.calls.at(-1).args.variables.stat_data.环境与剧情.基础世界, '验证世界')
+  h.reply(); await second
+  const failed = h.w.updateVariable('环境与剧情.开局模式', '失败')
+  await new Promise(resolve => setImmediate(resolve))
+  h.reply({}, false); await assert.rejects(failed, /保存失败/)
+  assert.equal(h.w.getAllVariables().stat_data.环境与剧情.开局模式, '验证模式')
+  const recovered = h.w.updateVariable('环境与剧情.开局激活', true)
+  await new Promise(resolve => setImmediate(resolve))
+  h.reply(); await recovered
+  for (const path of ['', '__proto__.polluted', 'stat_data.constructor.prototype.polluted']) {
+    await assert.rejects(h.w.updateVariable(path, true), /无效/)
+  }
+  assert.equal({}.polluted, undefined)
 })
 
 test('自定义建档 MVU 写入 latest 并等待保存，失败回滚且不宣称成功', async () => {
