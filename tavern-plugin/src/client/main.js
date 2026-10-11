@@ -763,6 +763,8 @@ window.__ModuleLoader__.load({
 
 // @include features/preset-settings.js
 // @include features/agent-workbench.js
+// @include features/opening-worldbook.js
+// @include features/game-worldbook.js
 // @include features/play-controls.js
 
 // @include features/request-context.js
@@ -941,6 +943,7 @@ window.__ModuleLoader__.load({
 			cardLibraryFeature.register({ ctx: ctx, appendMention: appendMention });
 			dreamSikeDraftFeature.register({ ctx: ctx, slots: slots });
 			gameMemoryFeature.register({ ctx: ctx, slots: slots });
+			gameWorldbookFeature.register({ ctx: ctx });
 			ctx.effect(function () {
 				reconcileLibraryTabTitles();
 				if (typeof ctx.betterSidebar.subscribeState !== "function") return;

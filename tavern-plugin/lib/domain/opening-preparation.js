@@ -1,5 +1,6 @@
 import { parseOpeningCommand } from './opening-command.js'
 import { worldbookContentDigest } from './worldbook-version.js'
+import { gameWorldbookView } from './game-worldbook-view.js'
 import { projectFullPromptTemplateState, applyFullPromptTemplateState } from './full-prompt-template-state.js'
 import { projectTavernHelperScripts } from './tavern-helper-scripts.js'
 import { mutateScriptPrompts } from './tavern-script-prompts.js'
@@ -42,6 +43,20 @@ export function createOpeningPreparation({ readCard, worldBooks, generate, gener
       worldbook: draft.document ? projectTavernHelperWorldbook(inspectWorldBookDocument(draft.document)) : null })
   }
   return {
+    worldbookView(id) {
+      const draft = requireDraft(id)
+      return gameWorldbookView(draft.document ? { source: draft.source, document: draft.document, view: inspectWorldBookDocument(draft.document) } : null, 'preparation', false)
+    },
+    setWorldbookEntryEnabled(id, ref, enabled, revision) {
+      const draft = requireDraft(id)
+      const current = this.worldbookView(id)
+      if (typeof enabled !== 'boolean' || typeof ref !== 'string') throw new Error('世界书条目设置无效')
+      if (current.revision !== revision) throw new Error('世界书已被脚本或其他操作修改，请刷新后重试')
+      if (!current.entries.some(entry => entry.ref === ref)) throw new Error('世界书条目不存在')
+      draft.document = updateWorldBookDocument(draft.document, { operations: [{ op: 'update', ref, patch: { enabled } }] }).document
+      draft.chat._storageRevision++
+      return this.worldbookView(id)
+    },
     async create(cardPath, settings = {}) {
       for (const [id, draft] of drafts) if (now() - draft.touchedAt > lifetime) { generations.stopAll('opening:' + id); drafts.delete(id) }
       if (drafts.size >= 64) throw new Error('打开的游戏准备页过多，请稍后重试')

@@ -41,7 +41,11 @@ export function registerRequestHooks({
 }) {
   ctx.on('agent/request', async function (payload, next) {
     const sessionId = payload.agent && payload.agent.session ? payload.agent.session.id : ''
-    if (sessionId !== '') requestCoordinates.set(sessionId, { turn: payload.turn, step: payload.step })
+    if (sessionId !== '') {
+      const previous = requestCoordinates.get(sessionId)
+      const frame = previous?.frame && (previous.framePending === true || previous.turn === payload.turn) ? previous.frame : undefined
+      requestCoordinates.set(sessionId, { turn: payload.turn, step: payload.step, ...(frame ? { frame } : {}) })
+    }
     if (sessionId !== '' && Number(payload.step) > 12 && !backgroundAgentRunner.owns(sessionId)) {
       const chat = await chatForSession(sessionId)
       if (chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')) {

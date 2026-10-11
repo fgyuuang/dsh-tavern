@@ -23,6 +23,22 @@ test('过期世界书写入不覆盖新设置，返回值也不能直接修改�
   assert.equal(service.get(draft.id).worldbook.entries[0].enabled, true)
 })
 
+test('准备页的紧凑开关复用同一草稿，保留脚本选择，拒绝过期写入', async () => {
+ const { service, record } = fixture()
+ const original = structuredClone(record)
+ const draft = await service.create('card')
+ const initial = service.worldbookView(draft.id)
+ assert.equal(initial.scope, 'preparation'); assert.equal(initial.counts.enabled, 0)
+ assert.equal(Object.hasOwn(initial.entries[0], 'content'), false)
+ const changed = service.setWorldbookEntryEnabled(draft.id, initial.entries[0].ref, true, initial.revision)
+ assert.equal(changed.counts.enabled, 1)
+ assert.throws(() => service.setWorldbookEntryEnabled(draft.id, initial.entries[0].ref, false, initial.revision), /已被脚本/)
+ assert.throws(() => service.setWorldbookEntryEnabled(draft.id, 'entry:999', false, changed.revision), /不存在/)
+ const resolved = service.resolve(draft.id, 'card', 'primary')
+ assert.equal(inspectWorldBookDocument(resolved.worldbookSnapshot.document).entries[0].enabled, true)
+ assert.deepEqual(record, original)
+})
+
 import { createHelperWorldbookHost } from './fixtures/helper-worldbook-host.mjs'
 for (const embedded of [false, true]) test('本局世界书的运行时读写与原始资源隔离：' + embedded, async () => {
   const h = await createHelperWorldbookHost(embedded)

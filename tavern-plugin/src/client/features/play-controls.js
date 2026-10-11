@@ -297,6 +297,7 @@
 				h("div", { className: "dsh-tavern-status-head" },
 					h("div", { className: "dsh-tavern-status-role" }, view.card.name),
                     h("nav", { className: "dsh-tavern-status-resource-links", "aria-label": "本局资料" },
+                        h("button", { type: "button", onClick: () => props.openStyleTab("dsh-tavern:game-worldbook") }, "本局世界书 ↗"),
                         h("button", { type: "button", disabled: !view.card.path, onClick: () => props.openStyleTab("dsh-tavern:cards", { cardPath: view.card.path }) }, "打开人物卡 ↗"),
                         h("button", { type: "button", disabled: !view.card.path || resourceLinkBusy || !currentResourceBinding || noWorldBook || unavailableWorldBook, title: "打开本局人物卡绑定的世界书；多本绑定时打开主世界书", onClick: openWorldBookDetail }, resourceLinkBusy ? "正在打开…" : !currentResourceBinding ? "正在读取世界书…" : noWorldBook ? "未绑定世界书" : unavailableWorldBook ? "世界书不可用" : "打开世界书 ↗")),
                     resourceLinkError ? h("div", { className: "dsh-card-error", role: "status" }, resourceLinkError) : null,

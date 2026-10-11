@@ -29,17 +29,19 @@ export function createWorldbookRecallLog({ store, now = Date.now }) {
     return { log: target ? await store.readJson(target.path) : null, availableTurns: [...new Set(records.filter(record => !chat.timeline?.branchId || record.branchId === chat.timeline.branchId).map(record => record.turn))],
       message: target ? '' : '这一轮没有保存详细召回日志；旧轮次不从当前世界书反推。' }
   }
-  async function requested(chat, options, requestId) {
+  async function requested(chat, options, requestId, coordinates) {
     const messages = options.messages || []
     const frame = [...messages].reverse().find(message => message.source?.form === 'foreground-frame')
-    const frameId = frame?.source?.trace?.frameId
+    // Native template projection can replace the input message's source. Use
+    // the explicitly recorded frame receipt, never guess from the latest turn.
+    const frameId = coordinates?.frameId || frame?.source?.trace?.frameId
     if (!frameId) return
     const saved = Object.values(chat.foregroundFrames || {}).find(value => value.frameId === frameId)
     const path = saved?.source?.worldBook?.recallLog
     if (!path || path !== base(chat.id) + segment(saved.operationId) + '.json') return
     const requestText = messages.flatMap(message => message.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n')
     await store.updateJson(path, log => log ? { ...log, status: 'requested', requestedAt: now(), requestIds: [...new Set([...(log.requestIds || []), requestId])],
-      outputs: log.outputs.map(output => ({ ...output, requestContainsText: output.location === 'foreground' ? requestText.includes(output.text) : null })) } : log)
+      outputs: log.outputs.map(output => ({ ...output, requestContainsText: Boolean(output.text) && requestText.includes(output.text) })) } : log)
   }
   return { record, read, requested }
 }

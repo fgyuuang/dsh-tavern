@@ -86,7 +86,7 @@ export function registerModelStreamHooks({
         requestRecord = await modelRequestLog.record({ chat, context: backgroundContext, coordinates, options })
         if (!backgroundContext && ['story', 'script'].includes(chat.mode)) {
           // Evidence only: scanning a multi-MB request must not delay the first token.
-          worldbookRecallLog.requested(chat, options, requestRecord.id)
+          worldbookRecallLog.requested(chat, options, requestRecord.id, coordinates.frame)
             .catch(error => console.warn('dsh-tavern: 世界书请求日志关联失败', String(error?.message || error)))
         }
       }

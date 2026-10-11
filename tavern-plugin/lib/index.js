@@ -206,6 +206,7 @@ import { createWorldbookRecallLog, compactRecallDiagnostics } from './domain/wor
 import { foregroundWorldbookReads } from './domain/worldbook-read-handoff.js'
 import { createWorldbookSearch, sharedWorldbookSearch } from './domain/worldbook-search.js'
 import { createForegroundWorldbook } from './domain/foreground-worldbook.js'
+import { readGameWorldbook } from './domain/game-worldbook-view.js'
 import { prepareTemplateWorldbook, mvuUpdateRulesFromWorldBook, prepareWorldBookRecall, projectWorldBookTemplates } from './domain/worldbook-recall.js'
 import {
   createBackgroundTaskCoordinator,
@@ -3704,7 +3705,9 @@ export async function apply(ctx) {
       case 'callOpeningRuntime': return await openingPreparation.callRuntime(args && args.id, args && args.method, args && args.args)
       case 'saveOpeningSelection': return openingPreparation.select(args && args.id, args && args.openingId)
       case 'initializeOpeningTemplate': try { return openingInitializationPayload(await openingPreparation.applyTemplateInitial(args.id, await requestPerformance.stage('templateInitialize', () => fullTemplateRuntime.forSession('opening:' + args.id).initializeVariables([]))), args.compact) } finally { fullTemplateRuntime.cancel('opening:' + args.id) }
-      case 'createOpeningPreparation': return await openingPreparation.create(args && args.path)
+      case 'createOpeningPreparation': return await openingPreparation.create(args && args.path, { userName: args?.userName })
+      case 'getOpeningWorldBook': return openingPreparation.worldbookView(args?.id)
+      case 'setOpeningWorldBookEntryEnabled': return openingPreparation.setWorldbookEntryEnabled(args?.id, args?.ref, args?.enabled, args?.revision)
       case 'getOpeningPreparation': return args?.touchOnly === true ? openingPreparation.retain(args.id) : openingPreparation.get(args && args.id)
       case 'retainOpeningPreparation': return openingPreparation.retain(args && args.id)
       case 'releaseOpeningPreparation': fullTemplateRuntime.cancel('opening:' + args.id); return openingPreparation.release(args && args.id)
@@ -4095,6 +4098,11 @@ export async function apply(ctx) {
         const chat = await chatForSession(args && args.sessionId)
         if (!chat) throw new Error('对话不存在')
         return await worldbookRecallLog.read(chat, args && args.turn)
+      }
+      case 'getGameWorldBook': {
+        const chat = await chatForSession(args?.sessionId)
+        if (!chat) throw new Error('对话不存在')
+        return await readGameWorldbook({ chat, card: await readChatCard(chat), worldBooks, updateStatus: cardUpdateStatus })
       }
       case 'getPlayChatDebugTarget': {
         const sourceChat = await chatForSession(args && args.sessionId)
@@ -4638,6 +4646,7 @@ export async function apply(ctx) {
       appendFrame: function (input) { return foregroundFrameSessionAdapter.append(input) },
       recordFrame: function (sessionId, frame, receipt) {
         requestCoordinates.set(sessionId, Object.assign({}, requestCoordinates.get(sessionId), {
+          framePending: true,
           frame: {
             frameId: frame.frameId,
             branchId: frame.branchId,
