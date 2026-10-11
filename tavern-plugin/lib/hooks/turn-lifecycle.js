@@ -4,7 +4,7 @@ import { prependSystemInstruction } from '../domain/system-append.js'
 import { sessionStablePrefixSections, withCurrentWorldbook } from '../domain/session-stable-prefix.js'
 import { synchronizeBodyEdits } from '../domain/body-editor.js'
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
-import { readDreamSikeDraft } from '../domain/dream-sike-draft.js'
+import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '../domain/dream-sike-draft.js'
 import { randomUUID } from 'node:crypto'
 
 export function registerTurnLifecycleHooks({
@@ -47,8 +47,14 @@ export function registerTurnLifecycleHooks({
     const chat = await chatForSession(sessionId)
     const dreamMode = chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')
     const draft = dreamMode ? readDreamSikeDraft(chat) : null
-    const ready = draft?.status === 'ready' && draft.turn === payload.turn && draft.sessionId === sessionId
+    let ready = draft?.status === 'ready' && draft.turn === payload.turn && draft.sessionId === sessionId
       && draft.branchId === chat.timeline?.branchId && draft.storyRevision === chat.timeline?.revision
+    if (ready) {
+      // A persisted ready flag may predate the current preparation or contract.
+      // Validate on a detached copy; the stopping hook does not confirm a draft.
+      try { readyDreamSikeDraft(structuredClone(chat), dreamSikeTurnIdentity(chat, sessionId, payload.turn), draft.version) }
+      catch { ready = false }
+    }
     if (dreamMode && (!ready || !assistant?.text)) {
       const step = Math.max(0, Number(payload.agent?.phase?.step) || 0)
       if (step < 12 && typeof payload.agent?.steer === 'function') {
@@ -56,7 +62,7 @@ export function registerTurnLifecycleHooks({
           id: randomUUID(), role: 'user',
           content: [{ type: 'text', text: ready
             ? '草稿已确认。请结束本回合，输出一句简短的完成提示；正式正文由酒馆从已确认草稿提交。'
-            : '本回合尚未确认正文草稿。请继续使用 sike_put_draft、sike_check_draft 和 sike_ready_draft；必要时用 sike_patch_draft 修订。不要直接结束。' }],
+            : '本回合尚未通过当前规则的正文确认。先用 sike_read_turn 核对状态；若写作准备缺失或过期，调用 sike_prepare_turn。已有草稿继续处理，不重复建立；没有草稿才 sike_put_draft。再 sike_check_draft、sike_ready_draft，必要时 sike_patch_draft。不要直接结束。' }],
           source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'dream-sike-continue' }
         })
         return

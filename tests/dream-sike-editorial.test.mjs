@@ -90,6 +90,7 @@ test('缺失维度、空泛结果、额外推理和过长依据均不能通过�
     value => { value.style.evidence = '符合要求' },
     value => { value.style.evidence = '字'.repeat(501) },
     value => { value.style.evidence = '<think>完整的内部思考在这里</think>' },
+    value => { value.style.evidence = '<redemption_chain>旧卡完整思考过程</redemption_chain>' },
     value => { value.privateReasoning = '不接受额外推理字段' },
     value => { value.style.chain = '不接受维度内额外字段' }
   ]) {
@@ -140,7 +141,7 @@ test('六维审阅全部 pass 也不能覆盖源预设的确定性格式缺陷',
 })
 
 test('源预设旧思考协议标签和代码块不能进入正文，HTML 与可见外壳可保留', () => {
-  for (const text of ['<thought_of_chain>内部推理</thought_of_chain>', '<thinking_step>内部推理</thinking_step>', '```thinking_step\n内部推理\n```', '```thought_of_chain\n内部推理\n```']) {
+  for (const text of ['<redemption_chain>内部推理</redemption_chain>', '```redemption_chain\n内部推理\n```', '<thought_of_chain>内部推理</thought_of_chain>', '<thinking_step>内部推理</thinking_step>', '```thinking_step\n内部推理\n```', '```thought_of_chain\n内部推理\n```']) {
     assert.ok(inspectDreamSikeDraft(text).some(item => item.code === 'private-protocol'))
   }
   assert.deepEqual(inspectDreamSikeDraft('<dream_plot><dream_body><div>正文</div></dream_body><dream_after_format></dream_after_format></dream_plot>'), [])

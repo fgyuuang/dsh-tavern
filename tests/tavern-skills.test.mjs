@@ -33,6 +33,13 @@ test('extraBuiltInDirectories indexes Dream Sike writing Skills and keeps ordina
   const cardSkill = await skills.read('ordinary')
   assert.equal(cardSkill.source, 'builtin')
   assert.deepEqual(cardSkill.agents, ['card'])
+  for (const name of ['tavern-card-opening', 'tavern-card-surface', 'tavern-card-state']) {
+    const scoped = await skills.read(name)
+    assert.equal(scoped.purpose, 'card')
+    assert.deepEqual(scoped.agents, ['card'], name + ' must not inherit its directory foreground role')
+  }
+  assert.deepEqual((await skills.read('dream-sike-planning')).agents, ['foreground'])
+  assert.deepEqual((await skills.read('dream-sike-card-play')).agents, ['foreground'])
 })
 
 test('写作与后台用途默认分配，旧 Skill 保留卡片用途，停用与重新分配可持久化', async t => {

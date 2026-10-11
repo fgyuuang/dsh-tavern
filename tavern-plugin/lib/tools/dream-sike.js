@@ -4,6 +4,7 @@ import {
   patchDreamSikeDraft, putDreamSikeDraft, readyDreamSikeDraft
 } from '../domain/dream-sike-draft.js'
 import { dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
+import { dreamSikePreparationView, needsDreamSikePreparation, prepareDreamSikeTurn, recordDreamSikeTurnRead } from '../domain/dream-sike-preparation.js'
 
 const output = {
   schema: {
@@ -39,6 +40,8 @@ function turnReport(chat, identity, draftOffset = 0) {
       sourceCharacters: contract.sourceCharacters, entriesCount: contract.entries.length,
       reviewAxes: contract.reviewAxes, instruction: contract.instruction } : null,
     editorialRequired: needsDreamSikeEditorialReview(chat),
+    preparationRequired: needsDreamSikePreparation(chat),
+    preparation: dreamSikePreparationView(chat, identity),
     draft: currentDraft ? {
       status: currentDraft.status, phase: currentDraft.phase, version: currentDraft.version,
       revisionCount: currentDraft.revisionCount, checks: currentDraft.checks,
@@ -47,7 +50,7 @@ function turnReport(chat, identity, draftOffset = 0) {
       nextOffset: draftEnd < currentDraft.text.length ? draftEnd : null
     } : null,
     next: needsDreamSikeEditorialReview(chat)
-      ? '按预设契约写作。检查草稿时提交六维 review，说明具体缺陷或可观察结果，不展开私有推理；发现 revise 后局部修订并重新审阅。需要资料时使用世界书搜索和历史召回。'
+      ? '按预设契约写作。preparationRequired 为 true 时先用 sike_prepare_turn 保存六项简短写作约束；资料截断或关键事实缺失时使用世界书搜索、变量读取和历史召回。检查草稿时提交六维 review，不展开私有推理；发现 revise 后局部修订并重新审阅。'
       : '需要更多细节时调用世界书搜索和历史召回工具；草稿提交前使用检查工具。'
   })
 }
@@ -86,8 +89,27 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     description: '读取当前回合的玩家行动、最近正文、场景和已保存草稿。长草稿按 nextOffset 继续读取；需要深入资料时再使用世界书和历史召回工具。',
     parameters: { draftOffset: { type: 'integer', description: '长草稿续读位置；首次读取省略或填 0' } }, output, isConcurrencySafe: () => false,
     async execute(args, exec) {
-      const { chat, identity } = await resolve(exec)
-      return { report: turnReport(chat, identity, args.draftOffset || 0), draft: dreamSikeDraftView(chat) }
+      let report
+      const resolved = await resolve(exec)
+      if (!needsDreamSikePreparation(resolved.chat)) {
+        return { report: turnReport(resolved.chat, resolved.identity, args.draftOffset || 0), draft: dreamSikeDraftView(resolved.chat) }
+      }
+      const draft = await write(exec, (chat, identity) => {
+        recordDreamSikeTurnRead(chat, identity)
+        report = turnReport(chat, identity, args.draftOffset || 0)
+      }, 'turn.read')
+      return { report, draft }
+    }
+  }))
+
+  tools.register(defineTool({
+    name: 'sike_prepare_turn',
+    description: '读取回合后保存简短写作准备：当前场景、人物约束、认知边界、已选文风、当前推进和玩家停止位置。启用原预设写前流程时必须在起草前调用。这是执行简报，不接收完整思考链，不触发消息或变量结算。',
+    parameters: { brief: { type: 'json', required: true, description: 'scene、characters、knowledge、style、progression、stopAt 六项各为 8–400 字符的事实或执行约束；不要写内部推理或候选链分析。' } },
+    output, isConcurrencySafe: () => false,
+    async execute(args, exec) {
+      const draft = await write(exec, (chat, identity) => prepareDreamSikeTurn(chat, identity, args.brief), 'turn.prepare')
+      return { report: '本回合写作准备已保存，已绑定当前分支与预设版本。可建立草稿；若更新了现有草稿的准备，请重新审稿。', draft }
     }
   }))
 

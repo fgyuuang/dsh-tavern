@@ -122,7 +122,7 @@ export function createTavernSkillModule(options = {}) {
         const configuration = await assignments()
         const assigned = Object.hasOwn(configuration, normalized) ? configuration[normalized] : undefined
         if (assigned === null) return null
-        const agents = assigned === undefined ? [purpose === 'writing' ? 'foreground' : purpose === 'background' ? 'background' : purpose === 'image' ? 'image' : root.role] : normalizeSkillAgents(assigned)
+        const agents = assigned === undefined ? [purpose === 'writing' ? 'foreground' : purpose === 'background' ? 'background' : purpose === 'image' ? 'image' : purpose === 'card' ? 'card' : root.role] : normalizeSkillAgents(assigned)
         return { name: normalized, source: source.kind, content, path: source.path, description: meta.description || '', purpose, agents, modelInvocable: meta['disable-model-invocation'] !== true, userInvocable: meta['user-invocable'] !== false }
       } catch (error) {
         if (!error || error.code !== 'ENOENT') throw error

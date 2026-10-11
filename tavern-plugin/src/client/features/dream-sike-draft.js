@@ -154,6 +154,23 @@
 								summary ? h("p", null, summary) : null);
 						})));
 				}
+				function renderWritingEvidence() {
+					const preparation = draft && draft.preparation;
+					const review = draft && draft.checks && draft.checks.editorial && draft.checks.editorial.review;
+					const labels = { scene: "当前场景", characters: "人物约束", knowledge: "认知边界", style: "本局写规", progression: "本轮推进", stopAt: "玩家停止位置", character: "角色行为", continuity: "剧情连续性", playerAgency: "玩家选择", format: "渲染格式" };
+					return h(React.Fragment, null,
+						preparation && preparation.brief ? h("details", { className: "dsh-sike-draft-section", "aria-label": "写作准备" },
+							h("summary", null, "写作准备 · 本回合"),
+							h("ul", { className: "dsh-sike-draft-list" }, ["scene", "characters", "knowledge", "style", "progression", "stopAt"].map(function (key) {
+								return h("li", { key: key }, h("b", null, labels[key] + "："), brief(preparation.brief[key], 400));
+							}))) : null,
+						review ? h("details", { className: "dsh-sike-draft-section", "aria-label": "六维审稿" },
+							h("summary", null, "六维审稿 · Agent 判断"),
+							h("ul", { className: "dsh-sike-draft-list" }, ["character", "knowledge", "style", "continuity", "playerAgency", "format"].map(function (key) {
+								const item = review[key];
+								return item ? h("li", { key: key }, h("b", null, labels[key] + "：" + (item.status === "pass" ? "通过" : "待修订") + " · "), brief(item.evidence, 500)) : null;
+							}))) : null);
+				}
 				return h("aside", { className: "dsh-tavern-status dsh-sike-draft", "aria-label": "正文工作窗" },
 					h("header", { className: "dsh-tavern-status-head dsh-sike-draft-head" },
 						h("div", null, h("div", { className: "dsh-tavern-status-title" }, "正文工作窗"), h("div", { className: "dsh-tavern-question-sub" }, "当前回合的草稿与 Agent 执行进度")),
@@ -168,6 +185,7 @@
 							renderExecutionTrace()) :
 						h(React.Fragment, null,
 							h("div", { className: "dsh-sike-draft-meta" }, h("span", null, "版本 " + (Math.max(0, Number(draft.version) || 0) || 1)), h("span", null, "已修订 " + revisions + " 次")),
+							renderWritingEvidence(),
 							draft.resumable ? h("button", { type: "button", className: "dsh-tavern-btn dsh-sike-draft-resume", disabled: resuming, onClick: resume }, resuming ? "正在继续…" : "继续处理本回合") : null,
 							draft.status === "committed" ? h("details", { className: "dsh-sike-draft-section dsh-sike-draft-completed" },
 								h("summary", null, "正文已提交 · 展开查看"),

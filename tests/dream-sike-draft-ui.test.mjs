@@ -77,3 +77,16 @@ test('Agent 工具调用与草稿处理记录分开显示，未知状态可安�
   assert.doesNotMatch(visibleText(details[0]), /0 ms/)
   assert.match(visibleText(details[1]), /草稿处理记录 · 1 步 草稿检查/)
 })
+
+test('工作窗展示简短写作准备和六维审稿，不注入 HTML 或原始工具载荷', () => {
+  const tree = renderDraftWindow({ status: 'committed', text: '最终正文', version: 1,
+    preparation: { brief: { scene: '<img onerror="alert(1)">当前场景', characters: '档案员保持职业边界', knowledge: '人物不知道信件内容', style: '克制口语与动作描写', progression: '递信后核对收件人', stopAt: '停在问题后留给玩家回应' } },
+    checks: { issues: [], editorial: { review: { knowledge: { status: 'pass', evidence: '没有把未拆信件的内容写成已知事实' } } } }
+  }, [])
+  const sections = allNodes(tree).filter(node => node.type === 'details')
+  assert.ok(sections.some(node => node.props['aria-label'] === '写作准备'))
+  assert.ok(sections.some(node => node.props['aria-label'] === '六维审稿'))
+  assert.match(visibleText(tree), /人物不知道信件内容/)
+  assert.match(visibleText(tree), /Agent 判断/)
+  assert.equal(allNodes(tree).some(node => node.type === 'img' || node.props.dangerouslySetInnerHTML), false)
+})

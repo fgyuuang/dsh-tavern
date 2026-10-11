@@ -1,4 +1,6 @@
 import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
+import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
+import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
 
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
@@ -115,6 +117,10 @@ export function carryDreamSikeDraftIntoTurn(chat, identity, now = Date.now()) {
     trace: (Array.isArray(draft.trace) ? draft.trace : []).concat({ phase: 'reading', action: '已从失败回合恢复草稿', at: now }).slice(-40),
     updatedAt: now
   }
+  if (draft.preparation) {
+    chat.dreamSikeDraft.preparation = { ...draft.preparation, ...identity }
+    chat.dreamSikePreparation = copy(chat.dreamSikeDraft.preparation)
+  }
   delete chat.dreamSikeResume
   return true
 }
@@ -133,6 +139,7 @@ export function dreamSikeDraftView(chat) {
       beforeVersion: change.beforeVersion, afterVersion: change.afterVersion, at: change.at
     })),
     checks: copy(draft.checks || null),
+    preparation: copy(draft.preparation || null),
     phase: str(draft.phase), trace: copy(draft.trace || []),
     updatedAt: draft.updatedAt
   }
@@ -223,6 +230,7 @@ export function dreamSikeExecutionTrace(session, draft) {
 
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
+  assertDreamSikePreparation(chat, identity)
   const previous = readDreamSikeDraft(chat)
   if (sameIdentity(previous, identity)) {
     if (previous.status === 'draft' && previous.version === 1 && previous.text === text) return previous
@@ -231,6 +239,11 @@ export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   const draft = {
     ...identity, version: 1, status: 'draft', phase: 'draft', text, revisionCount: 0,
     changes: [], checks: null, trace: [{ phase: 'draft', action: '草稿已建立', at: now }], updatedAt: now
+  }
+  const preparation = dreamSikePreparationView(chat, identity)
+  if (preparation?.preparedAt) {
+    draft.preparation = preparation
+    draft.trace.unshift({ phase: 'planning', action: '已核对回合材料并保存写作准备', at: preparation.preparedAt })
   }
   chat.dreamSikeDraft = draft
   return copy(draft)
@@ -291,7 +304,7 @@ function inspectEditorialReview(review) {
       || Object.keys(item).some(key => !['status', 'evidence'].includes(key))
       || evidence.length < 8 || evidence.length > 500
       || /^(?:(?:全部|均|都)?(?:检查|审阅)?(?:通过|正常|符合(?:要求|预设)?|没有问题|无问题|无需修改|pass|ok|no issues)[，。,.!！\s]*)+$/i.test(evidence)
-      || /<\/?(?:think|simple_thinking|dream_self_check|thought_of_chain|thinking_step)(?:\s[^>]*)?>|```(?:thought|analysis|reasoning|thought_of_chain|thinking_step)\b/i.test(evidence)) {
+      || hasPrivateWritingProtocol(evidence)) {
       issues.push(issue('editorial-invalid-' + axis, REVIEW_LABELS[axis] + '需要 pass 或 revise，并附 8–500 字符的具体正文依据；不要提供私有推理'))
       continue
     }
@@ -305,14 +318,13 @@ function inspectEditorialReview(review) {
 export function inspectDreamSikeDraft(text) {
   const issues = []
   if (typeof text !== 'string' || text.trim() === '') issues.push(issue('empty-body', '正文为空'))
-  if (/<\/?(?:think|simple_thinking|dream_self_check|thought_of_chain|thinking_step)(?:\s[^>]*)?>/i.test(text)) issues.push(issue('private-protocol', '正文含有内部思考或修订协议标签'))
+  if (hasPrivateWritingProtocol(text)) issues.push(issue('private-protocol', '正文含有内部思考或修订协议'))
   if (/<\/?UpdateVariable(?:\s[^>]*)?>/i.test(text)) issues.push(issue('state-protocol', '变量更新由提交后的后台 Agent 处理'))
   for (const tag of ['dream_body', 'dream_parallel_event']) {
     const opens = (text.match(new RegExp('<' + tag + '(?:\\s[^>]*)?>', 'gi')) || []).length
     const closes = (text.match(new RegExp('</' + tag + '\\s*>', 'gi')) || []).length
     if (opens !== closes) issues.push(issue('unbalanced-' + tag, tag + ' 标签未配对'))
   }
-  if (/```(?:thought|analysis|reasoning|thought_of_chain|thinking_step)\b/i.test(text)) issues.push(issue('private-protocol', '正文含有内部推理代码块'))
   return issues
 }
 
@@ -343,6 +355,7 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
 export function readyDreamSikeDraft(chat, identity, expectedVersion, now = Date.now()) {
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后确认')
+  assertDreamSikePreparation(chat, identity, draft)
   if (!draft.checks || draft.checks.version !== draft.version) throw new Error('请先检查当前版本草稿')
   if (needsDreamSikeEditorialReview(chat)) {
     const editorial = draft.checks.editorial

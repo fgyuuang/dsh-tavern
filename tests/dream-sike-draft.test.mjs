@@ -165,7 +165,7 @@ test('原生执行轨迹对已结束但缺结果的调用标记中断并限制�
   assert.ok(reads < 20)
 })
 
-test('原生 defineTool 注册五个草稿工具，读取、起草、检查、修订、确认只改草稿', async () => {
+test('原生 defineTool 注册六个回合工具，起草、检查、修订、确认只改草稿', async () => {
   const { chat } = fixture()
   const before = { messages: structuredClone(chat.messages), variables: structuredClone(chat.variables), timeline: structuredClone(chat.timeline) }
   let saved = structuredClone(chat)
@@ -185,7 +185,7 @@ test('原生 defineTool 注册五个草稿工具，读取、起草、检查、�
     activeTurnOf(exec) { return exec.agent.phase.turn },
     async publish(sessionId, view) { published.push({ sessionId, status: view.status, version: view.version }) }
   })
-  const names = ['sike_read_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft']
+  const names = ['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_check_draft', 'sike_ready_draft']
   assert.deepEqual([...registered.keys()], names)
   for (const name of names) {
     const tool = registered.get(name)

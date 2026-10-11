@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 2
+const VERSION = 3
 const str = value => typeof value === 'string' ? value : ''
 
 // These are source prompt identifiers, not keyword matches against user prose.
@@ -31,6 +31,7 @@ export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 本局选定的原酒馆预设仍定义人物分析、叙事者、文风、视角、输入转述、字数、场景栏、平行事件及卡片格式。逐项执行已启用规则；未启用条目不加载。Skills 提供方法，不覆盖本局选择。当前玩家明确的修改优先于默认写法。
 原预设的正文/XML/HTML要求约束 sike_put_draft 的完整可渲染文本，保留 dream_plot、dream_body、dream_after_format、dream_scene、dream_parallel_event 等已要求的外壳及卡片 HTML。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
+已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；再用 sike_prepare_turn 保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，之后才能建立草稿。候选事件链在内部评估，不提交推理过程。这个准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
 建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。发现具体缺陷须局部修订并重新审稿，无问题允许零补丁。不能用“标签没错”代替文风检查。
 简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写玩家已输入的动作与台词由本局转述规则决定；不得替玩家作未选择的重大决定。若选定平行事件，则允许读者看到场外事件，但场内人物不能因此自动知情。
 确认后仅提交草稿原文一次，不在聊天重写或缩短正文。压缩后本契约和已选规则仍会重新装配；长期事实按需从记忆及原历史恢复。`
