@@ -82,6 +82,40 @@ test('进度轨迹只保存简短摘要，可供正文工作窗读取', () => {
   assert.equal(view.text, '门开了。')
 })
 
+test('模块修改记录和旧回合草稿投影保持 lossless JSON，读取时不混入旧回合', async () => {
+  const { chat, identity } = fixture()
+  chat.dreamSikeDraft = {
+    ...identity, turn: 4, operationId: 'operation-old', version: 3, status: 'draft',
+    text: '上一回合草稿', revisionCount: 1, phase: 'revision', updatedAt: 10,
+    changes: [
+      { kind: 'module-parallel', summary: '独立平行事件已合入主线草稿', beforeVersion: 1, afterVersion: 2, at: 8 },
+      { find: '旧片段', replacement: '新片段', beforeVersion: 2, afterVersion: 3, at: 9 }
+    ], trace: []
+  }
+  const view = dreamSikeDraftView(chat)
+  assert.deepEqual(view.changes[0], {
+    kind: 'module-parallel', summary: '独立平行事件已合入主线草稿', beforeVersion: 1, afterVersion: 2, at: 8
+  })
+  assert.deepEqual(JSON.parse(JSON.stringify(view)), view)
+
+  const registered = new Map()
+  registerDreamSikeTools({
+    tools: { register(tool) { registered.set(tool.name, tool) } },
+    async chatForSession() { return structuredClone(chat) },
+    async updateChat() { throw new Error('本用例不应写入聊天') },
+    activeTurnOf(exec) { return exec.agent.phase.turn }
+  })
+  const result = await registered.get('sike_read_turn').execute({}, {
+    agent: { session: { id: identity.sessionId }, phase: { kind: 'running', turn: identity.turn } }
+  })
+  assert.equal(result.draft, null)
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), result)
+  assert.equal(JSON.parse(result.report).draft, null)
+  const briefSchema = registered.get('sike_prepare_turn').parameters.properties.brief
+  assert.equal(briefSchema.type, 'object')
+  assert.deepEqual(briefSchema.required, ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt'])
+})
+
 test('原生执行轨迹按当前回合配对工具结果，只暴露安全摘要和耗时', () => {
   const secret = 'private-payload-must-not-appear'
   const events = [

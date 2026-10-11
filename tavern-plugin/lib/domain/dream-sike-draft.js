@@ -12,6 +12,7 @@ const MAX_REPLACEMENT_CHARS = 8_000
 function str(value) { return typeof value === 'string' ? value : '' }
 function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {} }
 function copy(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)) }
+function definedProps(value) { return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) }
 
 function requireVersion(value) {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error('请提供当前草稿的正整数版本')
@@ -132,18 +133,20 @@ export function dreamSikeDraftView(chat) {
   const timeline = object(chat.timeline)
   const current = draft.branchId === str(timeline.branchId) && (draft.status === 'committed' || draft.storyRevision === Number(timeline.revision))
   return {
-    turn: draft.turn, operationId: draft.operationId, branchId: draft.branchId,
-    version: draft.version, status: current ? draft.status : 'stale',
-    text: draft.text, revisionCount: draft.revisionCount,
-    changes: (Array.isArray(draft.changes) ? draft.changes : []).map(change => ({
-      ...(change.kind ? { kind: change.kind, summary: change.summary } : {}),
+    ...definedProps({
+      turn: draft.turn, operationId: draft.operationId, branchId: draft.branchId,
+      version: draft.version, status: current ? str(draft.status) : 'stale',
+      text: draft.text, revisionCount: draft.revisionCount
+    }),
+    changes: (Array.isArray(draft.changes) ? draft.changes : []).map(change => definedProps({
+      kind: change.kind, summary: change.kind ? change.summary : undefined,
       find: change.find, replacement: change.replacement,
       beforeVersion: change.beforeVersion, afterVersion: change.afterVersion, at: change.at
     })),
     checks: copy(draft.checks || null),
     preparation: copy(draft.preparation || null),
     phase: str(draft.phase), trace: copy(draft.trace || []),
-    updatedAt: draft.updatedAt
+    ...definedProps({ updatedAt: draft.updatedAt })
   }
 }
 

@@ -19,6 +19,12 @@ function str(value) { return typeof value === 'string' ? value : '' }
 function clip(value, limit) { return str(value).slice(0, limit) }
 const DRAFT_READ_CHARS = 8000
 
+function currentDraftView(chat, identity) {
+  const draft = dreamSikeDraftView(chat)
+  return draft && draft.turn === identity.turn && draft.operationId === identity.operationId
+    && draft.branchId === identity.branchId && draft.status !== 'stale' ? draft : null
+}
+
 function turnReport(chat, identity, args = {}) {
   const draftOffset = args.draftOffset ?? 0
   const operation = chat.timeline.operations[identity.operationId]
@@ -135,7 +141,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       return current
     }, { source: 'dream-sike.' + source, touchUpdatedAt: false })
     if (!saved) throw new Error('草稿保存失败')
-    const draft = dreamSikeDraftView(saved)
+    const draft = currentDraftView(saved, identity)
     if (typeof publish === 'function') {
       try { await publish(saved.sessionId, draft) } catch { /* durable state remains readable */ }
     }
@@ -158,7 +164,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       let report
       const resolved = await resolve(exec)
       if (!needsDreamSikePreparation(resolved.chat)) {
-        return { report: JSON.stringify(turnReport(resolved.chat, resolved.identity, args)), draft: dreamSikeDraftView(resolved.chat) }
+        return { report: JSON.stringify(turnReport(resolved.chat, resolved.identity, args)), draft: currentDraftView(resolved.chat, resolved.identity) }
       }
       const draft = await write(exec, (chat, identity) => {
         const material = turnReport(chat, identity, args)
@@ -177,8 +183,23 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     name: 'sike_prepare_turn',
     description: '读取回合后保存简短写作准备：当前场景、人物约束、认知边界、已选文风、当前推进和玩家停止位置。仅 preparationRequired=true 的剧情回合必须起草前调用，聊天和总结模式免除。这是执行简报，不接收完整思考链，不触发消息或变量结算。',
     parameters: {
-      brief: { type: 'json', required: true, description: 'scene、characters、knowledge、style、progression、stopAt 六项各为 8–400 字符的事实或执行约束；不要写内部推理或候选链分析。' },
-      coverage: { type: 'json', description: '可选的读取依据索引：contractDigest、profileDigest、ruleIds、materialRefs。仅引用 sike_read_turn 实际提供的摘要与引用，不保存思考过程，也不代表程序已证明完整执行作者步骤。' }
+      brief: {
+        type: 'object', required: true, additionalProperties: false,
+        description: '必须恰好提供六项，每项 8–400 字符，写事实或执行约束，不写内部推理或候选链分析。',
+        properties: Object.fromEntries(['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt'].map(key => [key, {
+          type: 'string', required: true,
+          description: key + '：8–400 字符的简短事实或执行约束'
+        }]))
+      },
+      coverage: {
+        type: 'object', additionalProperties: false,
+        description: '可选读取依据。仅复制本回合 sike_read_turn 实际返回的摘要和引用；不写推理文本。省略比猜测摘要或引用更好。',
+        properties: {
+          contractDigest: { type: 'string' }, profileDigest: { type: 'string' },
+          ruleIds: { type: 'array', items: { type: 'string' } },
+          materialRefs: { type: 'array', items: { type: 'string' } }
+        }
+      }
     },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
