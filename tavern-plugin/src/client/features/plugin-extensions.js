@@ -8,6 +8,7 @@
 			const markers = [];
 			const messageActions = [];
 			const composerActions = [];
+			const workbenchPanels = [];
 			const listeners = new Set();
 			let version = 0;
 			function changed() { version += 1; Array.from(listeners).forEach(function (listener) { listener(); }); }
@@ -33,7 +34,7 @@
 			}
 			const service = {
 				ctx: undefined,
-				apiVersion: 1,
+				apiVersion: 2,
 				registerMediaRenderer(kind, render) {
 					if (typeof kind !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,63}$/.test(kind)) throw new TypeError("只能为插件自定义的 <插件名>/<类型> 注册显示方式");
 					if (typeof render !== "function") throw new TypeError("registerMediaRenderer 需要 render 函数");
@@ -57,7 +58,20 @@
 				registerComposerAction(input) {
 					const entry = Object.assign({ owner: ownerOf(this) }, action(input, "registerComposerAction"));
 					return owned(this, function () { return addTo(composerActions, entry); }, "tavernUi.registerComposerAction()");
-				}
+				},
+                registerWorkbenchPanel(input) {
+                    if (!input || typeof input.id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,63}$/.test(input.id)) throw new TypeError("工作台模块需要 <插件名>/<模块名> ID");
+                    if (typeof input.label !== "string" || !input.label.trim() || input.label.length > 80) throw new TypeError("工作台模块需要 1–80 字符的 label");
+                    if (typeof input.component !== "function") throw new TypeError("工作台模块需要 React component");
+                    if (input.when !== undefined && typeof input.when !== "function") throw new TypeError("工作台模块的 when 必须是函数");
+                    if (input.keepAlive !== undefined && typeof input.keepAlive !== "boolean") throw new TypeError("工作台模块的 keepAlive 必须是布尔值");
+                    const entry = { id: input.id, label: input.label.trim(), description: String(input.description || "").slice(0, 300),
+                        order: Number.isFinite(input.order) ? input.order : 100, component: input.component, when: input.when, keepAlive: input.keepAlive === true, owner: ownerOf(this) };
+                    return owned(this, function () {
+                        if (workbenchPanels.some(panel => panel.id === entry.id)) throw new Error("工作台模块 ID 已注册：" + entry.id);
+                        return addTo(workbenchPanels, entry);
+                    }, "tavernUi.registerWorkbenchPanel()");
+                }
 			};
 			Object.defineProperty(service, Symbol.for("cordis.tracker"), { value: { associate: "tavernUi", property: "ctx" } });
 			return {
@@ -67,7 +81,8 @@
 				mediaRenderer: function (kind) { return mediaRenderers.get(kind); },
 				markers: function () { return markers.slice(); },
 				messageActions: function () { return messageActions.slice(); },
-				composerActions: function () { return composerActions.slice(); }
+				composerActions: function () { return composerActions.slice(); },
+                workbenchPanels: function () { return workbenchPanels.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)); }
 			};
 		}
 		const tavernUiExtensions = createTavernUiExtensions();

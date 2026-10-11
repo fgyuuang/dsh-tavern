@@ -762,6 +762,7 @@ window.__ModuleLoader__.load({
 // @include features/turn-history.js
 
 // @include features/preset-settings.js
+// @include features/agent-workbench.js
 // @include features/play-controls.js
 
 // @include features/request-context.js
@@ -907,6 +908,7 @@ window.__ModuleLoader__.load({
 			}
 			registerTavernStartPage(ctx, slots);
 			playControlsFeature.register({ ctx: ctx, slots: slots });
+            agentWorkbenchFeature.register({ ctx: ctx, slots: slots });
 			assistantRendererFeature.register({ ctx: ctx, slots: slots });
 			ctx.effect(function () {
 				return slots.inject("conversation.input.right", function () { return slots.register({

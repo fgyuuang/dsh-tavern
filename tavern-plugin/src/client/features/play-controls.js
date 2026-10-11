@@ -852,7 +852,7 @@
                     data?.current?.id && !data.presets.some(p => p.path === data.current.id) ? h("option", { value: data.current.id }, data.current.name + "（源文件已移除）") : null,
                     (data?.presets || []).filter(p => p.valid && p.recognized).map(p => h("option", { key: p.path, value: p.path }, p.title)))),
                 h("p", { className: "dsh-tavern-settings-desc" }, dreamPreset ? "为独立 Agent 提供作者写作规则与兼容正则；功能选项在创作设置中配置。修改从下一回合生效。" : "本局引用的酒馆预设。切换从下一回合生效。")),
-                h(TavernPresetSettings, { key: props.sessionId + ":" + (data?.currentPlayPresetId || "tavern"), sessionId: props.sessionId, revision: (data?.current?.id || "") + ":" + (data?.currentPlayPresetId || "tavern") }),
+                props.includeAuthorSettings !== false ? h(TavernPresetSettings, { key: props.sessionId + ":" + (data?.currentPlayPresetId || "tavern"), sessionId: props.sessionId, revision: (data?.current?.id || "") + ":" + (data?.currentPlayPresetId || "tavern") }) : null,
                 error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
         }
 
@@ -1064,6 +1064,7 @@
                 h("div", { className: "dsh-sike-interaction-identity" },
                     h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
                     props.running ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { className: "dsh-sike-interaction-state", role: "status" }, idleLabel),
+                    h("button", { type: "button", className: "dsh-sike-workbench-entry", title: "打开创作、正文、记忆与本局工具", onClick: () => (props.openWorkbench || props.openAgentSettings)(props.sessionId) }, "工作台"),
                     h("button", { type: "button", className: "dsh-sike-mobile-tools-toggle", "aria-expanded": mobileToolsOpen, "aria-controls": toolsId, "aria-label": mobileToolsOpen ? "收起创作工具" : "展开创作工具", onClick: () => setMobileToolsOpen(value => !value) }, mobileToolsOpen ? "收起 ▴" : "工具 ▾")),
                 h("div", { id: toolsId, className: "dsh-sike-interaction-tools" },
                   h("div", { className: "dsh-sike-interaction-actions" },
@@ -1416,6 +1417,25 @@
 			const slots = input.slots;
 			const uiConversation = ctx.get("uiConversation") || ctx.get("conversation");
 			const executeSlash = createTavernFrameSlashExecutor(ctx);
+            ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
+                id: "tavern/author-settings", label: "创作设置", description: "角色、文风、叙事与写作规则", order: 10, keepAlive: true,
+                component: props => React.createElement(TavernPresetSettings, { key: props.gameId, sessionId: props.gameId })
+            }), "dsh-tavern: author settings workbench module");
+            ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
+                id: "tavern/state", label: "人物与状态", description: "人物卡、当前变量与卡片界面", order: 40,
+                component: props => React.createElement(TavernStatusTab, { sessions: ctx.sessions, uiConversation, sessionId: props.gameId,
+                    executeSlash, openStyleTab: (type, meta) => openTavernSidebarTab(ctx, { type, meta }, { sessionId: props.gameId }) })
+            }), "dsh-tavern: state workbench module");
+            ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
+                id: "tavern/runtime", label: "本局配置", description: "预设、玩家身份、模型与能力开关", order: 50, keepAlive: true,
+                component: props => React.createElement("div", { className: "dsh-workbench-runtime" },
+                    React.createElement(TavernLocalPlayerName, { sessionId: props.gameId }),
+                    React.createElement(TavernStatusBarSetting, { sessionId: props.gameId }),
+                    React.createElement(TavernConversationPreset, { sessionId: props.gameId, includeAuthorSettings: false }),
+                    React.createElement(UserPreferenceProfileTab, { scope: { sessionId: props.gameId }, conversationOnly: true }),
+                    React.createElement(TavernConversationBackgroundModel, { sessionId: props.gameId }),
+                    React.createElement(TavernConversationWritingSkills, { sessionId: props.gameId }))
+            }), "dsh-tavern: runtime workbench module");
             ctx.effect(() => slots.inject("conversation.session.header.utilities", () => slots.register(
                 { name: "conversation.session.header.utilities", id: "dsh-tavern-return-to-story", order: 75 },
                 props => React.createElement(TavernReturnToStory, { ...props, sessions: ctx.sessions })
@@ -1473,8 +1493,9 @@
 				{ name: "conversation.input.dock", id: "dsh-tavern-candidate-actions", order: -130, label: "候选项操作" },
 				function (props) { return React.createElement(CandidateDockActions, Object.assign({}, props, {
 					sessions: ctx.sessions,
-					openAgentSettings: sessionId => openTavernSidebarTab(ctx, { type: "dsh-tavern:dream-sike-settings" }, { sessionId }),
-					openDraft: sessionId => openTavernSidebarTab(ctx, { type: "dsh-tavern:dream-sike-draft" }, { sessionId }),
+                    openWorkbench: sessionId => agentWorkbenchFeature.open(ctx, sessionId),
+					openAgentSettings: sessionId => agentWorkbenchFeature.open(ctx, sessionId, "tavern/author-settings"),
+					openDraft: sessionId => agentWorkbenchFeature.open(ctx, sessionId, "tavern/draft"),
 					executeCompact: function (sessionId) { return ctx.remote.commands.execute(sessionId, "/compact", []); }
 				})); }
 			)), "dsh-tavern: candidate dock actions");

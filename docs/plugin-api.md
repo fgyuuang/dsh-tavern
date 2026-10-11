@@ -1,6 +1,6 @@
 # Tavern 插件接口
 
-接口版本：**1**
+接口版本：宿主 `tavern` **1**；浏览器 `tavernUi` **2**（兼容版本1的全部方法）。
 
 DSH Tavern 自己不做文生图、文生视频、配音，这些交给第三方 **DSH 插件**。Tavern 只提供一个窄接口：让插件知道「这一轮写完了、写了什么」，并把图片或别的内容「挂回这一轮」。
 
@@ -49,6 +49,32 @@ export function apply(ctx) {
 
 - **用 `ctx.tavern.方法名()` 的形式调用**，不要把方法单独取出来（`const { attach } = ctx.tavern` 会报错）。Tavern 靠调用方式认出是哪个插件，从而让各插件只能看到、修改自己的内容。
 - **注册类的方法（`onTurnSettled`、`promptSection`、`register…`）在插件卸载时自动撤销**，也会返回一个撤销函数，可以提前调用。
+
+## 浏览器工作台模块（版本2）
+
+梦境思客的 Agent 工作台复用 DSH 的侧栏和生命周期。已安装的浏览器插件可以通过 `ctx.tavernUi.registerWorkbenchPanel()` 增加模块，不必修改侧栏或输入框 DOM。
+
+```js
+export const inject = ['tavernUi']
+export function apply(ctx) {
+  if (ctx.tavernUi.apiVersion < 2) return
+  ctx.tavernUi.registerWorkbenchPanel({
+    id: 'my-notes/scene',
+    label: '场景笔记',
+    description: '查看本局的场景记录',
+    order: 60,
+    component: SceneNotes,
+    keepAlive: false,
+    when: ({ gameId }) => Boolean(gameId),
+  })
+}
+```
+
+`id` 必须为 `<插件名>/<模块名>`，已注册的 ID 不允许重复。`component` 是使用宿主 React 的组件；收到 `{ gameId, sessionId, visible, ctx, tabId }`，会话 ID 指向所属前台游戏。`when` 是可选同步显示条件，不能在其中写入游戏状态或发起任务。组件属于已安装、受信任插件代码；用户或模型文本不能作为组件执行。
+
+默认只挂载当前模块。`keepAlive: true` 会保留本次打开过的模块，例如尚未保存的输入；离开时收到 `visible: false`，插件必须停止轮询、观察器和临时活动，卸载时执行 React 清理。注册撤销后组件会卸载；一个模块的渲染错误被隔离，用户可以重试或切换其他模块。
+
+用户在“管理模块”中调整本局的显示，隐藏模块不会卸载插件、停用 Agent 工具或改变提示词。导航和显示偏好按本地游戏 ID 保存，不跨游戏应用，也不写入剧情或变量。
 
 ## 基本概念
 

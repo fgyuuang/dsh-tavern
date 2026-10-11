@@ -97,6 +97,9 @@
 			}
 			function register(input) {
 				const ctx = input.ctx, slots = input.slots;
+                ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({ id: 'tavern/memory', label: '分支记忆', description: '场景、人物与未完成线索文档', order: 30, keepAlive: true,
+                    component: props => React.createElement(GameMemoryTab, { sessionId: props.gameId, visible: props.visible })
+                }), 'dsh-tavern: memory workbench module');
 				ctx.effect(function () { return ctx.betterSidebar.registerTab({ id: 'dsh-tavern:game-memory', title: '本局记忆', order: 8, single: true, component: function (props) { return React.createElement(GameMemoryTab, { sessionId: props.scope.sessionId, visible: props.visible }); } }); }, 'dsh-tavern: game memory tab');
 				ctx.effect(function () { return slots.inject('conversation.session.header.utilities', function () { return slots.register({ name: 'conversation.session.header.utilities', id: 'dsh-tavern:game-memory', order: 86 }, function (props) { return React.createElement(GameMemoryAction, Object.assign({}, props, { ctx: ctx, sessions: ctx.sessions })); }); }); }, 'dsh-tavern: game memory action');
 			}

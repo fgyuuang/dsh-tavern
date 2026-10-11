@@ -48,15 +48,15 @@
 				const [error, setError] = React.useState("");
 				const [resuming, setResuming] = React.useState(false);
 				React.useEffect(function () {
-					if (!sessionId || !dreamMode) return;
+					if (!sessionId || !dreamMode || props.embedded) return;
 					if (props.visible) rememberDraftWindow(sessionId, true);
 					else {
 						const right = props.ctx.get("sidebarRight");
 						if (right && !right.isExpanded()) rememberDraftWindow(sessionId, false);
 					}
-				}, [sessionId, dreamMode, props.visible]);
+				}, [sessionId, dreamMode, props.visible, props.embedded]);
 				React.useEffect(function () {
-					if (!sessionId || !dreamMode) return;
+					if (!sessionId || !dreamMode || props.embedded) return;
 					mountedWindows.set(sessionId, (mountedWindows.get(sessionId) || 0) + 1);
 					return function () {
 						const remaining = (mountedWindows.get(sessionId) || 1) - 1;
@@ -66,7 +66,7 @@
 							if (!pageLeaving && !mountedWindows.has(sessionId) && props.ctx.sessions.list.getSnapshot().current === sessionId) rememberDraftWindow(sessionId, false);
 						}, 100);
 					};
-				}, [sessionId, dreamMode]);
+				}, [sessionId, dreamMode, props.embedded]);
 				React.useEffect(function () {
 					setDraft(null);
 					setExecutionTrace([]);
@@ -175,7 +175,7 @@
 					h("header", { className: "dsh-tavern-status-head dsh-sike-draft-head" },
 						h("div", null, h("div", { className: "dsh-tavern-status-title" }, "正文工作窗"), h("div", { className: "dsh-tavern-question-sub" }, "当前回合的草稿与 Agent 执行进度")),
 						h("span", { className: "dsh-sike-draft-phase", role: "status" }, draft ? draftPhaseLabel(draft) : executionTrace.length ? "处理中" : "尚未开始"),
-						h("button", { type: "button", className: "dsh-tavern-btn", onClick: closeWindow, "aria-label": "关闭正文工作窗" }, "关闭")),
+						!props.embedded ? h("button", { type: "button", className: "dsh-tavern-btn", onClick: closeWindow, "aria-label": "关闭正文工作窗" }, "关闭") : null),
 				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用梦境思客DSH。") :
 					h("div", { className: "dsh-sike-draft-body" },
 						error ? h("div", { className: "dsh-card-error", role: "alert" }, "读取工作窗失败：" + error) : null,
@@ -247,6 +247,9 @@
 			function register(input) {
 				const ctx = input.ctx;
 				const slots = input.slots;
+                ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({ id: "tavern/draft", label: "正文与过程", description: "当前草稿、检查结果与执行记录", order: 20,
+                    component: props => React.createElement(DreamSikeDraftTab, { sessionId: props.gameId, visible: props.visible, ctx, embedded: true })
+                }), "dsh-tavern: draft workbench module");
 			ctx.effect(function () {
 				pageLeaving = false;
 				function onPageHide() { pageLeaving = true; }
