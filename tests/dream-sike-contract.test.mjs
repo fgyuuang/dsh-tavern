@@ -234,3 +234,34 @@ test('material wrapper names stay resolvable after their tags are removed', () =
   assert.match(compiled.agentContract.instruction, /materialAreas/)
   assert.match(compiled.agentContract.instruction, /不因标签不存在而跳过/)
 })
+
+// The authored thinking chain is wrapped in a setvar; after macro resolution the entry itself is
+// consumed and the chain lives in sleep_var_thought_of_chain. It must reach the model through that
+// variable, with all four chapters and the narrator core intact.
+const CHAIN_ID = '0da6f4d7-961d-4966-a084-857a3dd876ad'
+const CHAIN_SOURCE = '{{setvar::sleep_var_thought_of_chain::\n【思维模式要求】\n<thought_of_chain>\n- 你需要严格遵循以下思考步骤进行思考：\n```thinking_step\n一、检设定：回顾`<dream_setting>`和`<dream_history>`，逐项提取历史记录。\n二、辨视角：列出所有参与角色，进行一次角色分析：{{getvar::sleep_var_char_analysis}}\n三、遵写规：检查`<writing_setting>`，列出其中所有要求。\n四、演叙事：根据`<叙事者分析核心>`，展开思考。该步骤必须一步一步进行分析，不可省略与偷懒。\n{{getvar::sleep_var_addition_thinking}}\n终、定乾坤：输出“前尘已定，梦境将演。”\n```\n</thought_of_chain>\n}}'
+
+test('authored thinking chain reaches the model through the macro variable it was stored in', () => {
+  const compiled = compileDreamSikeContract({ back: { entries: [entry(CHAIN_ID, '默认思维链', CHAIN_SOURCE)] } })
+  assert.equal(compiled.agentContract.entries[0].action, 'agent-planning')
+  // The chain is stored by a setvar: assert on the variable it is assigned to, not the entry text.
+  const local = resolveRuntimePresetMacros(compiled, { macroState: {}, lastUserMessage: '' }).macroState.local
+  const chain = local.sleep_var_thought_of_chain
+  assert.ok(chain.length > 200, '思维链变量应承载作者原文，实际 ' + chain.length)
+  for (const [name, re] of [['一、检设定', /一、检设定/], ['二、辨视角', /二、辨视角/], ['三、遵写规', /三、遵写规/],
+    ['四、演叙事', /四、演叙事/], ['三条事件链要求由变量注入时保留', /一步一步进行分析，不可省略与偷懒/]])
+    assert.match(chain, re, '思维链缺少：' + name)
+  // Private reasoning output formats are the only removed part.
+  assert.doesNotMatch(chain, /<think>|```thinking_step|<thought_of_chain>|吾有一梦|前尘已定/)
+})
+
+test('persona and thinking chain both survive a full phase compile into the request projection', () => {
+  const compiled = compileDreamSikeContract({
+    front: { entries: [entry(PERSONA_ID, '梦境思客', PERSONA)] },
+    back: { entries: [entry(CHAIN_ID, '默认思维链', CHAIN_SOURCE)] } })
+  assert.equal(compiled.agentContract.entries.length, 2)
+  // front carries the persona into the system prompt; back carries the per-step rules as user text.
+  assert.match(compiled.front.text, /<创作>[\s\S]*<反注入>/)
+  assert.equal(compiled.agentContract.outputMode, 'plot')
+  assert.ok(compiled.agentContract.sourceCharacters > PERSONA.length)
+})
