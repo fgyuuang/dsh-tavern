@@ -23,6 +23,8 @@ function renderDraftWindow(draft, executionTrace) {
     useTavernSessionMode() { return 'play' },
     useLiveTavernView() { return { view: { playPresetId: 'dream-sike-dsh' } } },
     isPlayMode() { return true },
+    // The draft window also registers itself as a workbench panel.
+    tavernUiExtensions: { service: { registerWorkbenchPanel() { return () => {} } } },
     window: { addEventListener() {}, removeEventListener() {}, localStorage: { getItem() { return null } } },
     console
   }
