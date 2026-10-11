@@ -1014,6 +1014,8 @@
 			React.useLayoutEffect(function () {
 				if (!open) { setPlacement(null); return; }
 				function place() {
+					// Agent tools use an inline menu on phones, inside their bounded scroll area.
+					if (root.current?.closest(".dsh-sike-interaction-dock") && window.matchMedia(TAVERN_MOBILE_QUERY).matches) { setPlacement(null); return; }
 					const rect = trigger.current && trigger.current.getBoundingClientRect();
 					if (!rect) return;
 					const width = document.documentElement.clientWidth || window.innerWidth;
@@ -1045,19 +1047,31 @@
 
         function DreamSikeInteractionDock(props) {
             const h = React.createElement;
+            const [mobileToolsOpen, setMobileToolsOpen] = React.useState(false);
+            const toolsId = React.useId();
+            React.useEffect(function () {
+                if (!mobileToolsOpen) return;
+                function onComposerFocus(event) {
+                    if (window.matchMedia(TAVERN_MOBILE_QUERY).matches && event.target?.matches("[data-composer-card] :is(textarea, [contenteditable='true'])")) setMobileToolsOpen(false);
+                }
+                document.addEventListener("focusin", onComposerFocus);
+                return function () { document.removeEventListener("focusin", onComposerFocus); };
+            }, [mobileToolsOpen]);
             const coordination = useTavernCoordination(props.sessionId, String(props.running));
             const activity = describeTavernActivity(coordination.view && coordination.view.activity);
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
-            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台" },
+            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen) },
                 h("div", { className: "dsh-sike-interaction-identity" },
                     h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
-                    props.running ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { className: "dsh-sike-interaction-state", role: "status" }, idleLabel)),
-                h("div", { className: "dsh-sike-interaction-actions" },
+                    props.running ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { className: "dsh-sike-interaction-state", role: "status" }, idleLabel),
+                    h("button", { type: "button", className: "dsh-sike-mobile-tools-toggle", "aria-expanded": mobileToolsOpen, "aria-controls": toolsId, "aria-label": mobileToolsOpen ? "收起创作工具" : "展开创作工具", onClick: () => setMobileToolsOpen(value => !value) }, mobileToolsOpen ? "收起 ▴" : "工具 ▾")),
+                h("div", { id: toolsId, className: "dsh-sike-interaction-tools" },
+                  h("div", { className: "dsh-sike-interaction-actions" },
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openAgentSettings(props.sessionId) }, "创作设置"),
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openDraft(props.sessionId) }, "正文工作窗"),
                     props.messageId ? h(CandidateAction, { ...props, agentDock: true }) : null,
                     h(TavernMoreActions, props)),
-                props.children);
+                  props.children));
         }
 
 		function CandidateDockActions(props) {

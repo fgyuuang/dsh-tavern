@@ -59,7 +59,7 @@ test('移动端真实输入器、插槽和菜单回归', { skip: !process.env.TA
     assert.equal(await page.locator('#duplicate-log').isVisible(), false)
     assert.equal(await page.locator('.dsh-tavern-header-settings').isVisible(), true)
     await page.getByRole('button', { name: '资源面板', exact: true }).click(); await settle()
-    for (const selector of ['[data-dockkit-add-tab]', '[data-dockkit-tab-close]', '[data-sidebar-right-toggle]', '[data-sidebar-right-mode]']) {
+    for (const selector of ['[data-dsh-pane] [class*=_tabBarPlus]', '[data-dsh-pane] [class*=_tabClose]', '[data-sidebar-right-toggle]', '[data-sidebar-right-mode]']) {
       const rect = await box(selector)
       assert.ok(rect.width >= 40 && rect.height >= 40 && rect.x >= 0 && rect.x + rect.width <= 320)
       assert.equal(await page.locator(selector).evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }), true)

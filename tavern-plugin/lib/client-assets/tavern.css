@@ -2796,3 +2796,39 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 .dsh-sike-optional-actions p { margin: 4px 0; opacity: .7; }
 .dsh-sike-settings-workspace > .dsh-agent-preset { margin: 8px; }
 @media (max-width: 480px) { .dsh-sike-interaction-dock { padding: 10px; } .dsh-sike-interaction-identity > div:first-child { flex-direction: column; gap: 2px; } }
+
+/* Mobile composer: tools occupy their own bounded row, never the send target. */
+.dsh-sike-mobile-tools-toggle { display: none; }
+.dsh-sike-interaction-tools { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+@media (max-width: 1023px) {
+  .dsh-sike-interaction-dock { margin: 0 8px 4px; padding: 2px 8px; gap: 0; border-radius: 10px; flex: none; box-sizing: border-box; }
+  .dsh-sike-interaction-identity { display: flex; flex-wrap: nowrap; gap: 8px; min-height: 44px; }
+  .dsh-sike-interaction-identity > div:first-child { flex: none; }
+  .dsh-sike-interaction-eyebrow { display: none; }
+  .dsh-sike-interaction-identity strong { font-size: 13px; white-space: nowrap; }
+  .dsh-sike-interaction-identity > :is(.dsh-sike-interaction-state, .dsh-sike-main-status) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+  .dsh-sike-mobile-tools-toggle { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 56px; min-height: 44px; border: 0; border-radius: 8px; padding: 6px; font: inherit; font-size: 13px; color: inherit; background: transparent; touch-action: manipulation; }
+  .dsh-sike-mobile-tools-toggle:focus-visible { outline: 2px solid var(--dsh-tavern-accent, #9180c2); outline-offset: -2px; }
+  .dsh-sike-interaction-dock[data-mobile-expanded="false"] > .dsh-sike-interaction-tools { display: none; }
+  .dsh-sike-interaction-dock[data-mobile-expanded="true"] > .dsh-sike-interaction-tools { display: flex; max-height: min(240px, calc(var(--dsh-vv-height, 100dvh) * .32)); overflow-y: auto; overscroll-behavior: contain; padding: 6px 0 8px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+  .dsh-sike-interaction-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 6px; }
+  .dsh-sike-interaction-actions > button, .dsh-sike-interaction-actions .dsh-tavern-choice-trigger,
+  .dsh-sike-interaction-actions .dsh-tavern-more-actions > button, .dsh-sike-optional-actions > summary,
+  .dsh-sike-interaction-extensions button { box-sizing: border-box; min-width: 0; min-height: 44px; width: 100%; font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
+  .dsh-sike-interaction-actions .dsh-tavern-more-actions { min-width: 0; }
+  .dsh-sike-optional-actions[open], .dsh-sike-interaction-actions .dsh-tavern-more-actions:has(> [role="menu"]:not([hidden])) { grid-column: 1 / -1; }
+  .dsh-sike-interaction-actions .dsh-tavern-more-menu { position: static; width: 100%; max-width: none; max-height: none; box-shadow: none; margin-top: 4px; }
+  .dsh-sike-optional-actions[open] > summary { width: 100%; }
+  .dsh-sike-interaction-extensions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dsh-sike-interaction-extensions > [role="status"] { grid-column: 1 / -1; }
+  html.dsh-tavern-short-viewport [data-composer-seat]:has([data-composer-card] :is(textarea, [contenteditable="true"]):focus) .dsh-sike-interaction-dock { display: none; }
+  /* Keep the reading drawer and its close button above the software keyboard. */
+  .dsh-agent-preset-drawer { top: calc(var(--dsh-vv-top, 0px) + 8px); bottom: auto; margin-top: 0; height: auto; max-height: calc(var(--dsh-vv-height, 100dvh) - 16px); box-sizing: border-box; }
+  .dsh-agent-preset-drawer-heading { position: sticky; top: -16px; z-index: 1; background: var(--dsw-alias-bg-base, #fff); padding-block: 8px; }
+  .dsh-sike-draft-head { flex-wrap: wrap; }
+  .dsh-sike-draft-head > div { flex: 1 1 160px; min-width: 0; }
+  .dsh-sike-draft-head > button { min-height: 44px; flex: none; }
+  body.dsh-tavern-shell-active [data-sidebar-right-panel] [data-dsh-pane] [class*="_tabBar"] { min-height: 44px; flex-shrink: 0; }
+  body.dsh-tavern-shell-active [data-sidebar-right-panel] [data-dsh-pane] [class*="_tabList"] { min-width: 0; overflow-x: auto; }
+  body.dsh-tavern-shell-active [data-sidebar-right-panel] [data-dsh-pane] :is([class*="_tabClose"], [class*="_tabBarPlus"]) { box-sizing: border-box; width: 44px; height: 44px; min-width: 44px; min-height: 44px; opacity: 1; flex-shrink: 0; }
+}

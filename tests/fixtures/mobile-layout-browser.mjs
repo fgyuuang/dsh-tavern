@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { browserReactScript } from './browser-react.mjs'
 
 const pluginRequire = createRequire(new URL('../../tavern-plugin/package.json', import.meta.url))
 const hostRequire = createRequire(pluginRequire.resolve('@deepseek-ai/dsh-tools'))
@@ -18,33 +18,13 @@ const mobileCss = (await Promise.all(['base', 'layout', 'compat', 'misc'].map(as
 const sidebar = await readFile(hostRequire.resolve('@deepseek-ai/dsh-client-ui-sidebar-right/client'), 'utf8')
 const sidebarCss = [...sidebar.matchAll(/const css(?:\$\d+)? = ("(?:[^"\\]|\\.)*");/g)].map(m => JSON.parse(m[1])).join('\n')
 const panelPrefix = sidebarCss.match(/\.([\w]+)_panel\{/)[1]
-const dockCss = (await readFile(new URL('./components/dockkit.module.css', pathToFileURL(hostRequire.resolve('@deepseek-ai/dsh-client-ui-dockkit'))), 'utf8'))
+// Current host delegates tab panes to dsh-better-sidebar; use its installed source CSS.
+const dockCss = (await readFile(pluginRequire.resolve('dsh-better-sidebar/src/client/sidebar.module.css'), 'utf8'))
   .replace(/\.([a-zA-Z_][\w-]*)/g, '.dock_$1')
 const css = await readFile(new URL('../../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8')
 const viewportCode = client.slice(client.indexOf('function composerOffsetPx('), client.indexOf('function nativeFullscreenElement('))
 const questionCode = client.slice(client.indexOf('function CandidateQuestion(props)'), client.indexOf('function CandidateGuidePanel(props)'))
-const uiRequire = createRequire(hostRequire.resolve('@deepseek-ai/dsh-client-ui-trajectory'))
-const reactDomFile = uiRequire.resolve('react-dom/client')
-const reactRequire = createRequire(reactDomFile)
-const reactFile = reactRequire.resolve('react')
-const modules = new Map()
-async function bundle(file) {
-  if (modules.has(file)) return
-  modules.set(file, '')
-  let source = await readFile(file, 'utf8')
-  const local = createRequire(file)
-  for (const match of source.matchAll(/require\(['"]([^'"]+)['"]\)/g)) {
-    const target = match[1] === 'react' ? reactFile : local.resolve(match[1])
-    await bundle(target)
-    source = source.replaceAll(match[0], `require(${JSON.stringify(target)})`)
-  }
-  modules.set(file, `function(module,exports,require){${source}\n}`)
-}
-await bundle(reactFile)
-await bundle(reactDomFile)
-const libraries = `const process={env:{NODE_ENV:'production'}},modules={${[...modules].map(([name, code]) => `${JSON.stringify(name)}:${code}`).join(',')}},cache={};
-function require(id){if(cache[id])return cache[id].exports;const m=cache[id]={exports:{}};modules[id](m,m.exports,require);return m.exports;}
-const React=require(${JSON.stringify(reactFile)}),ReactDOM=require(${JSON.stringify(reactDomFile)});`
+const libraries = await browserReactScript() + `const React=modules['react'],ReactDOM=modules['react-dom/client'];`
 const icon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'
 
 // 使用已安装宿主的真实样式与 DOM 合约；数据和会话仅在本页内存中，不调用线上模型。
@@ -56,7 +36,7 @@ export const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-
 <div id="frame" data-mobile-nav="frame" data-sidebar-collapsed><aside id="drawer"><div class="dsh-tavern-sidebar"><div class="dsh-tavern-side-head">DSH Tavern</div><button>人物卡</button></div></aside><main id="center" data-slot="conversation">
 <div class="${prefix}_root" data-phase="active"><div data-slot="conversation.session.header" style="display:contents"><header class="${prefix}_header"><div class="${prefix}_titleRow"><div class="${prefix}_titleCluster"><nav class="${prefix}_crumbs"><span class="${prefix}_crumbSeg"><button class="${prefix}_crumb ${prefix}_crumbCurrent" disabled>星海旅途 · 很长的会话名称也应该保留省略</button></span></nav><div class="${prefix}_headerActions"><button data-mobile-nav="toggle" aria-label="会话列表">${icon}</button><button class="dsh-tavern-btn dsh-tavern-play-fullscreen" aria-label="全屏">${icon}</button></div></div><div class="${prefix}_headerUtilities"><button class="dsh-tavern-btn dsh-tavern-header-settings" aria-label="本局设置">${icon}<span class="dsh-tavern-header-action-label">本局设置</span></button><div class="dsh-tavern-export-menu"><button class="dsh-tavern-export-action" aria-label="导出">${icon}<span class="dsh-tavern-header-action-label">导出</span></button></div></div><div class="${prefix}_headerCorner" data-conversation-header-corner><div data-slot="conversation.session.header.corner" style="display:contents"><button data-sidebar-right-expand aria-label="资源面板">${icon}</button></div></div></div><div class="${prefix}_tabs" role="tablist"><button class="${prefix}_tab ${prefix}_tabActive" role="tab">对话</button><button class="${prefix}_tab" role="tab">完整上下文</button></div></header></div>
 <div class="${prefix}_body"><div class="${prefix}_scrollBody" data-conversation-scroll><div data-slot="conversation.session"><div class="${prefix}_viewArea"><div id="history"><div class="dsh-tavern-user-row"><div class="dsh-tavern-user-stack"><div class="dsh-tavern-user-bubble">走向旧城区，寻找故事的下一条线索。</div></div></div><article class="dsh-tavern-assistant"><p>雨停了，街道映着远处的灯火。你在书店门口停下脚步。</p><p>柜台后的人抬起头，将一封信推到你面前。「有人让我把这个交给你。」</p></article></div></div></div><div class="${prefix}_composerSeat" data-composer-seat><div class="${prefix}_composerStack"><div id="candidate" style="display:contents"></div><div class="dsh-tavern-dock-actions"><button class="dsh-tavern-choice-trigger">生成候选项</button><button class="dsh-tavern-btn">更多操作</button></div><div id="input" data-composer-card><textarea aria-label="消息" placeholder="输入你的行动…"></textarea><footer><span>故事模式</span><button aria-label="发送">发送</button></footer></div></div></div></div></div></div></main><div></div><div data-shell-overlay></div></div>
-<aside class="${panelPrefix}_panel" data-sidebar-right-panel="fullscreen" style="width:100%"><div class="${panelPrefix}_panelBody"><section class="dock_pane" data-dockkit-pane="main"><div class="dock_tabStrip" data-dockkit-strip="main"><div class="dock_stripTabs" data-dockkit-strip-tabs="main"><div class="dock_tab dock_tabActive" data-dockkit-tab="settings" aria-selected="true"><span class="dock_tabTitle" data-dockkit-tab-title>本局设置</span><button class="dock_tabClose" data-dockkit-tab-close="settings" aria-label="关闭标签">×</button></div></div><button class="dock_addTab" data-dockkit-add-tab="main" aria-label="新建标签页">+</button><div class="dock_stripFill"></div><button class="${panelPrefix}_iconButton" data-sidebar-right-mode="push" aria-label="面板显示方式">${icon}</button><button class="${panelPrefix}_iconButton" data-sidebar-right-toggle aria-label="折叠资源面板">${icon}</button></div><div id="content"></div></section></div></aside>
+<aside class="${panelPrefix}_panel" data-sidebar-right-panel="fullscreen" style="width:100%"><div class="${panelPrefix}_panelBody"><section class="dock_pane" data-dsh-pane="main"><div class="dock_tabBar"><div class="dock_tabList"><div class="dock_tab dock_tabActive"><span class="dock_tabTitle">本局设置</span><button class="dock_tabClose" aria-label="关闭标签">×</button></div><button class="dock_tabBarPlus" aria-label="新建标签页">+</button></div><button class="${panelPrefix}_iconButton" data-sidebar-right-mode="push" aria-label="面板显示方式">${icon}</button><button class="${panelPrefix}_iconButton" data-sidebar-right-toggle aria-label="折叠资源面板">${icon}</button></div><div id="content" class="dock_paneContent"></div></section></div></aside>
 </body></html>`
 
 export async function install(page) {
