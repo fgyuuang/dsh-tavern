@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { resolve, dirname, relative } from 'node:path'
+import { resolve, dirname, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { auditUpstream } from './audit.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
@@ -14,6 +14,10 @@ export async function buildTemplatePlugin({ dependencyRoot, outputPath }) {
   const webpack = require('webpack')
   const MonacoPlugin = require('monaco-editor-webpack-plugin')
   const root = resolve(here, '../upstream')
+  const withinUpstream = target => {
+    const rel = relative(root, target)
+    return !isAbsolute(rel) && rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\')
+  }
   const config = {
     mode: 'production', target: 'web', context: root, entry: resolve(here, 'entry.js'),
     output: { path: resolve(outputPath), filename: 'index.js', chunkFilename: '[name].[contenthash].js', library: { type: 'module' }, publicPath: 'auto', clean: true },
@@ -26,9 +30,9 @@ export async function buildTemplatePlugin({ dependencyRoot, outputPath }) {
     ] },
     plugins: [
       new webpack.NormalModuleReplacementPlugin(/^\.\.\//, resource => {
-        if (!resource.context.startsWith(root)) return
+        if (!withinUpstream(resource.context)) return
         const target = resolve(resource.context, resource.request)
-        if (relative(root, target).startsWith('../')) resource.request = resolve(here, 'host.js')
+        if (!withinUpstream(target)) resource.request = resolve(here, 'host.js')
       }),
       new MonacoPlugin({ monacoEditorPath: resolve(dependencyRoot, 'node_modules/monaco-editor'), languages: ['javascript'], customLanguages: [], filename: '[name].worker.js' })
     ],

@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createTavernScriptHostAdapter } from '../tavern-plugin/lib/domain/tavern-script-host-adapter.js'
 
 import { applyMvuSettlementEffect } from '../tavern-plugin/lib/domain/mvu-settlement-effect.js'
+import { templateStateFields } from '../tavern-plugin/lib/domain/template-window-reader.js'
 
 function chat() {
   return {
@@ -284,4 +285,23 @@ test('template initialization opts into a bounded projection without reading com
  assert.equal(projected.state.stateRevision,8)
  await adapter.readFullPromptTemplateState('session-1')
  assert.equal(full,1,'default API retains its complete-state contract')
+})
+
+test('模板完整和增量环境均保留本局预设正则，按全局、预设、卡片顺序提供', async () => {
+  const rules = ['global', 'preset', 'card'].map(id => ({ id, placement: [2], markdownOnly: true, findRegex: '/x/g', replaceString: id }))
+  const source = { ...chat(), _storageRevision: 8, runtimePresetSnapshot: { regexScripts: [rules[1]], text: '不应整份读取的原预设' } }
+  const { adapter } = harness(source, {
+    readCardExtensions: async () => ({ regexScripts: [rules[0], rules[2]], globalRegexScripts: [rules[0]] }),
+    worldBooks: { templateSnapshot: async () => ({ worldName: 'book', worldbooks: { book: { entries: {} } } }) },
+    resolveChatMetadataSlice: async () => ({ chat: { ...source }, denseMessages: true }),
+    fullExtensionSettings: { read: async () => ({ regex: [rules[0]] }) }
+  })
+  const first = await adapter.readFullPromptTemplateState('session-1')
+  assert.deepEqual(first.environment.dsh.regexScripts.map(rule => rule.id), ['global', 'preset', 'card'])
+  assert.equal(first.environment.dsh.regexScriptsComplete, true)
+  source.runtimePresetSnapshot.regexScripts = [{ ...rules[1], id: 'new-preset' }]
+  const delta = await adapter.readFullPromptTemplateState('session-1', first.cursor)
+  assert.deepEqual(delta.delta.environment.set.dsh.regexScripts.map(rule => rule.id), ['global', 'new-preset', 'card'])
+  assert.ok(templateStateFields.includes('runtimePresetSnapshot.regexScripts'))
+  assert.ok(!templateStateFields.includes('runtimePresetSnapshot'))
 })

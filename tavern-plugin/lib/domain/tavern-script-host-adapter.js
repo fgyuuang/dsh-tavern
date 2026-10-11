@@ -1,4 +1,5 @@
 import { templateStateFields } from './template-window-reader.js'
+import { composeTavernRegexScripts } from './card-extension-reading.js'
 import { createScopedMessages } from './scoped-messages.js'
 import { createMvuWorkingCopy, projectMvuReceipt } from './mvu-working-copy.js'
 import { randomUUID } from 'node:crypto'
@@ -550,6 +551,11 @@ export function createTavernScriptHostAdapter(options = {}) {
     const extensionSettings = options.fullExtensionSettings ? await options.fullExtensionSettings.read() : {}
     extensionSettings.variables = { ...extensionSettings.variables, global: options.globalVariables ? await options.globalVariables.read() : {} }
     if (!Array.isArray(extensionSettings.regex)) extensionSettings.regex = []
+    const extensions = options.readCardExtensions ? await options.readCardExtensions(chat.cardPath, chat) : {
+      globalRegexScripts: extensionSettings.regex,
+      regexScripts: extensionSettings.regex.concat(card.extensions?.regex_scripts || [])
+    }
+    const regexScripts = composeTavernRegexScripts(extensions, chat.runtimePresetSnapshot?.regexScripts)
     const characters = templateCharacters(JSON.stringify([chat.cardPath, worldName]), card, source => {
       return [{ ...source, data: { ...source, extensions: { ...source.extensions, ...(worldName ? { world: worldName } : {}) } } }]
     })
@@ -560,7 +566,7 @@ export function createTavernScriptHostAdapter(options = {}) {
         this_chid: '0', extension_settings: extensionSettings,
         world_names: worldName ? [worldName] : [], selected_world_info: [],
         worldbooks,
-        dsh: { settling: settlementTransactions.has(str(sessionId)) || ['pending', 'running'].includes(chat.settleStatus), cardPath: chat.cardPath, model: options.modelFor ? await options.modelFor(chat) : chat.model?.model || chat.model || '', regexScripts: card.extensions?.regex_scripts || [] } }
+        dsh: { settling: settlementTransactions.has(str(sessionId)) || ['pending', 'running'].includes(chat.settleStatus), cardPath: chat.cardPath, model: options.modelFor ? await options.modelFor(chat) : chat.model?.model || chat.model || '', regexScripts, regexScriptsComplete: true } }
     }
     if (window) return {...snapshot,historyWindow:window.historyWindow}
     if (changed) {

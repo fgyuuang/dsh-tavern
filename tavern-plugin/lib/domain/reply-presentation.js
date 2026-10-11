@@ -184,7 +184,12 @@ export function createReplyHistoryProjector({ maxCacheBytes = 16 * 1024 * 1024, 
         latestSourceBacked = hasSource
         continue
       }
-      const projected = ordinaryDisplay
+      // Old ordinary template snapshots omitted preset formatting. Rebuild only
+      // pure display when an active preset renderer matches the full source;
+      // evaluated EJS snapshots above remain frozen and are never replayed.
+      const presetFormatting = ordinaryDisplay && applyTavernRegexText(projectionText,
+        options.presetRegexScripts || [], targetOptions(options, true)).applied.length > 0
+      const projected = ordinaryDisplay && !presetFormatting
         ? projectCached(sourceText, templateDisplay.formattingText, { ...options, regexScripts: [] }, signatureOf({ ...options, regexScripts: [] }))
         : projectCached(sourceText, projectionText, options, signature)
       const sessionText = str(message.text)

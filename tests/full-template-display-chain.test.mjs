@@ -59,3 +59,31 @@ test('实际 MVU 配方在恢复与修改模板后仍只保留一个状态面板
  assert.doesNotMatch(JSON.stringify(b.projections), /Mvu.getMvuData|mvu-status|新版模板|<script|<style/)
  assert.deepEqual(restored.first.chat[0].template_display,initial.first.chat[0].template_display)
 })
+
+test('完整正则环境只运行一次全局规则，调查与选项在结算、刷新和恢复后保持显示', async () => {
+ const source='正文\n<dream_big_discuss>公开的剧情理解</dream_big_discuss>\n<dream_option>开门|等候|问路</dream_option>\n<card-status/>'
+ const rule=(id,findRegex,replaceString,targets={markdownOnly:true})=>({id,scriptName:id,findRegex,replaceString,placement:[2],disabled:false,...targets})
+ const global=rule('global','/公开/g','公开公开')
+ const presetRegexScripts=[
+  rule('hide','/<(dream_big_discuss|dream_option)>[\\s\\S]*?<\\/\\1>/g','',{promptOnly:true}),
+  rule('discuss','/<dream_big_discuss>([\\s\\S]*?)<\\/dream_big_discuss>/g','<section class="discussion">$1</section>'),
+  rule('option','/<dream_option>([\\s\\S]*?)<\\/dream_option>/g','<section class="options">$1</section>')
+ ]
+ const regexScripts=[global,...presetRegexScripts,rule('card','/<card-status\\/>/g','<aside class="card-state">状态</aside>')]
+ const context={settings,charName:'预设显示',regexScripts,globalRegexScripts:[global],regexScriptsComplete:true}
+ const initial=await runtime.lifecycle({...context,transcript:[{role:'assistant',content:source,variables:[{hp:10}]}]})
+ const captured=initial.first.chat[0].template_display
+ assert.match(captured.formattingText,/class="discussion"/)
+ assert.match(captured.formattingText,/class="options"/)
+ assert.match(captured.formattingText,/公开公开的/)
+ assert.doesNotMatch(captured.formattingText,/公开公开公开/)
+ const refreshed=await runtime.lifecycle({...context,transcript:initial.first.chat.map(m=>({...m,content:m.mes,variables:[{hp:8}]}))})
+ const recovered=await runtime.lifecycle({...context,transcript:transcript(refreshed.first)})
+ for(const state of [initial.first,initial.second,refreshed.first,recovered.first]) {
+  assert.deepEqual(state.chat[0].template_display,captured)
+  const row=state.chat[0]
+  const view=projectReplyHistory([{role:'assistant',turn:2,text:source,sourceText:source,projectionText:source,tavernPluginData:row}],{regexScripts,presetRegexScripts})
+  assert.match(view.projections[0].text,/class="discussion"/)
+  assert.match(view.projections[0].text,/class="options"/)
+ }
+})

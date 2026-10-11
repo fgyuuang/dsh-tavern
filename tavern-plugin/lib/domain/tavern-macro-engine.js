@@ -1,5 +1,4 @@
 import { MacroEngine } from '../vendor/sillytavern-macros/MacroEngine.js'
-import { randomUUID } from 'node:crypto'
 import { MacroRegistry, MacroCategory } from '../vendor/sillytavern-macros/MacroRegistry.js'
 import { MacroParser } from '../vendor/sillytavern-macros/MacroParser.js'
 import { MacroCstWalker } from '../vendor/sillytavern-macros/MacroCstWalker.js'
@@ -158,7 +157,7 @@ function normalizeLegacyVariableExpressions(text) {
 export function renderTavernMacros(text, context = {}) {
   registerMacros()
   // Player text is a literal payload. Keep it outside every recursive macro pass.
-  const playerToken = typeof context.lastUserMessage === 'string' ? '\uE000DSH_PLAYER_' + randomUUID() + '\uE001' : null
+  const playerToken = typeof context.lastUserMessage === 'string' ? '\uE000DSH_PLAYER_' + globalThis.crypto.randomUUID() + '\uE001' : null
   const restorePlayer = value => playerToken && typeof value === 'string' ? value.replaceAll(playerToken, context.lastUserMessage) : value
   const local = variableStore(context.localVariables)
   const global = variableStore(context.globalVariables)
