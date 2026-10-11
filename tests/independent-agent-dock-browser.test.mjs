@@ -14,7 +14,7 @@ test('independent Agent dock preserves original candidates and opens writing too
   const candidate = source.slice(source.indexOf('function CandidateAction('), source.indexOf('function TavernRollbackAction('))
   const more = source.slice(source.indexOf('function TavernMoreActions('), source.indexOf('function DreamSikeInteractionDock('))
   const dock = source.slice(source.indexOf('function DreamSikeInteractionDock('), source.indexOf('function observeTurnErrorProjection('))
-  await page.setContent('<div id="root"></div><div data-composer-card><textarea aria-label="玩家行动"></textarea><button type="button">发送</button></div>')
+  await page.setContent('<div data-composer-seat style="width:min(1100px,100%);margin:auto"><div id="root"></div><div data-composer-card style="width:min(760px,100%);margin:auto"><textarea aria-label="玩家行动"></textarea><button type="button">发送</button></div></div>')
   await page.addStyleTag({ content: await readFile(new URL('../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8') })
   await page.addScriptTag({ content: await browserReactScript() + `
     const React=modules.react, h=React.createElement, TAVERN_MOBILE_QUERY='(max-width: 1023px)';
@@ -91,6 +91,8 @@ test('independent Agent dock preserves original candidates and opens writing too
   // Disclosure is mobile only: a collapsed mobile state must not hide desktop tools.
   await page.getByRole('button', { name: '收起创作工具' }).click()
   await page.setViewportSize({ width: 1280, height: 900 })
+  const widths = await page.evaluate(() => ({ dock: document.querySelector('.dsh-sike-interaction-dock').getBoundingClientRect().width, composer: document.querySelector('[data-composer-card]').getBoundingClientRect().width }))
+  assert.ok(Math.abs(widths.dock - widths.composer) < 1, JSON.stringify(widths))
   assert.equal(await page.getByRole('button', { name: '创作设置' }).isVisible(), true)
   assert.equal(await page.getByRole('button', { name: '展开创作工具' }).isVisible(), false)
   await page.evaluate(() => { window.running=true; window.render() })

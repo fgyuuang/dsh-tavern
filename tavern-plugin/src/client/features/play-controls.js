@@ -1048,7 +1048,21 @@
         function DreamSikeInteractionDock(props) {
             const h = React.createElement;
             const [mobileToolsOpen, setMobileToolsOpen] = React.useState(false);
+            const [composerWidth, setComposerWidth] = React.useState(0);
             const toolsId = React.useId();
+            React.useEffect(function () {
+                const card = document.querySelector("[data-composer-card]");
+                if (!card) { setComposerWidth(0); return; }
+                function measure() {
+                    const width = card.getBoundingClientRect().width;
+                    setComposerWidth(current => Math.abs(current - width) < 1 ? current : width);
+                }
+                measure();
+                const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+                observer?.observe(card);
+                window.addEventListener("resize", measure);
+                return function () { observer?.disconnect(); window.removeEventListener("resize", measure); };
+            }, []);
             React.useEffect(function () {
                 if (!mobileToolsOpen) return;
                 function onComposerFocus(event) {
@@ -1060,7 +1074,8 @@
             const coordination = useTavernCoordination(props.sessionId, String(props.running));
             const activity = describeTavernActivity(coordination.view && coordination.view.activity);
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
-            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen) },
+            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
+                style: composerWidth > 0 ? { maxWidth: composerWidth + "px", marginInline: "auto", boxSizing: "border-box" } : undefined },
                 h("div", { className: "dsh-sike-interaction-identity" },
                     h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
                     props.running ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { className: "dsh-sike-interaction-state", role: "status" }, idleLabel),
