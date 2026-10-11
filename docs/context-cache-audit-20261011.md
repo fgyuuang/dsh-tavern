@@ -103,3 +103,5 @@ DSH 的标准化 `TokenUsage` 使用互斥计数：
 - 工作台“上下文缓存”模块展示样本覆盖、整体输入、原始计数、任务与模型分组，提供手动刷新和显式前缀检查；隐藏后不轮询，切换游戏忽略过期响应。旧回合未报告 usage 时显示未知。
 
 专项运行 `tests/context-cache-usage.test.mjs`、`tests/model-request-log.test.mjs` 和 `tests/context-cache-browser.test.mjs`：14 项通过（含 3 个真实浏览器组件用例及 320px 宽度检查）。未调用模型，未部署，新增计量尚无更新后真实回合数据。撤回该计量改动只恢复代码；原生故事数据和既有记录保持可读。
+
+后续已随模块与上下文更新部署至运行提交 `b913a56c`，194 项综合专项检查通过。工作台入口为“上下文缓存”；本文历史样本来自旧原生 Session usage，旧插件结果日志缺失的 usage 不补造，新面板从更新后请求持续采集。部署与回滚见 [模块及上下文说明](dream-sike-modules-and-context.md)。
