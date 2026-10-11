@@ -34,7 +34,7 @@ test('预设设置真实 React 界面保存下一回合配置、失败保留编�
       React.createElement(TavernPresetSettings,{sessionId:'foreground'}),
       React.createElement(TavernReturnToStory,{sessionId:'background',sessions:{subagentAddress:()=>({parentSessionId:'foreground'}),open(id){window.opened=id}}})))
   ` })
-  await page.getByText('剧情理解与角色（0/1）', { exact: true }).click()
+  await page.getByText('原文规则（2/3）', { exact: true }).click()
   assert.equal(await page.getByLabel('开局指令', { exact: true }).inputValue(), '卡片填入的开局')
   await page.getByLabel('开局指令', { exact: true }).fill('核对后修改的开局指令')
   assert.equal(await page.getByLabel('开局指令', { exact: true }).inputValue(), '核对后修改的开局指令')

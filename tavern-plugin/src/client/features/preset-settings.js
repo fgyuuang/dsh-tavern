@@ -8,7 +8,7 @@ function TavernPresetSettings(props) {
     const [sourceDrawer, setSourceDrawer] = React.useState(null);
     const drawerElement = React.useRef(null), drawerTrigger = React.useRef(null);
     const context = React.useRef({ sessionId: props.sessionId, revision: props.revision, generation: 0 });
-    const saving = React.useRef(false);
+    const saving = React.useRef(false), previousVisible = React.useRef(props.visible);
     const reads = React.useRef(0), editState = React.useRef(false);
     const [reload, setReload] = React.useState(0), [externalChange, setExternalChange] = React.useState(false);
     editState.current = Object.keys(drafts).length > 0 || Object.keys(variableDrafts).length > 0;
@@ -39,9 +39,12 @@ function TavernPresetSettings(props) {
                 setSettings(result.settings); setExternalChange(false); setSourceDrawer(null);
             } catch (failure) { if (active && request === reads.current) setError(String(failure.message || failure)); }
         }
+        const reopened = props.visible === true && previousVisible.current === false;
+        previousVisible.current = props.visible;
+        if (reopened && !editState.current) refresh({ detail: { source: "preset-settings" } });
         window.addEventListener("dsh-tavern-data-changed", refresh);
         return () => { active = false; window.removeEventListener("dsh-tavern-data-changed", refresh); };
-    }, [props.sessionId, props.revision]);
+    }, [props.sessionId, props.revision, props.visible]);
     React.useEffect(function () {
         if (!sourceDrawer) return;
         if (drawerElement.current && !drawerElement.current.open) drawerElement.current.showModal();
@@ -87,11 +90,23 @@ function TavernPresetSettings(props) {
         }
         return submit(changes);
     }
-    function group(entry) {
-        if (/角色|信息差|剧情|思维|分析|思考|叙事者/.test(entry.name)) return "剧情理解与角色";
-        if (/文风|视角|字数|长篇|转述|禁词|叙事|写作/.test(entry.name)) return "文风与叙事";
-        if (/格式|场景|平行|修复|修正|输出/.test(entry.name)) return "格式与修订";
-        return "其他写作规则";
+    function ruleGroups() {
+        const workflow = settings.agentPreset?.stages || [];
+        const membership = new Map();
+        for (const stage of workflow) {
+            for (const ref of stage.optionIds || []) {
+                const group = settings.sourceSettings?.groups?.find(item => item.id === ref.groupId);
+                const option = group?.options?.find(item => item.id === ref.optionId);
+                for (const prompt of option?.prompts || []) membership.set(prompt.key, stage.id);
+            }
+            for (const rule of stage.authorRuleIds || []) membership.set(rule.key, stage.id);
+        }
+        // Hide only empty decorative headings; never hide an authored instruction.
+        const entries = settings.entries.filter(item => !(/^[^=]*={3,}.*={3,}\s*$/.test(item.name) && !String(item.content || "").trim()));
+        return [...workflow.map(stage => ({ id: stage.id, label: stage.label,
+            items: entries.filter(item => membership.get(item.key) === stage.id) })),
+            { id: "unmapped", label: workflow.length ? "未归类原文规则" : "原文规则",
+                items: entries.filter(item => !membership.has(item.key)) }].filter(group => group.items.length);
     }
     function row(kind, item) {
         const value = drafts[kind + ":" + item.key] || item;
@@ -155,18 +170,12 @@ function TavernPresetSettings(props) {
     }
     function stages() {
         const groups = settings.sourceSettings.groups || [];
-        const defaults = [
-            { id: "role-scene", label: "角色与场景", groupIds: ["角色设定", "人称设定"] },
-            { id: "narration", label: "叙事与文风", groupIds: ["文风设置", "次要文风", "叙事者", "字数要求"] },
-            { id: "planning", label: "思考与检索", groupIds: ["思考强度", "角色分析"] },
-            { id: "output", label: "输出与共创", groupIds: ["抢话设定", "输出模式"] },
-            { id: "review-state", label: "审稿与状态", groupIds: ["MVU适配", "其他选开设置"] },
-            { id: "model", label: "模型与兼容", groupIds: ["模型适配"] }
-        ];
         const provided = settings.agentPreset?.stages;
+        // Older servers still expose every source option, without inventing Agent stages.
+        const defaults = [{ id: "source", label: "原预设选项", groupIds: groups.map(group => group.id) }];
         const result = (provided?.length ? provided : defaults).map(stage => ({ ...stage,
-            optionIds: [...(stage.optionIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => group.options.map(option => ({ groupId: group.id, optionId: option.id }))))],
-            variableIds: [...(stage.variableIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => group.variableInputs.map(input => ({ groupId: group.id, inputId: input.id }))))] }));
+            optionIds: [...(stage.optionIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => (group.options || []).map(option => ({ groupId: group.id, optionId: option.id }))))],
+            variableIds: [...(stage.variableIds || groups.filter(group => (stage.groupIds || []).includes(group.id)).flatMap(group => (group.variableInputs || []).map(input => ({ groupId: group.id, inputId: input.id }))))] }));
         const last = result.find(stage => stage.id === "model") || result[result.length - 1];
         for (const group of groups) {
             for (const option of group.options || []) if (!result.some(stage => stage.optionIds.some(ref => ref.groupId === group.id && ref.optionId === option.id))) last.optionIds.push({ groupId: group.id, optionId: option.id });
@@ -226,7 +235,7 @@ function TavernPresetSettings(props) {
                     h("div", { className: "dsh-agent-preset-drawer-heading" }, h("h3", null, "来源与原文"), h("button", { type: "button", "aria-label": "关闭来源原文", onClick: () => setSourceDrawer(null) }, "关闭")),
                     h("p", null, "原作者提示词仅供查看，选项与高级设置保存在本局。"),
                     settings.sourceSettings.groups.filter(group => !sourceDrawer.groupId || sourceDrawer.groupId === group.id).map(group =>
-                        h("section", { key: group.id }, h("h4", null, group.label), group.options.map(option =>
+                        h("section", { key: group.id }, h("h4", null, group.label), (group.options || []).map(option =>
                             h("details", { key: option.id, className: "dsh-agent-preset-source-row" }, h("summary", null, option.label + (option.enabled ? " · 已开启" : "")),
                                 option.description ? h("p", null, option.description) : null, compatibility(option, true),
                                 (option.prompts || []).length ? option.prompts.map(prompt => h("label", { key: prompt.key }, prompt.name,
@@ -234,9 +243,8 @@ function TavernPresetSettings(props) {
     }
     function advanced() {
         return h(React.Fragment, null,
-            ["剧情理解与角色", "文风与叙事", "格式与修订", "其他写作规则"].map(name => {
-                const items = settings.entries.filter(item => group(item) === name);
-                return items.length ? h("details", { key: name }, h("summary", null, name + "（" + items.filter(item => (drafts["entries:" + item.key] || item).enabled).length + "/" + items.length + "）"), items.map(item => row("entries", item))) : null;
+            ruleGroups().map(({ id, label: name, items }) => {
+                return items.length ? h("details", { key: id, "data-rule-group": id }, h("summary", null, name + "（" + items.filter(item => (drafts["entries:" + item.key] || item).enabled).length + "/" + items.length + "）"), items.map(item => row("entries", item))) : null;
             }),
             settings.regexScripts.length ? h("details", null, h("summary", null, "正则与渲染（" + settings.regexScripts.length + "）"), settings.regexScripts.map(item => row("regexScripts", item))) : null,
             settings.helperScripts.length ? h("details", null, h("summary", null, "预设脚本与 Agent 接管"), settings.helperScripts.map((script, index) => h("p", { key: index }, script.name + "：" + (script.configured ? "原配置启用；" : "原配置关闭；") + script.execution))) : null,

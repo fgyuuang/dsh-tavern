@@ -1419,7 +1419,7 @@
 			const executeSlash = createTavernFrameSlashExecutor(ctx);
             ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
                 id: "tavern/author-settings", label: "创作设置", description: "角色、文风、叙事与写作规则", order: 10, keepAlive: true,
-                component: props => React.createElement(TavernPresetSettings, { key: props.gameId, sessionId: props.gameId })
+                component: props => React.createElement(TavernPresetSettings, { key: props.gameId, sessionId: props.gameId, visible: props.visible })
             }), "dsh-tavern: author settings workbench module");
             ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
                 id: "tavern/state", label: "人物与状态", description: "人物卡、当前变量与卡片界面", order: 40,

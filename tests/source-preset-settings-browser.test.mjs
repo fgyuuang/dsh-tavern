@@ -53,7 +53,7 @@ async function mount(t, rpc) {
     window.invalidations=[];
     ${await readFile(new URL('../tavern-plugin/src/client/features/preset-settings.js', import.meta.url), 'utf8')}
     const root=modules['react-dom/client'].createRoot(document.getElementById('root'));
-    window.showSession=(sessionId,revision=0)=>root.render(React.createElement(TavernPresetSettings,{sessionId,revision}));
+    window.showSession=(sessionId,revision=0,visible)=>root.render(React.createElement(TavernPresetSettings,{sessionId,revision,visible}));
     window.showSession('first');
   ` })
   return page
@@ -116,7 +116,7 @@ test('统一原助手页面展示 13 组、原文、兼容状态，原子选择�
   assert.equal(await page.getByRole('dialog').count(), 0)
   assert.equal(await page.getByRole('button', { name: '查看文风原文', exact: true }).evaluate(e => e === document.activeElement), true)
   await page.getByText('高级设置：规则、正则与脚本', { exact: true }).click()
-  await page.getByText('剧情理解与角色（0/1）', { exact: true }).click()
+  await page.getByText('未归类原文规则（0/1）', { exact: true }).click()
   await page.getByText('角色分析 · 关闭', { exact: true }).click()
   await page.getByLabel('角色分析规则内容', { exact: true }).fill('未保存高级修改')
   await page.getByText('高级设置有未保存修改，请先保存或撤销，再切换原预设功能。', { exact: true }).waitFor()
@@ -218,4 +218,48 @@ test('原酒馆模式与缺失 Agent profile 不误报 Agent 已启用', {
   await page.getByRole('heading', { name: '缺少 Agent profile 的原预设', exact: true }).waitFor()
   await page.getByText('原酒馆模式', { exact: true }).waitFor()
   assert.equal(await page.getByText('Agent 模式', { exact: true }).count(), 0)
+})
+
+
+test('高级规则按稳定 key 归类，关闭项不丢失，空标题隐藏但有正文的标题保留', {
+  skip: !process.env.TAVERN_BROWSER_TESTS, timeout: 30000
+}, async t => {
+  const settings = fixture()
+  settings.entries = [
+    { key: 'original-style', name: '改名后的规则', enabled: false, content: '原文' },
+    { key: 'active-rule', name: '普通名字', enabled: true, content: '正文' },
+    { key: 'heading', name: '📚===主要文风===', enabled: false, content: '' },
+    { key: 'instruction', name: '===有内容的规则===', enabled: false, content: '必须保留' },
+    { key: 'unknown', name: '角色文风思维', enabled: false, content: '未知来源' }
+  ]
+  settings.agentPreset.stages[0].optionIds = [{ groupId: 'style', optionId: 'plain' }]
+  settings.agentPreset.stages[2].authorRuleIds = [{ key: 'active-rule' }]
+  const page = await mount(t, () => ({ settings }))
+  await page.locator('[data-rule-group="role-scene"]').waitFor({ state: 'attached' })
+  assert.equal(await page.locator('[data-rule-group="role-scene"]').getByText('改名后的规则 · 关闭', { exact: true }).count(), 1)
+  assert.equal(await page.locator('[data-rule-group="planning"]').getByText('普通名字 · 启用', { exact: true }).count(), 1)
+  assert.equal(await page.locator('[data-rule-group="unmapped"]').getByText('角色文风思维 · 关闭', { exact: true }).count(), 1)
+  assert.equal(await page.getByText('📚===主要文风=== · 关闭', { exact: true }).count(), 0)
+  assert.equal(await page.getByText('===有内容的规则=== · 关闭', { exact: true }).count(), 1)
+})
+
+test('工作台再次显示时刷新设置，未保存编辑不会被远端更新覆盖', {
+  skip: !process.env.TAVERN_BROWSER_TESTS, timeout: 30000
+}, async t => {
+  let settings = fixture(), reads = 0
+  const page = await mount(t, () => { reads++; return { settings } })
+  await page.getByRole('heading', { name: '梦境思客DSH', exact: true }).waitFor()
+  await page.evaluate(() => window.showSession('first', 0, false))
+  settings = { ...settings, agentPreset: { ...settings.agentPreset, title: '外部更新' } }
+  await page.evaluate(() => window.showSession('first', 0, true))
+  await page.getByRole('heading', { name: '外部更新', exact: true }).waitFor()
+  await page.locator('details').evaluateAll(nodes => nodes.forEach(node => node.open = true))
+  const editor = page.getByRole('textbox', { name: '角色分析规则内容', exact: true })
+  await editor.fill('本地未保存')
+  await page.evaluate(() => window.showSession('first', 0, false))
+  const before = reads
+  await page.evaluate(() => window.showSession('first', 0, true))
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  assert.equal(await editor.inputValue(), '本地未保存')
+  assert.equal(reads, before)
 })

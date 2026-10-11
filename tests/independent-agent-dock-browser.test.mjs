@@ -122,7 +122,7 @@ test('independent settings synchronize saved rules across pages and preserve uns
   ` })
   const first = page.locator('#general'), second = page.locator('#independent')
   for (const root of [first, second]) {
-    await root.getByText('文风与叙事（1/1）', { exact: true }).click()
+    await root.getByText('原文规则（1/1）', { exact: true }).click()
     await root.getByText('文风 · 启用', { exact: true }).click()
   }
   await first.getByLabel('文风规则内容').fill('第一次修改')
