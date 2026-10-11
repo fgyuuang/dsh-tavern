@@ -18,6 +18,8 @@
 
 检查覆盖320、390、430px及844px横屏，模拟400、280、220px键盘可用高度，实际命中测试确认发送按钮未被覆盖，并验证点击时草稿内容完整。移动布局、交互、Agent工具和作者设置合计22项检查通过；采用当前宿主样式和DOM合约的浏览器夹具，不能代替Android/iOS真机键盘验收。截图在 `output/playwright/mobile/agent-idle-390.png`、`agent-tools-390.png` 和 `agent-typing-390.png`。
 
+2026-10-11 手机界面部署：由运行基线 `9a9b797b4f18cb7a8a7356cce9ea48aa2bddf374` 更新到 `c907fb434f62c66b8aa51abe5fc15f0623ec7a1a`，替换客户端和样式共2文件，SHA256全部一致。停机确认后备份部署并启动桌面。回滚入口：`D:\pro\DSH-Tavern\temp\agent-workspace-deploy-20261011-114429-f3dae6a56c9d4f55b1f71c007b85cbe8\rollback.ps1`，执行前需关闭此安装。浏览器需刷新加载新资源。
+
 本局设置里的“梦境思客 DSH Agent 预设”按任务阶段组织能力。文风和人物表演要求仍来自选定作者原文；Skills 说明读取、草稿、检查和恢复的工具操作，不另写一种默认文风。
 
 | 阶段 | 配置与职责 |
