@@ -79,7 +79,7 @@ test('续写重放在途时不可切换预设；崩溃后空闲切换清掉旧�
   assert.equal(chat.dreamSikeResume.sourceVersion, 1)
 })
 
-test('失败回合重放会保存一次续写标记并复用原玩家输入', async () => {
+for (const reasonKind of ['error', 'aborted']) test('中断回合恢复保存一次续写标记并复用原玩家输入：' + reasonKind, async () => {
   let { chat, identity, timeline } = failedDraft()
   const events = []
   const session = { id: 'session', events, surface: { nodes: [] }, append(type, data, options = {}) {
@@ -96,7 +96,7 @@ test('失败回合重放会保存一次续写标记并复用原玩家输入', as
   } }
   session.append('turn/start', { turn: 2 })
   session.append('user/message', { id: 'player', role: 'user', content: [{ type: 'text', text: '推门' }], source: { kind: 'user', rpcId: 'player-rpc' } }, { surfaceOp: 'append' })
-  session.append('turn/end', { turn: 2, reason: { kind: 'error' } })
+  session.append('turn/end', { turn: 2, reason: { kind: reasonKind } })
   let replayInput
   const agent = { session, phase: { kind: 'idle' }, followup(message) { replayInput = message }, async whenIdle() {} }
   const options = {
