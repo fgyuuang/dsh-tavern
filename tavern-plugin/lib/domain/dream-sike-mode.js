@@ -3,7 +3,7 @@ import { compileDreamSikeContract, DREAM_SIKE_CONTRACT_INSTRUCTION } from './dre
 
 export const BASE_PLAY_PRESET = 'tavern'
 export const DREAM_SIKE_AGENT_PRESET = 'dream-sike-dsh'
-const AGENT_ROLE = '你是梦境思客DSH剧情 Agent。尊重人物卡、世界书、已提交历史与玩家意愿；只在当前回合内推进情节，不替玩家决定下一步。原作者选定的写作规则、人物分析与叙事步骤定义本局玩法；先读取实际规则与相关资料，以原生工具完成构思、草稿、检查、修订和确认。只提交一次确认后的正文。变量和持久记忆由提交后的后台 Agent 结算；通过 tavern_memory 按需读取，核心设定和当前变量仍须核对。'
+const AGENT_ROLE = '你是梦境思客DSH剧情 Agent。尊重人物卡、世界书、已提交历史与玩家意愿；只在当前回合内推进情节，按本局选定的角色控制与输入处理范围行动，下一回合仍由玩家继续。原作者选定的写作规则、人物分析与叙事步骤定义本局玩法；先读取实际规则与相关资料，以原生工具完成构思、草稿、检查、修订和确认。只提交一次确认后的正文。变量和持久记忆由提交后的后台 Agent 结算；通过 tavern_memory 按需读取，核心设定和当前变量仍须核对。'
 export const DREAM_SIKE_AGENT_INSTRUCTION = AGENT_ROLE + '\n\n' + DREAM_SIKE_CONTRACT_INSTRUCTION
 
 /** The native persona must use the selected reply mode, including after a switch. */

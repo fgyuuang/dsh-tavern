@@ -35,7 +35,7 @@ test('Agent mode preserves imported writing rules with a versioned contract and 
   const projected = projectPlayPresetSnapshot(original, DREAM_SIKE_AGENT_PRESET)
   assert.equal(projected.front.text, 'old prompt')
   assert.equal(projected.text, 'old prompt')
-  assert.equal(projected.agentContract.version, 6)
+  assert.equal(projected.agentContract.version, 7)
   assert.equal(projected.agentContract.entries[0].action, 'preserved')
   assert.deepEqual(projected.regexScripts, original.regexScripts)
   assert.equal(projected.presetPath, original.presetPath)

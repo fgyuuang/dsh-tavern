@@ -103,3 +103,12 @@ test('chat and summary preserve author task steps while removing old thinking ou
     assert.equal(raw.front.entries[0].content, content)
   }
 })
+
+test('native role honors selected player control modes without flattening the author options', () => {
+  const raw = snapshot([rule('09e5950f-099d-445d-8c52-887052c852db', '{{setvar::sleep_var_qianghua::原作者深度扮演规则，允许本轮角色自主行动。}}'),
+    rule('881044e5-cbef-43c7-ad19-c6e7f6d150b4', '采用：{{getvar::sleep_var_qianghua}}')])
+  const compiled = compileDreamSikeContract(raw)
+  assert.match(resolveRuntimePresetMacros(compiled).snapshot.text, /原作者深度扮演规则，允许本轮角色自主行动/)
+  assert.match(compiled.agentContract.instruction, /深度扮演的明确授权仅在当前回合生效/)
+  assert.match(dreamSikeAgentInstruction(raw), /按本局选定的角色控制与输入处理范围行动/)
+})
