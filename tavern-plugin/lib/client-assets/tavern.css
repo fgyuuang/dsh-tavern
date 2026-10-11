@@ -2777,3 +2777,22 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 @container (max-width: 620px) { .dsh-agent-preset-tabs { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @container (max-width: 460px) { .dsh-agent-preset-groups { grid-template-columns: minmax(0,1fr); } .dsh-agent-preset-header h3 { font-size: 16px; } }
 @media (max-width: 520px) { .dsh-agent-preset-drawer { padding: 16px; } }
+/* Independent Dream Sike interaction surface; original Tavern controls retain their layout. */
+.dsh-sike-interaction-dock { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; margin: 4px 0 8px; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-left: 3px solid #a99ad6; border-radius: 12px; background: color-mix(in srgb, #9180c2 7%, transparent); min-width: 0; }
+.dsh-sike-interaction-identity { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+.dsh-sike-interaction-identity > div:first-child { display: flex; align-items: baseline; gap: 10px; }
+.dsh-sike-interaction-eyebrow { font-size: 10px; opacity: .65; letter-spacing: .04em; }
+.dsh-sike-interaction-identity strong { font-size: 14px; font-weight: 600; }
+.dsh-sike-interaction-state { font-size: 12px; opacity: .65; }
+.dsh-sike-interaction-dock .dsh-sike-main-status { margin: 0; padding: 0; background: none; border: 0; font-size: 12px; }
+.dsh-sike-interaction-actions, .dsh-sike-interaction-extensions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.dsh-sike-interaction-extensions:empty { display: none; }
+.dsh-sike-interaction-actions > button, .dsh-sike-interaction-actions .dsh-tavern-choice-trigger, .dsh-sike-optional-actions > summary { font-size: 12px; min-height: 30px; padding: 5px 10px; border-radius: 7px; }
+.dsh-sike-optional-actions { font-size: 12px; }
+.dsh-sike-optional-actions > summary { cursor: pointer; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+.dsh-sike-optional-actions[open] { flex-basis: 100%; order: 9; padding: 6px; border-radius: 8px; background: color-mix(in srgb, currentColor 4%, transparent); }
+.dsh-sike-optional-actions[open] > summary { width: fit-content; }
+.dsh-sike-optional-actions > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px; }
+.dsh-sike-optional-actions p { margin: 4px 0; opacity: .7; }
+.dsh-sike-settings-workspace > .dsh-agent-preset { margin: 8px; }
+@media (max-width: 480px) { .dsh-sike-interaction-dock { padding: 10px; } .dsh-sike-interaction-identity > div:first-child { flex-direction: column; gap: 2px; } }

@@ -9,17 +9,38 @@ function TavernPresetSettings(props) {
     const drawerElement = React.useRef(null), drawerTrigger = React.useRef(null);
     const context = React.useRef({ sessionId: props.sessionId, revision: props.revision, generation: 0 });
     const saving = React.useRef(false);
+    const reads = React.useRef(0), editState = React.useRef(false);
+    const [reload, setReload] = React.useState(0), [externalChange, setExternalChange] = React.useState(false);
+    editState.current = Object.keys(drafts).length > 0 || Object.keys(variableDrafts).length > 0;
     context.current.sessionId = props.sessionId;
     context.current.revision = props.revision;
     React.useEffect(function () {
         let active = true;
         context.current.generation += 1;
         saving.current = false;
+        const request = ++reads.current;
+        setExternalChange(false);
         setSettings(null); setDrafts({}); setVariableDrafts({}); setBusy(false); setNotice(""); setError(""); setSourceDrawer(null);
         rpc("getConversationPresetSettings", {}, props.sessionId).then(result => {
-            if (active) setSettings(result.settings);
+            if (active && request === reads.current) setSettings(result.settings);
         }, error => { if (active) setError(String(error.message || error)); });
         return () => { active = false; context.current.generation += 1; };
+    }, [props.sessionId, props.revision, reload]);
+    React.useEffect(function () {
+        let active = true;
+        async function refresh(event) {
+            if (!["preset-settings", "presets", "play-controls"].includes(event?.detail?.source) || saving.current) return;
+            if (editState.current) { setExternalChange(true); return; }
+            const request = ++reads.current;
+            try {
+                const result = await rpc("getConversationPresetSettings", {}, props.sessionId);
+                if (!active || request !== reads.current || saving.current) return;
+                if (editState.current) { setExternalChange(true); return; }
+                setSettings(result.settings); setExternalChange(false); setSourceDrawer(null);
+            } catch (failure) { if (active && request === reads.current) setError(String(failure.message || failure)); }
+        }
+        window.addEventListener("dsh-tavern-data-changed", refresh);
+        return () => { active = false; window.removeEventListener("dsh-tavern-data-changed", refresh); };
     }, [props.sessionId, props.revision]);
     React.useEffect(function () {
         if (!sourceDrawer) return;
@@ -41,11 +62,12 @@ function TavernPresetSettings(props) {
             return request.sessionId === context.current.sessionId && request.revision === context.current.revision && request.generation === context.current.generation;
         }
         saving.current = true;
+        reads.current += 1;
         setBusy(true); setError(""); setNotice("");
         try {
             const result = await rpc("updateConversationPresetSettings", { digest: settings.digest, changes }, request.sessionId);
             if (!isCurrent()) return;
-            setSettings(result.settings); setDrafts({}); setNotice("已保存到本局，从下一回合生效");
+            setSettings(result.settings); setDrafts({}); setExternalChange(false); setNotice("已保存到本局，从下一回合生效");
             if (changes.sourceAction?.value !== undefined) setVariableDrafts(current => {
                 const next = { ...current };
                 delete next[changes.sourceAction.groupId + ":" + changes.sourceAction.optionId];
@@ -226,6 +248,7 @@ function TavernPresetSettings(props) {
         !settings?.sourceSettings ? h("p", { className: "dsh-tavern-settings-desc" }, "本局的文风、剧情分析和格式规则会进入 Agent 请求。展开规则可查看原文或修改；保存仅影响本局。") : null,
         settings ? h(React.Fragment, null,
             settings.sourceSettings ? workbench() : h(React.Fragment, null, h("p", null, settings.presetName || "本局没有引用酒馆预设"), advanced())) : h("p", null, "正在读取本局预设…"),
+        externalChange ? h("div", { role: "status" }, "本局设置已在其他页面更新，未保存的编辑已保留。", h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: () => setReload(value => value + 1) }, "重新载入（放弃未保存修改）")) : null,
         error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, busy ? "正在保存本局预设设置…" : notice));
 }
 
