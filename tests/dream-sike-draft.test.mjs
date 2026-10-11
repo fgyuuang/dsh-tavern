@@ -35,7 +35,7 @@ test('草稿可零补丁通过检查，就绪后只由正式提交标记完成',
   assert.equal(dreamSikeDraftView(chat).status, 'committed')
 })
 
-test('局部修订要求唯一原文与正确版本，检查随修改失效，最多两轮', () => {
+test('局部修订要求唯一原文与正确版本，检查随修改失效，次数不设上限', () => {
   const { chat, identity } = fixture()
   putDreamSikeDraft(chat, identity, '门开了。门开了。', 10)
   assert.throws(() => patchDreamSikeDraft(chat, identity, { expectedVersion: 1, find: '门开了', replacement: '门关了' }), /不唯一/)
@@ -45,11 +45,32 @@ test('局部修订要求唯一原文与正确版本，检查随修改失效，�
   assert.equal(chat.dreamSikeDraft.checks, null)
   assert.throws(() => readyDreamSikeDraft(chat, identity, 3), /先检查/)
   assert.throws(() => patchDreamSikeDraft(chat, identity, { expectedVersion: 2, find: '半扇', replacement: '一点' }), /版本已变化/)
-  assert.throws(() => patchDreamSikeDraft(chat, identity, { expectedVersion: 3, find: '半扇', replacement: '一点' }), /最多进行两轮/)
+  assert.equal(patchDreamSikeDraft(chat, identity, { expectedVersion: 3, find: '半扇', replacement: '一点' }).version, 4)
+  assert.equal(chat.dreamSikeDraft.revisionCount, 3)
   assert.equal(chat.dreamSikeDraft.changes[0].beforeText, '门开了。门开了。')
   assert.equal(chat.dreamSikeDraft.changes[1].afterText, '半扇')
   assert.equal(Object.hasOwn(dreamSikeDraftView(chat).changes[0], 'beforeText'), false)
   assert.equal(Object.hasOwn(dreamSikeDraftView(chat).changes[0], 'afterText'), false)
+})
+
+test('同次审稿可批量修订，全部唯一定位才原子保存一个版本，失败和零修改不消耗版本', () => {
+  const { chat, identity } = fixture()
+  putDreamSikeDraft(chat, identity, '门开了。窗关了。')
+  const before = structuredClone(chat.dreamSikeDraft)
+  assert.throws(() => patchDreamSikeDraft(chat, identity, { expectedVersion: 1, patches: [
+    { find: '门开了', replacement: '门关了' }, { find: '不存在', replacement: '窗开了' }
+  ] }), /不存在/)
+  assert.deepEqual(chat.dreamSikeDraft, before)
+  const changed = patchDreamSikeDraft(chat, identity, { expectedVersion: 1, patches: [
+    { find: '门开了', replacement: '门关了' }, { find: '窗关了', replacement: '窗开了' }
+  ] })
+  assert.equal(changed.text, '门关了。窗开了。')
+  assert.equal(changed.version, 2)
+  assert.equal(changed.revisionCount, 1)
+  assert.equal(changed.changes.length, 2)
+  assert.ok(changed.changes.every(change => change.beforeVersion === 1 && change.afterVersion === 2))
+  assert.equal(patchDreamSikeDraft(chat, identity, { expectedVersion: 2, patches: [{ find: '门关了', replacement: '门关了' }] }).version, 2)
+  assert.throws(() => patchDreamSikeDraft(chat, identity, { expectedVersion: 2, find: '门关了', replacement: '门开了', patches: [] }), /只能选择一种/)
 })
 
 test('内部推理和变量协议不得进入最终正文，卡片 HTML 不被误判', () => {
@@ -231,6 +252,11 @@ test('原生 defineTool 注册六个回合工具，起草、检查、修订、�
   }
 
   const exec = { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 5 } } }
+  const batchSchema = registered.get('sike_patch_draft').parameters
+  assert.deepEqual(batchSchema.required, ['expectedVersion'])
+  assert.deepEqual(batchSchema.properties.patches.items.required, ['find', 'replacement'])
+  await assert.rejects(registered.get('sike_patch_draft').execute({ expectedVersion: 1,
+    patches: [{ find: 12, replacement: 'invalid' }] }, exec), /invalid arguments/)
   const read = await registered.get('sike_read_turn').execute({}, exec)
   assert.equal(read.draft, null)
   assert.equal(JSON.parse(read.report).turn, 5)

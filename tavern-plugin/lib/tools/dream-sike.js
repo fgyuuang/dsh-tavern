@@ -6,6 +6,7 @@ import {
 import { dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
 import { dreamSikePreparationView, needsDreamSikePreparation, prepareDreamSikeTurn, recordDreamSikeTurnRead } from '../domain/dream-sike-preparation.js'
 import { readDreamSikeAgentRules } from '../domain/dream-sike-agent-profile.js'
+import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from '../domain/dream-sike-draft-modules.js'
 
 const output = {
   schema: {
@@ -90,6 +91,10 @@ function turnReport(chat, identity, args = {}) {
     draft: currentDraft ? {
       status: currentDraft.status, phase: currentDraft.phase, version: currentDraft.version,
       revisionCount: currentDraft.revisionCount, checks: currentDraft.checks,
+      modules: Object.fromEntries(['parallel', 'review'].filter(kind => dreamSikeDraftModulePlan(chat, kind)).map(kind => [kind, {
+        current: draftModuleReceiptCurrent(chat, kind), version: chat.dreamSikeDraft.modules?.[kind]?.version ?? null,
+        review: chat.dreamSikeDraft.modules?.[kind]?.review ?? null
+      }])),
       textLength: currentDraft.text.length, textOffset: draftOffset,
       text: currentDraft.text.slice(draftOffset, draftEnd),
       nextOffset: draftEnd < currentDraft.text.length ? draftEnd : null
@@ -221,21 +226,24 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   tools.register(defineTool({
     name: 'sike_patch_draft',
-    description: '以当前版本和唯一的原文片段局部修订草稿。最多两轮有效修订；不得用整篇重写绕过版本检查。',
+    description: '以当前版本和唯一原文片段局部修订草稿，修订次数不设上限。同次审稿的缺陷优先合并为 patches 数组，一次原子应用 1–8 个片段；按顺序匹配前一片段修改后的文本，全部有效才保存一个新版本。也兼容单项 find/replacement；不得用整篇重写绕过版本检查。',
     parameters: {
       expectedVersion: { type: 'integer', required: true, description: '当前草稿版本' },
-      find: { type: 'string', required: true, description: '草稿中唯一的原文片段' },
-      replacement: { type: 'string', required: true, description: '替换内容；可为空字符串' }
+      find: { type: 'string', description: '单项修订的唯一原文片段；与 patches 二选一' },
+      replacement: { type: 'string', description: '单项替换内容；可为空字符串' },
+      patches: { type: 'array', description: '同次审稿的 1–8 个局部修改按顺序一次提交', items: {
+        type: 'object', additionalProperties: false, properties: { find: { type: 'string', required: true }, replacement: { type: 'string', required: true } }
+      } }
     }, output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => patchDreamSikeDraft(chat, identity, args), 'draft.patch')
-      return { report: '草稿现为版本 ' + draft.version + '，已修订 ' + draft.revisionCount + '/2 轮。', draft }
+      return { report: '草稿现为版本 ' + draft.version + '，已修订 ' + draft.revisionCount + ' 次，次数不设上限。下一步整体审稿；review 调用会先自动补齐过期的平行事件。', draft }
     }
   }))
 
   tools.register(defineTool({
     name: 'sike_run_module',
-    description: '执行本局已启用的独立草稿模块：parallel 按作者原文生成平行事件并合入唯一草稿；review 按作者检查规则独立审阅完整草稿。顺序为主线草稿→parallel→review→检查确认。结果仅作用于匹配版本草稿，不触发正式消息或变量结算；完成结果未变化时直接复用。',
+    description: '执行已启用独立草稿模块：parallel 按作者原文生成平行事件并合入唯一草稿；review 自动先生成或更新缺失/过期的平行事件，再独立审阅完整草稿。结果返回当前版本，存在 revise 时把同次审稿缺陷合并到 sike_patch_draft 的 patches 数组。全部通过再检查确认；不触发正式消息或变量结算，未变化的结果复用。',
     parameters: { kind: { type: 'string', required: true, description: 'parallel 或 review' }, expectedVersion: { type: 'integer', required: true, description: '当前未确认草稿版本' } },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
@@ -245,7 +253,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       return { report: JSON.stringify({ module: result.module, reused: result.reused, version: result.draft.version,
         text: args.kind === 'parallel' ? result.draft.text.match(/<dream_parallel_event>[\s\S]*?<\/dream_parallel_event>/i)?.[0] : undefined,
         review: args.kind === 'review' ? result.draft.modules.review.review : undefined,
-        next: '依据当前版本检查完整草稿；存在 revise 时局部修改，模块失效后再次运行。' }), draft: result.draft }
+        next: '使用返回的当前版本；存在 revise 时一次批量局部修改，再运行 review（自动更新过期平行事件）。审稿全部 pass 后 sike_check_draft、sike_ready_draft。' }), draft: result.draft }
     }
   }))
   tools.register(defineTool({

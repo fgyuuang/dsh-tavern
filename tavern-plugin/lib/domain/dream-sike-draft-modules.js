@@ -23,6 +23,7 @@ export function dreamSikeDraftModulePlan(chat, kind) {
   const entries = compiled?.deferredDraft?.entries.filter(entry => entry.moduleKind === kind) || []
   if (!entries.length || compiled.agentContract.outputMode !== 'plot') return null
   const operation = Object.values(chat.timeline?.operations || {}).find(operation => operation.kind === 'body' && operation.status === 'running')
+    || chat.timeline?.operations?.[chat.dreamSikeDraft?.operationId]
   const resolved = resolveRuntimePresetMacros(compiled, { charName: chat.cardName, macroState: chat.macroState, lastUserMessage: operation?.userText })
   const module = resolveRuntimePresetMacros({ front: { entries } }, { charName: chat.cardName, macroState: resolved.macroState }).snapshot
   const authorContext = kind === 'review' ? resolved.snapshot.text : ''
@@ -91,10 +92,19 @@ export function mergeDreamSikeDraftModule(chat, identity, expectedVersion, plan,
 export function createDreamSikeDraftModules({ read, update, tasks, run, selection, publish = () => {} }) {
   const jobs = new Map()
   async function execute({ chat, identity, kind, expectedVersion, signal }) {
-    const plan = dreamSikeDraftModulePlan(chat, kind), draft = chat.dreamSikeDraft
+    let plan = dreamSikeDraftModulePlan(chat, kind), draft = chat.dreamSikeDraft
     if (!plan) throw new Error('本局没有启用该作者模块')
     if (!Number.isSafeInteger(expectedVersion) || draft?.version !== expectedVersion || draft.status !== 'draft') throw new Error('请先建立并读取当前未确认的草稿版本')
-    if (kind === 'review' && dreamSikeDraftModulePlan(chat, 'parallel') && !draftModuleReceiptCurrent(chat, 'parallel')) throw new Error('请先独立生成或更新平行事件，再整体审稿')
+    // Review owns its prerequisite so a stale parallel block does not consume a
+    // failed foreground step before the Agent can review the amended story.
+    if (kind === 'review' && dreamSikeDraftModulePlan(chat, 'parallel') && !draftModuleReceiptCurrent(chat, 'parallel')) {
+      const prepared = await execute({ chat, identity, kind: 'parallel', expectedVersion, signal })
+      chat = await read(chat.id)
+      draft = chat?.dreamSikeDraft
+      expectedVersion = prepared.draft.version
+      plan = dreamSikeDraftModulePlan(chat, kind)
+      if (!plan || draft?.version !== expectedVersion || draft.status !== 'draft') throw new Error('平行事件更新后草稿已变化，请重新读取当前版本')
+    }
     if (draftModuleReceiptCurrent(chat, kind)) return { draft: structuredClone(draft), reused: true, module: kind }
     if (jobs.has(chat.id)) throw new Error('本局已有独立草稿模块执行中')
     const controller = new AbortController(); jobs.set(chat.id, controller)

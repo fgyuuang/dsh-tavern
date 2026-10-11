@@ -5,7 +5,6 @@ import { dreamSikeDraftModulePlan, draftModuleReceiptCurrent } from './dream-sik
 
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
-const MAX_PATCHES = 2
 const MAX_FIND_CHARS = 4_000
 const MAX_REPLACEMENT_CHARS = 8_000
 
@@ -256,26 +255,33 @@ export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   return copy(draft)
 }
 
-export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, replacement }, now = Date.now()) {
+export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, replacement, patches }, now = Date.now()) {
   const draft = requireCurrentDraft(chat, identity)
   if (draft.status !== 'draft') throw new Error('已确认的草稿不能继续修改')
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后修订')
-  if (typeof find !== 'string' || find === '') throw new Error('FIND 必须是非空的原文片段')
-  if (typeof replacement !== 'string') throw new Error('REPLACE 必须是文本')
-  if (find.length > MAX_FIND_CHARS || replacement.length > MAX_REPLACEMENT_CHARS) throw new Error('请缩小局部修订范围')
-  const first = draft.text.indexOf(find)
-  if (first < 0) throw new Error('FIND 在当前草稿中不存在')
-  if (draft.text.indexOf(find, first + find.length) >= 0) throw new Error('FIND 在当前草稿中不唯一，请补充上下文')
-  if (find === replacement) return copy(draft)
-  if (draft.revisionCount >= MAX_PATCHES) throw new Error('本回合最多进行两轮草稿修订')
-  const nextText = draft.text.slice(0, first) + replacement + draft.text.slice(first + find.length)
-  assertDraftText(nextText)
-  draft.changes.push({
-    index: first, find, replacement, beforeText: find, afterText: replacement,
-    leftContext: draft.text.slice(Math.max(0, first - 40), first),
-    rightContext: draft.text.slice(first + find.length, first + find.length + 40),
-    beforeVersion: draft.version, afterVersion: draft.version + 1, at: now
-  })
+  if (patches !== undefined && (find !== undefined || replacement !== undefined)) throw new Error('批量 patches 与单项 find/replacement 只能选择一种')
+  const items = patches === undefined ? [{ find, replacement }] : patches
+  if (!Array.isArray(items) || items.length < 1 || items.length > 8) throw new Error('一次批量修订接受 1–8 个局部片段；修订次数不设上限')
+  let nextText = draft.text
+  const changes = []
+  for (const patch of items) {
+    const find = patch?.find, replacement = patch?.replacement
+    if (typeof find !== 'string' || find === '') throw new Error('FIND 必须是非空的原文片段')
+    if (typeof replacement !== 'string') throw new Error('REPLACE 必须是文本')
+    if (find.length > MAX_FIND_CHARS || replacement.length > MAX_REPLACEMENT_CHARS) throw new Error('请缩小局部修订范围')
+    const first = nextText.indexOf(find)
+    if (first < 0) throw new Error('FIND 在当前草稿中不存在')
+    if (nextText.indexOf(find, first + find.length) >= 0) throw new Error('FIND 在当前草稿中不唯一，请补充上下文')
+    if (find === replacement) continue
+    changes.push({ index: first, find, replacement, beforeText: find, afterText: replacement,
+      leftContext: nextText.slice(Math.max(0, first - 40), first),
+      rightContext: nextText.slice(first + find.length, first + find.length + 40),
+      beforeVersion: draft.version, afterVersion: draft.version + 1, at: now })
+    nextText = nextText.slice(0, first) + replacement + nextText.slice(first + find.length)
+    assertDraftText(nextText)
+  }
+  if (!changes.length) return copy(draft)
+  draft.changes.push(...changes)
   draft.text = nextText
   draft.version++
   draft.revisionCount++

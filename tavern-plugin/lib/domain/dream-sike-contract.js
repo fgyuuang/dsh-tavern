@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 9
+const VERSION = 10
 export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
   '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
   '27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'f9b03e19-fd96-4782-8867-73ad2cbabfb9',
@@ -57,7 +57,7 @@ export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history、dreamer_input、writing_setting 的开闭标签条目已按原生边界移除，这些名称在保留下来的作者原句中表示待核对的材料范围，按 sike_read_turn 的 materialAreas 解析为当前卡片、有效世界书、状态、本回合输入和分支历史；按名称对应的分析职责照旧执行，不因标签不存在而跳过，也不把原生工具消息改为旧酒馆的文本协议。
 首次读取回合保留材料、规则与当前草稿。连续续读作者规则时使用 includeMaterials=false、includeDraft=false，避免每页重复材料；只续读草稿时使用 includeRules=false。压缩、重启后或需要重新核对材料时显式 includeMaterials=true、includeRules=true。引用和摘要不能代替尚未读取的原文。
 已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；再用 sike_prepare_turn 保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，之后才能建立草稿。候选事件链在内部评估，不提交推理过程。这个准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
-建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。发现具体缺陷须局部修订并重新审稿，无问题允许零补丁。不能用“标签没错”代替文风检查。
+建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。同次审稿发现的具体缺陷合并为 sike_patch_draft 的 patches 数组，一次局部修订并重新审稿，修订次数不设上限，无问题允许零补丁。不能用“标签没错”代替文风检查。
 简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写、转述、禁止抢话、深度扮演与大纲模式的角色控制范围采用本局选定原文，不能把这些选项写成同一种行为；未授权的重大决定仍留给玩家，深度扮演的明确授权仅在当前回合生效。若选定平行事件，则允许读者看到场外事件，但场内人物不能因此自动知情。
 确认后仅提交草稿原文一次，不在聊天重写或缩短正文。压缩后本契约和已选规则仍会重新装配；长期事实按需从记忆及原历史恢复。`
 
@@ -129,7 +129,7 @@ function adapt(entry) {
   if (id === IDS.selfCheck && content.includes('# 检查范围') && content.includes('# 修复格式') && content.includes('# 输出格式')) {
     return { action: 'agent-editorial-review', content: content
       .replace('FIND、REPLACE 成对输出。', 'FIND、REPLACE 成对作为局部修订参数，分别对应 find、replacement。')
-      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_patch_draft 的 expectedVersion、find、replacement 修改当前草稿；每次依据工具返回的新版本继续核对。使用 sike_check_draft 的 review 记录逐项审稿结果和简短正文依据，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则，遵守本回合修订上限。明确缺陷须处理；无问题允许零补丁，不强凑改动数量。') }
+      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_patch_draft 的 expectedVersion、patches 数组一次提交同次审稿的多个局部修改；也支持单项 find、replacement。每次依据工具返回的新版本继续核对。使用 sike_check_draft 的 review 记录逐项审稿结果和简短正文依据，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则，修订次数不设上限。明确缺陷须处理；无问题允许零补丁，不强凑改动数量。') }
   }
   if (id === IDS.parallel && content.includes('# 平行事件思考') && content.includes('# 平行事件输出')) return { action: 'native-parallel-format', content: content
     .replace('在`<simple_thinking>`内进行一次简短的思考。该思考遵循以下步骤：', '在内部进行一次简短的核对，不向正文输出核对过程。该核对遵循以下步骤：')
@@ -176,7 +176,7 @@ export function compileDreamSikeContract(snapshot) {
   const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
   const instruction = outputModeInstruction(outputMode) + (outputMode === 'plot' && followupEntries.length
     ? '\n【后续互动顺序】本局选定的行动选项与思客大调查、说书共创及小摘要由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option、dream_big_discuss、dream_discuss 或 dream_summary，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
-    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿，禁止前台直接生成平行区块。然后审稿；启用八股超杀或自检修复时调用 sike_run_module(kind="review", expectedVersion) 独立审阅完整草稿。读取简短审稿依据，必要时局部修订；主线修改使模块结果过期时重新执行。最后 sike_check_draft、sike_ready_draft，整体提交一次，变量结算依据包含平行事件的完整最终正文。' : '')
+    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿，禁止前台直接生成平行区块。启用八股超杀或自检修复时，sike_run_module(kind="review", expectedVersion) 会先自动更新缺失或过期的平行事件，再独立审阅完整草稿。使用返回版本，把同次审稿缺陷合并到 sike_patch_draft 的 patches 数组一次局部修改，修订次数不设上限；修改后再次 review。全部 pass 后 sike_check_draft、sike_ready_draft，整体提交一次，变量结算依据包含平行事件的完整最终正文。' : '')
   const deferredFollowup = { entries: outputMode === 'plot' ? followupEntries : [],
     digest: createHash('sha256').update(JSON.stringify(followupEntries)).digest('hex') }
   const deferredDraft = { entries: outputMode === 'plot' ? draftEntries : [],

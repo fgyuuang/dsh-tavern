@@ -53,7 +53,6 @@ test('主线草稿→独立平行事件→独立审稿→整体确认；不提�
   assert.throws(() => readyDreamSikeDraft(h.get(), h.identity, 1), /先检查/)
   checkDreamSikeDraft(h.get(), h.identity, 1, Date.now(), review)
   assert.ok(h.get().dreamSikeDraft.checks.issues.some(issue => issue.code === 'module-parallel-pending'))
-  await assert.rejects(h.run('review'), /先独立生成/)
   const result = await h.run('parallel')
   assert.equal(result.draft.version, 2)
   assert.equal(result.draft.revisionCount, 0)
@@ -84,6 +83,37 @@ test('重复模块结果复用；主线修订后模块过期，禁止旧结果�
   checkDreamSikeDraft(h.get(), h.identity, 4)
   assert.equal(readyDreamSikeDraft(h.get(), h.identity, 4).status, 'ready')
   assert.equal(h.get().dreamSikeDraft.revisionCount, 1)
+})
+
+test('整体审稿自动先更新过期平行事件，批量改稿后不用失败调用探测顺序', async t => {
+  const h = fixture(t)
+  const original = structuredClone(h.get().variables)
+  const initial = await h.run('review')
+  assert.equal(initial.draft.version, 2)
+  assert.equal(h.calls(), 2)
+  patchDreamSikeDraft(h.get(), h.identity, { expectedVersion: 2, patches: [
+    { find: '主线停在门口。', replacement: '主线停在院门口。' },
+    { find: '院门口', replacement: '庭院门外' }
+  ] })
+  assert.equal(draftModuleReceiptCurrent(h.get(), 'parallel'), false)
+  const reviewed = await h.run('review')
+  assert.equal(reviewed.draft.version, 4)
+  assert.equal(h.calls(), 4)
+  assert.equal(draftModuleReceiptCurrent(h.get(), 'parallel'), true)
+  assert.equal(draftModuleReceiptCurrent(h.get(), 'review'), true)
+  checkDreamSikeDraft(h.get(), h.identity, 4)
+  assert.equal(readyDreamSikeDraft(h.get(), h.identity, 4).status, 'ready')
+  assert.deepEqual(h.get().variables, original)
+  assert.deepEqual(h.get().messages, [])
+})
+
+test('失败回合仍使用原玩家行动验证模块回执，恢复草稿不丢失已完成审稿', async t => {
+  const h = fixture(t)
+  h.get().runtimePresetSnapshot.front.entries[0].content += '\n当前行动：{{lastusermessage}}'
+  await h.run('review')
+  assert.equal(draftModuleReceiptCurrent(h.get(), 'review'), true)
+  h.get().timeline.operations.op.status = 'failed'
+  assert.equal(draftModuleReceiptCurrent(h.get(), 'review'), true)
 })
 
 test('过期模块、取消与失败不能改写当前草稿或变量', async t => {
