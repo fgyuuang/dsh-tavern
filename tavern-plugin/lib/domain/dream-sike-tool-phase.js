@@ -1,4 +1,4 @@
-import { dreamSikeTurnIdentity } from './dream-sike-draft.js'
+import { dreamSikeTurnIdentity, DREAM_SIKE_MAX_EDITORIAL_ROUNDS } from './dream-sike-draft.js'
 import { assertDreamSikePreparation, dreamSikePreparationView, needsDreamSikePreparation } from './dream-sike-preparation.js'
 import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from './dream-sike-draft-modules.js'
 
@@ -22,7 +22,11 @@ export function dreamSikeToolPhase(chat, sessionId, turn) {
     ? '调用 review；宿主先更新过期平行事件，再整体审稿。' : '调用 parallel 补齐平行事件，再检查完整草稿。')
   if (review && !draftModuleReceiptCurrent(chat, 'review')) return phase('review', ['sike_run_module'], '调用 review 审稿；使用返回的当前版本和缺陷。')
   if (review && Object.values(draft.modules.review.review || {}).some(axis => axis.status === 'revise')) {
-    return phase('revision', ['sike_patch_draft'], '把同次审稿缺陷合并为 patches 一次局部修改；原文不确定时先读取当前草稿。')
+    // Only spend the revision budget on revise rounds; afterwards the notes still reach the check
+    // step but no longer demand another editor pass, so the turn can reach confirmation.
+    if ((Number(draft.editorialRounds) || 0) <= DREAM_SIKE_MAX_EDITORIAL_ROUNDS) {
+      return phase('revision', ['sike_patch_draft'], '把同次审稿缺陷合并为 patches 一次局部修改；原文不确定时先读取当前草稿。')
+    }
   }
   if (draft.checks?.version !== draft.version) return phase('checking', ['sike_check_draft', 'sike_patch_draft'], '检查当前草稿；收到检查结果后，再在下一模型步骤确认。')
   if (draft.checks.issues.some(issue => /^editorial-(missing|extra-axis|invalid-)/.test(issue.code))) return phase('checking', ['sike_check_draft'], '补齐六维审阅结构和具体依据后重新检查；审阅参数缺失不要求修改正文。')

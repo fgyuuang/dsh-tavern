@@ -82,6 +82,12 @@ export function mergeDreamSikeDraftModule(chat, identity, expectedVersion, plan,
     sourceHash: hash(draftModuleBase(draft.text, plan.kind)), originalSourceHash: sourceHash, version: draft.version,
     review: result.review || null, traceSessionId: trace?.traceSessionId || '', completedAt: now }
   draft.checks = null
+  if (plan.kind === 'review') {
+    // Count revise-driven rounds so the phase can stop demanding another pass once the budget is
+    // spent; an all-pass review is not reachable, so the budget is what makes the turn terminate.
+    const revise = Object.values(result.review || {}).some(axis => axis?.status === 'revise')
+    draft.editorialRounds = revise ? (Number(draft.editorialRounds) || 0) + 1 : 0
+  }
   draft.phase = plan.kind === 'parallel' ? 'draft' : 'checking'
   draft.trace.push({ phase: draft.phase, action: plan.kind === 'parallel' ? '独立生成的平行事件已合入草稿，等待整体审稿' : '独立审稿已完成，等待检查与修订', at: now })
   draft.changes.push({ kind: 'module-' + plan.kind, summary: plan.kind === 'parallel' ? '独立平行事件已合入主线草稿' : '独立审稿已记录，正文尚未提交', beforeVersion, afterVersion: draft.version, at: now })

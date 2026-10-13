@@ -107,3 +107,39 @@ test('前台提前生成平行事件时保存主线并移交独立模块，脚�
   assert.equal(draft.version,1)
   assert.deepEqual(chat.messages,[])
 })
+
+// The editor keeps returning revise, so the phase must stop demanding another pass once the
+// budget is spent; otherwise the draft can never be confirmed and the turn dies at the step cap.
+test('审稿预算用尽后阶段不再要求新一轮修订，直接进入检查与确认', () => {
+  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
+  chat.runtimePresetSnapshot = { back: { entries: [{ id: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2', content: '# 检查范围\n检查正文。\n# 修复格式\n局部修订。' }] } }
+  const evidence = '人物停在门口，玩家的回应与下一步选择保留。'
+  const revise = Object.fromEntries(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'].map(key => [key, { status: 'pass', evidence }]))
+  revise.style = { status: 'revise', evidence: '补足当前场景动作描写，并保持门口停止位置。' }
+  putDreamSikeDraft(chat, identity, '<dream_plot><dream_body>他在门口。</dream_body><dream_after_format></dream_after_format></dream_plot>')
+  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
+  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'revision')
+  assert.equal(chat.dreamSikeDraft.editorialRounds, 1)
+  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
+  assert.equal(chat.dreamSikeDraft.editorialRounds, 2)
+  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'checking')
+  const checked = checkDreamSikeDraft(chat, identity, 1)
+  assert.equal(checked.checks.editorial.passed, true)
+  assert.deepEqual(checked.checks.issues, [])
+  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'confirming')
+  assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
+})
+
+// A clean review resets the budget so a later revise round is not skipped.
+test('审稿全通过会清零修订预算', () => {
+  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
+  chat.runtimePresetSnapshot = { back: { entries: [{ id: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2', content: '# 检查范围\n检查正文。\n# 修复格式\n局部修订。' }] } }
+  const evidence = '人物停在门口，玩家的回应与下一步选择保留。'
+  const clean = Object.fromEntries(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'].map(key => [key, { status: 'pass', evidence }]))
+  const revise = { ...clean, style: { status: 'revise', evidence: '补足当前场景动作描写。' } }
+  putDreamSikeDraft(chat, identity, '<dream_plot><dream_body>他在门口。</dream_body><dream_after_format></dream_after_format></dream_plot>')
+  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
+  assert.equal(chat.dreamSikeDraft.editorialRounds, 1)
+  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: clean }, {})
+  assert.equal(chat.dreamSikeDraft.editorialRounds, 0)
+})

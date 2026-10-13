@@ -62,9 +62,13 @@ export function registerTurnLifecycleHooks({
         draft?.checks?.issues?.map(issue => issue.code), draft?.checks?.editorial?.passed,
         chat.dreamSikePreparation?.preparedAt, chat.dreamSikePreparation?.ruleReadRanges?.length])
       const previous = incompleteStops.get(payload.agent)
-      const count = previous?.turn === payload.turn && previous.fingerprint === fingerprint ? previous.count + 1 : 1
-      incompleteStops.set(payload.agent, { turn: payload.turn, fingerprint, count })
-      if (count < 3 && typeof payload.agent?.steer === 'function') {
+      const sameTurn = previous?.turn === payload.turn
+      const count = sameTurn && previous.fingerprint === fingerprint ? previous.count + 1 : 1
+      // The fingerprint carries the draft version, so a turn that keeps regenerating the draft
+      // resets the repeated-stop counter. Keep a per-turn total as well so churn cannot steer forever.
+      const total = (sameTurn ? Number(previous.total) || Number(previous.count) || 0 : 0) + 1
+      incompleteStops.set(payload.agent, { turn: payload.turn, fingerprint, count, total })
+      if (count < 3 && total <= 8 && typeof payload.agent?.steer === 'function') {
         payload.agent.steer({
           id: randomUUID(), role: 'user',
           content: [{ type: 'text', text: ready

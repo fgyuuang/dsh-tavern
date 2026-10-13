@@ -170,3 +170,38 @@ test('原生工具向 Agent 暴露契约与审阅结构，审阅缺失反馈能�
   assert.match(checked.report, /Agent 判断/)
   assert.equal((await registered.get('sike_ready_draft').execute({ expectedVersion: 1 }, exec)).draft.status, 'ready')
 })
+
+// The editor reviews freshly written prose, so it keeps returning revise. Without a bounded
+// budget the draft could never be confirmed and every turn would die at the step cap.
+test('修订预算用尽后保留审稿记录但不再阻断确认', () => {
+  const { chat, identity } = fixture()
+  putDreamSikeDraft(chat, identity, BODY)
+  const findings = review()
+  findings.style = { status: 'revise', evidence: '迟疑被直接解释了，应改成停顿与递信动作。' }
+
+  const first = checkDreamSikeDraft(chat, identity, 1, { now: 100, review: findings })
+  assert.equal(first.checks.editorial.passed, false)
+  assert.ok(first.checks.issues.some(item => item.code === 'editorial-revise-style'))
+  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+
+  chat.dreamSikeDraft.editorialRounds = 2
+  const second = checkDreamSikeDraft(chat, identity, 1, { now: 200, review: findings })
+  assert.equal(second.checks.editorial.passed, true)
+  assert.deepEqual(second.checks.issues, [])
+  assert.equal(second.checks.editorial.rounds, 2)
+  assert.ok(second.checks.editorial.notes.some(note => /节制叙述|迟疑/.test(note)), '修订记录应保留在检查结果中')
+  assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
+})
+
+// Structure problems are exempt from the budget: a missing axis or unusable evidence still blocks.
+test('结构缺陷不受修订预算豁免', () => {
+  const { chat, identity } = fixture()
+  putDreamSikeDraft(chat, identity, BODY)
+  chat.dreamSikeDraft.editorialRounds = 5
+  const broken = review()
+  broken.character = { status: 'pass', evidence: '通过' }
+  const checked = checkDreamSikeDraft(chat, identity, 1, { now: 100, review: broken })
+  assert.equal(checked.checks.editorial.passed, false)
+  assert.ok(checked.checks.issues.some(item => item.code === 'editorial-invalid-character'))
+  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+})

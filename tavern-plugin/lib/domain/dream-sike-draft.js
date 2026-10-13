@@ -7,6 +7,10 @@ const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
 const MAX_FIND_CHARS = 4_000
 const MAX_REPLACEMENT_CHARS = 8_000
+// The six-axis review is a model reading freshly generated prose, so it reliably finds something
+// worth revising and an all-pass gate would never terminate. Allow this many revise-driven
+// revision rounds; later notes are kept for the record but stop blocking confirmation.
+export const DREAM_SIKE_MAX_EDITORIAL_ROUNDS = 1
 
 function str(value) { return typeof value === 'string' ? value : '' }
 function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {} }
@@ -78,7 +82,8 @@ export function dreamSikeDraftStatus(chat) {
     status: current ? str(draft.status) : 'stale',
     phase: current ? str(draft.phase) : 'stale',
     version: Number(draft.version) || 0,
-    revisionCount: Number(draft.revisionCount) || 0
+    revisionCount: Number(draft.revisionCount) || 0,
+    editorialRounds: Number(draft.editorialRounds) || 0
   }
 }
 
@@ -243,7 +248,7 @@ export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
     throw new Error('当前回合已有草稿；请使用局部修订工具')
   }
   const draft = {
-    ...identity, version: 1, status: 'draft', phase: 'draft', text, revisionCount: 0,
+    ...identity, version: 1, status: 'draft', phase: 'draft', text, revisionCount: 0, editorialRounds: 0,
     changes: [], checks: null, trace: [{ phase: 'draft', action: '草稿已建立', at: now }], updatedAt: now
   }
   const preparation = dreamSikePreparationView(chat, identity)
@@ -355,10 +360,20 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   if (needsDreamSikeEditorialReview(chat)) {
     const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
     const editorial = inspectEditorialReview(review)
-    issues.push(...editorial.issues)
+    const rounds = Number(draft.editorialRounds) || 0
+    // Structure problems (missing axis, invalid evidence) always block; revise notes only block
+    // while the revision budget lasts. Without this the editor's never-empty findings deadlock
+    // every turn: the review always returns revise, so confirmation could never succeed.
+    const exhausted = rounds > DREAM_SIKE_MAX_EDITORIAL_ROUNDS
+    const blocking = exhausted
+      ? editorial.issues.filter(item => !/^editorial-revise-/.test(item.code))
+      : editorial.issues
+    const notes = exhausted ? editorial.issues.filter(item => /^editorial-revise-/.test(item.code)) : []
+    issues.push(...blocking)
     draft.checks.editorial = {
       required: true, version: draft.version, contractDigest: str(contract?.digest),
-      passed: editorial.issues.length === 0, review: editorial.review
+      passed: blocking.length === 0, review: editorial.review,
+      rounds, ...(notes.length ? { notes: notes.map(item => item.message) } : {})
     }
   }
   if (issues.length > 0 && draft.status === 'ready') draft.status = 'draft'
