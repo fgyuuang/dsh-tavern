@@ -254,9 +254,12 @@ test('原生 defineTool 注册六个回合工具，起草、检查、修订、�
   const exec = { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 5 } } }
   const batchSchema = registered.get('sike_patch_draft').parameters
   assert.deepEqual(batchSchema.required, ['expectedVersion'])
-  assert.deepEqual(batchSchema.properties.patches.items.required, ['find', 'replacement'])
+  // The version and the patch list are annotation-only: a small model that sends "3" or a
+  // stringified array must reach the normalizer instead of failing the host's strict validator.
+  assert.equal(batchSchema.properties.expectedVersion.type, undefined)
+  assert.equal(batchSchema.properties.patches.type, undefined)
   await assert.rejects(registered.get('sike_patch_draft').execute({ expectedVersion: 1,
-    patches: [{ find: 12, replacement: 'invalid' }] }, exec), /invalid arguments/)
+    patches: [{ find: 12, replacement: 'invalid' }] }, exec))
   const read = await registered.get('sike_read_turn').execute({}, exec)
   assert.equal(read.draft, null)
   assert.equal(JSON.parse(read.report).turn, 5)
@@ -315,4 +318,30 @@ test('失败回合恢复后模型能读取草稿版本、检查状态和分页�
   const last = JSON.parse(tool.output.render({}, await tool.execute({ draftOffset: first.nextOffset }, exec))[0].text).draft
   assert.equal(last.text, '甲'.repeat(200))
   assert.equal(last.nextOffset, null)
+})
+
+// Small models routinely send "3" where an integer is declared and hand a nested array over as
+// JSON text. Both shapes must reach the draft logic, or every step of a turn is spent on a
+// rejected call and the turn dies at the step cap.
+test('草稿工具接受数字字符串版本与字符串化的 patches', async () => {
+  const chat = { id: 'chat-1', sessionId: 'session-1', mode: 'story', playPresetId: 'dream-sike-dsh', messages: [],
+    timeline: { branchId: 'branch-1', revision: 1, operations: { op: { id: 'op', kind: 'body', turn: 1, status: 'running', basedOn: { branchId: 'branch-1', revision: 1 } } } } }
+  const identity = dreamSikeTurnIdentity(chat, 'session-1', 1)
+  putDreamSikeDraft(chat, identity, '门向内开了。', 10)
+  const registered = new Map()
+  registerDreamSikeTools({
+    tools: { register(tool) { registered.set(tool.name, tool) } },
+    async chatForSession() { return chat },
+    async updateChat(_id, mutation) { return mutation(chat) },
+    activeTurnOf(exec) { return exec.agent.phase.turn }
+  })
+  const exec = { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 1 } } }
+  const patch = registered.get('sike_patch_draft')
+  const patched = await patch.execute({ expectedVersion: '1',
+    patches: JSON.stringify([{ find: '门向内开了。', replacement: '门向内开了，风灌进来。' }]) }, exec)
+  assert.equal(patched.draft.version, 2)
+  assert.match(patched.draft.text, /风灌进来/)
+  const read = registered.get('sike_read_turn')
+  const readBack = await read.execute({ draftOffset: '0', ruleLimit: '10', includeMaterials: false }, exec)
+  assert.equal(JSON.parse(readBack.report).turn, 1)
 })
