@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { lastRoundVariableChanges } from '../domain/foreground-variable-changes.js'
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
 import { gameMemoryEnabled } from '../domain/game-memory-task.js'
+import { createDreamSikeLoopGuard } from '../domain/dream-sike-loop-guard.js'
 
 // Appended once at the start of a reply, so it joins the history after the cached prefix.
 export function appendVariableChanges({ chat, payload, decision }) {
@@ -39,6 +40,7 @@ export function registerRequestHooks({
   sessionStore,
   tavernRetryLimiter,
 }) {
+  const checkDreamSikeProgress = createDreamSikeLoopGuard()
   ctx.on('agent/request', async function (payload, next) {
     const sessionId = payload.agent && payload.agent.session ? payload.agent.session.id : ''
     if (sessionId !== '') {
@@ -57,6 +59,7 @@ export function registerRequestHooks({
     const decision = await next()
     if (decision.kind === 'reject') return decision
     const chat = await chatForSession(sessionId)
+    checkDreamSikeProgress(payload, chat)
     if (chat) await synchronizeTemplateHistory(payload.agent.session, chat, session => sessionStore.flush(session))
     if (chat) await synchronizeBodyEdits(payload.agent.session, chat, session => sessionStore.flush(session), persistClearedBodyEdits)
     const prepared = await foregroundStrategies.prepareStep({
