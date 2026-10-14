@@ -29,7 +29,7 @@ test('真实 Harness 按阶段完成18步读取与确认，调用结果配对且
       else if(step===15){name='sike_put_draft';args={text:'他在门边点头，等你回应。'};assert.ok(!offered.includes('sike_check_draft'))}
       else if(step===16){name='sike_check_draft';args={expectedVersion:'1',review:JSON.stringify(axes)};assert.ok(!offered.includes('sike_put_draft'));assert.ok(!offered.includes('sike_ready_draft'))}
       else if(step===17){name='sike_ready_draft';args={expectedVersion:'1'};assert.ok(!offered.includes('sike_put_draft'))}
-      else {assert.equal(step,18);assert.deepEqual(offered,['sike_read_turn']);return [{type:'text',text:'正文已确认。'}]}
+      else {assert.equal(step,18);assert.deepEqual(offered,[]);return [{type:'text',text:'正文已确认。'}]}
       assert.ok(offered.includes(name),'only a currently available writing tool is called')
       return [{type:'tool-call',id:'call-'+step,name,arguments:JSON.stringify(args)}]
     }

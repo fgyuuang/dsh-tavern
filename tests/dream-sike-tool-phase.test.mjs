@@ -57,7 +57,7 @@ test('阶段只提供当前可用写作工具，保留资料工具，确认前�
   checkDreamSikeDraft(chat,identity,1)
   assert.equal(dreamSikeToolPhase(chat,'s',1).name,'confirming')
   readyDreamSikeDraft(chat,identity,1)
-  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,['sike_read_turn'])
+  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,[])
 })
 test('同一步的预推测修改或确认不执行，下个模型步骤可继续，无重复写入', async () => {
   let chat=fixture(); const tools=new Map()

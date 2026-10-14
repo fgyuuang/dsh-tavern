@@ -19,7 +19,7 @@ export function dreamSikeToolPhase(chat, sessionId, turn) {
   try { assertDreamSikePreparation(chat, identity) }
   catch { return phase('preparation', ['sike_prepare_turn'], '读取后保存六项写作准备，再建立主线草稿。') }
   if (!draft) return phase('draft', ['sike_put_draft'], '只建立主线草稿；平行事件由独立模块合入。')
-  if (draft.status === 'ready') return phase('ready', [], '草稿已确认。结束工具调用，返回一句完成提示。')
+  if (draft.status === 'ready') return { ...phase('ready', [], '草稿已确认。结束工具调用，返回一句完成提示。'), tools: [] }
   const parallel = dreamSikeDraftModulePlan(chat, 'parallel')
   const review = dreamSikeDraftModulePlan(chat, 'review')
   if (parallel && !draftModuleReceiptCurrent(chat, 'parallel')) return phase('modules', ['sike_run_module'], review
