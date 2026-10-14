@@ -954,6 +954,7 @@
                         h(TavernConversationPreset, { key: owner + ":preset", sessionId: owner }),
                         h(UserPreferenceProfileTab, { key: owner + ":profile", scope: { sessionId: owner }, conversationOnly: true }),
                         h("p", { className: "dsh-local-warning" }, "切换预设或长期偏好会使提示词缓存失效，首次请求会增加耗时和费用。")),
+                    h(TavernConversationModels, { key: owner + ":models", sessionId: owner, sessions: props.sessions }),
                     h(TavernConversationBackgroundModel, { key: owner, sessionId: owner }), h(TavernConversationWritingSkills, { key: owner + ":skills", sessionId: owner })) : h("p", null, "请选择一个游玩对话。")));
         }
 
@@ -987,59 +988,34 @@
 
         function TavernConversationBackgroundModel(props) {
             const h = React.createElement;
-            const [catalog, setCatalog] = React.useState([]);
-            const [selection, setSelection] = React.useState(null);
             const [tasks, setTasks] = React.useState({ variables: true, posture: true, characterDesign: false, variableFeedback: true });
-            const [saved, setSaved] = React.useState(null);
             const [features, setFeatures] = React.useState({ webSearchEnabled: false, sceneImagesEnabled: false, sceneImagesAvailable: false });
             const [loaded, setLoaded] = React.useState(false);
             const [busy, setBusy] = React.useState(false);
             const [error, setError] = React.useState("");
             const [notice, setNotice] = React.useState("");
-            const [reasoning, setReasoning] = React.useState({ key: "", value: null, error: "" });
-            const key = selection ? JSON.stringify({ provider: selection.provider, model: selection.model }) : "";
             async function load() {
                 setError("");
                 try {
                     const result = await rpc("getConversationBackgroundConfig", { sessionId: props.sessionId }, props.sessionId);
-                    setCatalog(result.modelCatalog || []); setSelection(result.backgroundModel); setSaved(result.backgroundModel);
                     setTasks(result.backgroundTasks); setFeatures({ webSearchEnabled: result.webSearchEnabled === true, sceneImagesEnabled: result.sceneImagesEnabled === true, sceneImagesAvailable: result.sceneImagesAvailable === true }); setLoaded(true);
                 } catch (err) { setError(String(err.message || err)); }
             }
             React.useEffect(() => { void load(); }, []);
-            React.useEffect(() => {
-                let active = true;
-                if (key) rpc("getBackgroundModelReasoning", JSON.parse(key), props.sessionId).then(result => {
-                    if (active) setReasoning({ key, value: result.reasoning, error: "" });
-                }, err => { if (active) setReasoning({ key, value: null, error: String(err.message || err) }); });
-                return () => { active = false; };
-            }, [key]);
             async function save(patch) {
                 if (busy || !loaded) return;
                 setBusy(true); setError(""); setNotice("");
                 try {
-                    const result = await rpc("setConversationBackgroundConfig", Object.assign({ sessionId: props.sessionId, backgroundModel: selection }, patch), props.sessionId);
-                    setSaved(result.backgroundModel); setSelection(result.backgroundModel); setTasks(result.backgroundTasks); setFeatures({ ...features, webSearchEnabled: result.webSearchEnabled, sceneImagesEnabled: result.sceneImagesEnabled });
+                    const result = await rpc("setConversationBackgroundConfig", Object.assign({ sessionId: props.sessionId }, patch), props.sessionId);
+                    setTasks(result.backgroundTasks); setFeatures({ ...features, webSearchEnabled: result.webSearchEnabled, sceneImagesEnabled: result.sceneImagesEnabled });
                     setNotice("已保存");
                     window.dispatchEvent(new CustomEvent("dsh-tavern-image-settings-changed"));
                     liveTavernView.invalidate(props.sessionId);
                 } catch (err) { setError(String(err.message || err)); }
                 finally { setBusy(false); }
             }
-            const efforts = reasoning.key === key ? reasoning.value?.efforts || [] : [];
-            const known = !selection || catalog.some(group => group.provider === selection.provider && group.models.some(model => model.id === selection.model));
             return h("div", { className: "dsh-local-runtime" },
-                h("section", { className: "dsh-local-section" }, h("h3", null, "后台模型"),
-                    h("p", { className: "dsh-tavern-settings-desc" }, "仅影响本局，下一次后台任务生效。正在运行的任务不变，保留原后台 Agent 和历史。"),
-                    h("p", { className: "dsh-tavern-settings-desc" }, "建议前台和后台使用 High 推理强度，优先保证正文输出和后台任务的质量。不推荐 Max，以免过度思考、增加等待。若更在意响应速度，可按需降低。"),
-                    h("p", { className: "dsh-local-warning" }, "切换模型或推理强度会使缓存失效，首次请求会增加耗时和费用。"),
-                    h("label", null, "后台模型", h("select", { "aria-label": "本局后台模型", className: "dsh-tavern-settings-select", value: key, disabled: !loaded || busy, onChange: event => { return save({ backgroundModel: event.target.value ? JSON.parse(event.target.value) : null }); } },
-                        h("option", { value: "" }, "跟随前台"),
-                        !known ? h("option", { value: key }, backgroundModelLabel(selection, catalog) + "（当前不可用）") : null,
-                        catalog.map(group => h("optgroup", { key: group.provider, label: group.providerName || group.provider }, group.models.map(model => h("option", { key: model.id, value: JSON.stringify({ provider: group.provider, model: model.id }) }, model.name || model.id)))))),
-                    h("label", null, "推理强度", h("select", { "aria-label": "本局后台推理强度", className: "dsh-tavern-settings-select", value: selection?.reasoningEffort || "", disabled: !key || !efforts.length || busy, onChange: event => { const next = { ...selection }; if (event.target.value) next.reasoningEffort = event.target.value; else delete next.reasoningEffort; return save({ backgroundModel: next }); } },
-                        h("option", { value: "" }, key ? "模型默认" : "跟随前台"), efforts.map(item => h("option", { key: item.id, value: item.id }, item.name || item.id)))),
-                    ), h("section", { className: "dsh-local-section" }, h("h3", null, "后台结算"), h("p", { className: "dsh-local-help" }, "从下一次后台任务生效，正在运行的任务不变。"),
+                h("section", { className: "dsh-local-section" }, h("h3", null, "后台结算"), h("p", { className: "dsh-local-help" }, "从下一次后台任务生效，正在运行的任务不变。"),
                     [["variables", "变量结算", "MVU 卡建议开启，否则变量和状态栏可能不再同步。普通卡不执行此任务。"], ["posture", "人物姿势结算", "总结本轮结束时人物的位置、动作和姿势。"], ["variableFeedback", "变量回灌前台", "每轮把上一轮变化的变量最新值告诉前台（单项最多 100 字），减少时间、地点、数值前后不一致。"]].map(([name, title, description]) => h("label", { key: name, className: "dsh-tavern-background-task" },
                         h("span", null, title, h("span", { className: "dsh-tavern-settings-desc" }, description)),
                         h("input", { type: "checkbox", role: "switch", "aria-label": title, checked: tasks[name], disabled: !loaded || busy, onChange: event => { return save({ backgroundTasks: { [name]: event.target.checked } }); } }))),
@@ -1499,6 +1475,7 @@
                     React.createElement(TavernStatusBarSetting, { sessionId: props.gameId }),
                     React.createElement(TavernConversationPreset, { sessionId: props.gameId, includeAuthorSettings: false }),
                     React.createElement(UserPreferenceProfileTab, { scope: { sessionId: props.gameId }, conversationOnly: true }),
+                    React.createElement(TavernConversationModels, { sessionId: props.gameId, sessions: ctx.sessions }),
                     React.createElement(TavernConversationBackgroundModel, { sessionId: props.gameId }),
                     React.createElement(TavernConversationWritingSkills, { sessionId: props.gameId }))
             }), "dsh-tavern: runtime workbench module");

@@ -76,6 +76,7 @@ import { estimateWorldBookTokens, historyScanDepth } from './domain/worldbook-ac
 import { createWorldbookFilter, WORLD_BOOK_FILTER_TOOLS } from './domain/worldbook-filter.js'
 import { createWorldbookPrefilter } from './domain/worldbook-prefilter.js'
 import { adoptConversationFeatures, adoptConversationBackground, patchConversationBackground } from './domain/conversation-background.js'
+import { createConversationModelSettings } from './domain/conversation-model-settings.js'
 import { clearLegacyTavernDefault } from './domain/legacy-agent-default.js'
 import { conversationStateAtTurn, conversationForkBoundary } from './domain/conversation-fork-point.js'
 import { createCardResponseTest } from './domain/card-response-test.js'
@@ -2832,6 +2833,29 @@ export async function apply(ctx) {
     chats: { forSession: chatForSession, update: updateChat }, timeline: storyTimeline,
     isBusy: chat => backgroundTasks.activity(chat).busy || Boolean(chat.regenInProgress) || agentRegistry.get(chat.sessionId)?.phase?.kind === 'running'
   })
+  const modelSettingsBusy = chat => agentRegistry.get(chat.sessionId)?.phase?.kind === 'running' || backgroundTasks.activity(chat).busy
+    || tavernScriptDispatch.status(chat.sessionId).busy || ['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus)
+    || Boolean(chat.regenInProgress) || replayFailedTurnActive(chat.id)
+  const conversationModelSettings = createConversationModelSettings({
+    read: async sessionId => {
+      const chat = await chatForSession(sessionId)
+      return chat && groupOfMode(chat.mode) === 'play' ? chat : null
+    },
+    update: (id, mutation) => updateChat(id, mutation, { source: 'models.switch-conversation' }),
+    selection: modelSelection, catalog: tavernModelCatalog,
+    resolve: route => llm.resolveCallConfig(route), readSettings: readTavernSettings, updateSettings: updateTavernSettings,
+    isBusy: modelSettingsBusy,
+    async select(sessionId, route) {
+      const target = await waitForWritableSession({ registry: agentRegistry, sessions: sessionStore, sessionId, sleep })
+      const chat = await chatForSession(sessionId)
+      if (!chat || modelSettingsBusy(chat)) throw new Error('请等待前后台任务完成后再调整模型')
+      const controller = ctx.get('sessionController')
+      if (!target.agent || typeof controller?.agents?.selectForNextRequest !== 'function') throw new Error('原生模型选择器不可用')
+      controller.agents.selectForNextRequest(target.agent, route)
+      await sessionStore.flush(target.session)
+    },
+    publish: sessionId => sessionSignals.publish(sessionId, { kind: 'tavern-state', version: 'models:' + Date.now() })
+  })
   const scriptNavigation = createScriptNavigation({
     chats: { forSession: chatForSession, update: updateChat }, readScript, scripts: scriptContinuity,
     exclusive: backgroundTasks.exclusive,
@@ -3983,6 +4007,8 @@ export async function apply(ctx) {
         const change = await updateCard(args && args.path, args && args.patch)
         return { card: change.card, changed: change.changed }
       }
+      case 'getConversationModelConfig': return await conversationModelSettings.get(str(args?.sessionId))
+      case 'setConversationModelConfig': return await conversationModelSettings.apply(str(args?.sessionId), args)
       case 'getConversationBackgroundModel':
       case 'getConversationBackgroundConfig': {
         const chat = await backgroundConfigForSession(str(args?.sessionId))
@@ -3995,7 +4021,7 @@ export async function apply(ctx) {
         const chat = await chatForSession(sessionId)
         if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
         const selection = normalizeBackgroundModel(args.backgroundModel)
-        if (args.backgroundModel !== null && !selection) throw new Error('后台模型配置无效')
+        if (Object.hasOwn(args, 'backgroundModel') && args.backgroundModel !== null && !selection) throw new Error('后台模型配置无效')
         if (selection) {
           const catalog = await tavernModelCatalog()
           if (!catalog.some(group => group.provider === selection.provider && group.models.some(model => model.id === selection.model))) throw new Error('所选后台模型不可用')
