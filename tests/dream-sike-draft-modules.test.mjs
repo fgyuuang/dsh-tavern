@@ -116,6 +116,23 @@ test('失败回合仍使用原玩家行动验证模块回执，恢复草稿不�
   assert.equal(draftModuleReceiptCurrent(h.get(), 'review'), true)
 })
 
+test('旧中断正文仍标running时，模块宏使用当前草稿行动并拒绝旧分支绑定', t => {
+  const h = fixture(t), chat = h.get()
+  chat.runtimePresetSnapshot.front.entries[0].content += '\n当前行动：{{lastusermessage}}'
+  const current = chat.timeline.operations.op
+  chat.timeline.operations = { old: { ...current, id: 'old', turn: 1, userText: 'OLD_ACTION' }, op: current }
+  assert.match(dreamSikeDraftModulePlan(chat, 'review').authorContext, /当前行动：开门/)
+  assert.doesNotMatch(dreamSikeDraftModulePlan(chat, 'review').authorContext, /OLD_ACTION/)
+  current.status = 'failed'
+  assert.match(dreamSikeDraftModulePlan(chat, 'review').authorContext, /当前行动：开门/)
+  chat.timeline.operations.newer = { ...current, id: 'newer', turn: 3, status: 'running', userText: 'NEW_ACTION' }
+  assert.match(dreamSikeDraftModulePlan(chat, 'review').authorContext, /当前行动：NEW_ACTION/)
+  chat.dreamSikeDraft = { ...chat.dreamSikeDraft, branchId: 'other-branch', operationId: 'old' }
+  assert.match(dreamSikeDraftModulePlan(chat, 'review').authorContext, /当前行动：NEW_ACTION/)
+  chat.timeline.operations.crossBranch = { ...current, id: 'cross', turn: 99, status: 'running', userText: 'WRONG_BRANCH', basedOn: { branchId: 'other-branch', revision: 4 } }
+  assert.doesNotMatch(dreamSikeDraftModulePlan(chat, 'review').authorContext, /WRONG_BRANCH/)
+})
+
 test('过期模块、取消与失败不能改写当前草稿或变量', async t => {
   let release
   const h = fixture(t, async input => {
@@ -138,6 +155,44 @@ test('原生合并保持 HTML 字符字面值，不把 $& 作为正则替换', a
   assert.ok(h.get().dreamSikeDraft.text.includes(literal))
   assert.throws(() => inspectDraftModuleResult('parallel', '<dream_parallel_event>缺少换行</dream_parallel_event>'), /1–3/)
   assert.throws(() => inspectDraftModuleResult('review', JSON.stringify({ character: { status: 'pass', evidence: '太短' } })), /六项/)
+})
+
+test('平行模块仅补齐合法事件正文缺失的外壳，不改写内容', () => {
+  const body = '钟楼|角色收起信件。<br>他只知信上内容。\n码头|船员准备缆绳。<br>船尚未靠岸。'
+  assert.equal(inspectDraftModuleResult('parallel', body).text, '<dream_parallel_event>' + body + '</dream_parallel_event>')
+  assert.equal(inspectDraftModuleResult('parallel', parallel).text, parallel)
+  for (const invalid of [JSON.stringify(review), '<script>alert(1)</script>钟楼|事件<br>',
+    '<div>钟楼|事件<br></div>', '<think>推理</think>钟楼|事件<br>', '<UpdateVariable>数据</UpdateVariable>钟楼|事件<br>',
+    '<dream_parallel_event>钟楼|事件<br>', '钟楼|事件', Array(4).fill('钟楼|事件<br>').join('\n')]) {
+    assert.throws(() => inspectDraftModuleResult('parallel', invalid))
+  }
+})
+
+test('共享后台反馈当前模块类型，格式纠正只提交本次场外事件', async t => {
+  const h = fixture(t, async input => {
+    assert.match(input.system, /【本次唯一提交任务】\n当前只执行 parallel/)
+    const rejected = JSON.parse(await input.onToolCall({ name: 'sike_submit_module', arguments: { text: JSON.stringify(review) } }))
+    assert.equal(rejected.currentKind, 'parallel')
+    assert.equal(rejected.retryable, true)
+    assert.match(rejected.submissionHint, /dream_parallel_event/)
+    const accepted = JSON.parse(await input.onToolCall({ name: 'sike_submit_module', arguments: { text: '钟楼|角色收起信件。<br>人物只知亲历事实。' } }))
+    assert.equal(accepted.ok, true)
+    return { traceSessionId: 'bg', traceBoundary: 8 }
+  })
+  const result = await h.run('parallel')
+  assert.match(result.draft.text, /<dream_parallel_event>钟楼\|/)
+  assert.deepEqual(h.get().messages, [])
+  assert.equal(h.get().variables.hp, 10)
+})
+
+test('后台限流原样传播，保留草稿且不转换成可反复重试的格式反馈', async t => {
+  const rateLimit = Object.assign(new Error('429: Agnes 免费用户限流'), { code: 'RATE_LIMIT' })
+  const h = fixture(t, async () => { throw rateLimit })
+  await assert.rejects(h.run('parallel'), error => error === rateLimit)
+  assert.equal(h.get().dreamSikeDraft.text, main)
+  assert.deepEqual(h.get().messages, [])
+  assert.equal(h.get().variables.hp, 10)
+  assert.equal(h.calls(), 1)
 })
 
 test('独立平行合并保护角色卡脚本中的协议字面值', async t => {

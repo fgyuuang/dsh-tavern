@@ -22,8 +22,17 @@ export function dreamSikeDraftModulePlan(chat, kind) {
   const compiled = compileDreamSikeContract(chat.runtimePresetSnapshot)
   const entries = compiled?.deferredDraft?.entries.filter(entry => entry.moduleKind === kind) || []
   if (!entries.length || compiled.agentContract.outputMode !== 'plot') return null
-  const operation = Object.values(chat.timeline?.operations || {}).find(operation => operation.kind === 'body' && operation.status === 'running')
-    || chat.timeline?.operations?.[chat.dreamSikeDraft?.operationId]
+  const timeline = chat.timeline || {}, draft = chat.dreamSikeDraft
+  const matchesBranch = operation => operation?.kind === 'body' && operation.basedOn?.branchId === timeline.branchId
+    && operation.basedOn?.revision === timeline.revision
+  const running = Object.values(timeline.operations || {}).filter(operation => matchesBranch(operation) && operation.status === 'running')
+    .sort((a, b) => Number(b.turn) - Number(a.turn) || Number(b.createdAt || 0) - Number(a.createdAt || 0))[0]
+  const bound = timeline.operations?.[draft?.operationId]
+  const validDraft = ['draft', 'ready'].includes(draft?.status) && draft.branchId === timeline.branchId
+    && draft.storyRevision === timeline.revision && draft.turn === bound?.turn && matchesBranch(bound)
+  // An interrupted older operation can still say running. The current draft owns its action;
+  // before a new draft exists, the newest running turn owns it instead of the first map entry.
+  const operation = validDraft && (!running || Number(bound.turn) >= Number(running.turn)) ? bound : running
   const resolved = resolveRuntimePresetMacros(compiled, { charName: chat.cardName, macroState: chat.macroState, lastUserMessage: operation?.userText })
   const module = resolveRuntimePresetMacros({ front: { entries } }, { charName: chat.cardName, macroState: resolved.macroState }).snapshot
   const authorContext = kind === 'review' ? resolved.snapshot.text : ''
@@ -43,9 +52,15 @@ export function inspectDraftModuleResult(kind, text) {
     || /<\/?(?:UpdateVariable|initvar|dream_body|dream_plot|dream_option|dream_big_discuss|dream_discuss|dream_summary)\b/i.test(text)) throw new Error('模块仅接受当前剧情或简短审稿结果，不能含正文、变量或私有推理')
   if (kind === 'parallel') {
     const match = /^\s*<dream_parallel_event>([\s\S]*?)<\/dream_parallel_event>\s*$/i.exec(text)
-    const rows = match?.[1].trim().split(/\r?\n/).filter(line => line.trim())
-    if (!rows || rows.length < 1 || rows.length > 3 || rows.some(line => !line.includes('|') || !/<br\s*\/?\s*>/i.test(line))) throw new Error('依照原作者格式提交 1–3 行地点|事件，每行至少一个 <br>')
-    return { text: text.trim() }
+    const bare = text.trim()
+    // The model often supplies valid event rows without the transport wrapper. Add only that
+    // wrapper; partial tags, another module's JSON, code and arbitrary HTML remain invalid.
+    const unwrapped = !match && !/[<>]/.test(bare.replace(/<br\s*\/?\s*>/gi, ''))
+      && !/^\s*[\[{]/.test(bare) && !bare.includes('```')
+    const body = match?.[1] ?? (unwrapped ? bare : null)
+    const rows = body?.trim().split(/\r?\n/).filter(line => line.trim())
+    if (!rows || rows.length < 1 || rows.length > 3 || rows.some(line => !line.includes('|') || !/<br\s*\/?\s*>/i.test(line))) throw new Error('当前模块 parallel：提交 1–3 行地点|事件，每行至少一个 <br>，仅使用 dream_parallel_event 外壳；审稿 JSON 属于后续 review 模块')
+    return { text: match ? bare : '<dream_parallel_event>' + body + '</dream_parallel_event>' }
   }
   const review = JSON.parse(text)
   if (!review || typeof review !== 'object' || Array.isArray(review) || Object.keys(review).length !== DREAM_SIKE_REVIEW_AXES.length
@@ -120,11 +135,14 @@ export function createDreamSikeDraftModules({ read, update, tasks, run, selectio
       const model = selection(chat); if (!model) throw new Error('没有可用的独立模块模型配置')
       taskRun = await tasks.begin(chat, 'dream-draft-module', { requestId: 'sike-module:' + randomUUID(), bindExistingSession: true })
       let result = null
+      const submission = kind === 'parallel'
+        ? '当前只执行 parallel 场外事件。用 sike_submit_module({text:"<dream_parallel_event>场外地点|可观察的事件。<br>角色仅知亲历事实。</dream_parallel_event>"}) 提交 1–3 行，不在本次提交六维审稿 JSON。'
+        : '当前只执行 review 六维审稿。用 sike_submit_module({text:JSON.stringify({character:{status:"pass",evidence:"具体正文依据至少八个字符"},knowledge:{status:"pass",evidence:"具体正文依据至少八个字符"},style:{status:"pass",evidence:"具体正文依据至少八个字符"},continuity:{status:"pass",evidence:"具体正文依据至少八个字符"},playerAgency:{status:"pass",evidence:"具体正文依据至少八个字符"},format:{status:"pass",evidence:"具体正文依据至少八个字符"}})}) 提交；按实际正文填 pass 或 revise 及依据。'
       const moduleSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
       trace = await run({ sessionId: chat.sessionId, task: 'dream-draft-module', selection: model, persistent: true,
         persistentSessionId: taskRun.participantRequest.sessionId || '', rewindTo: taskRun.participantRequest.rewindTo,
         signal: moduleSignal, onPersistentSessionReady: id => taskRun.bindSession(id, { stateOnly: true }),
-        system: '你在正式提交之前独立执行选定作者模块：' + kind + '。遵循下列作者原文的内容职责；旧文本传输标签与私有思考输出由原生工具协议取代。不提交正式剧情或变量，也不创建其他 Agent。parallel 只返回 dream_parallel_event，按主线时间继续场外事件；review 返回 character/knowledge/style/continuity/playerAgency/format 六项 {status:"pass"或"revise",evidence:"具体短依据"} JSON，不能写完整推理。用 sike_submit_module 提交，成功后停止。\n【作者模块原文】\n' + plan.rules + (plan.authorContext ? '\n【已选正文写法】\n' + plan.authorContext : ''),
+        system: '你在正式提交之前独立执行选定作者模块：' + kind + '。遵循下列作者原文的内容职责；旧文本传输标签与私有思考输出由原生工具协议取代。不提交正式剧情或变量，也不创建其他 Agent。用 sike_submit_module 提交，成功后停止。\n【作者模块原文】\n' + plan.rules + (plan.authorContext ? '\n【已选正文写法】\n' + plan.authorContext : '') + '\n【本次唯一提交任务】\n' + submission,
         turnContext: '【当前草稿，尚未发生】\n' + draft.text + '\n【当前回合行动】\n' + (chat.timeline.operations[identity.operationId]?.userText || '')
           + '\n【已结算人物状态】\n' + (chat.posture || '') + '\n【当前变量事实】\n' + JSON.stringify(plan.state)
           + '\n【最近正式剧情】\n' + JSON.stringify(chat.messages.slice(-4).map(message => ({ role: message.role, text: message.projectionText ?? message.sourceText ?? message.text }))),
@@ -135,7 +153,7 @@ export function createDreamSikeDraftModules({ read, update, tasks, run, selectio
           const args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments
           result = inspectDraftModuleResult(kind, args?.text)
           return JSON.stringify({ ok: true, module: kind })
-        } catch (error) { return JSON.stringify({ ok: false, retryable: true, error: error.message }) } }
+        } catch (error) { return JSON.stringify({ ok: false, retryable: true, currentKind: kind, error: error.message, submissionHint: submission }) } }
       })
       moduleSignal.throwIfAborted()
       if (!result) throw new Error('独立模块未提交有效结果，草稿已保留')
