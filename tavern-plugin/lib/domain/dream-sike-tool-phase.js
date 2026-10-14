@@ -9,7 +9,7 @@ export function dreamSikeToolPhase(chat, sessionId, turn) {
   try { identity = dreamSikeTurnIdentity(chat, sessionId, turn) } catch { return null }
   const candidate = chat.dreamSikeDraft
   const draft = candidate?.operationId === identity.operationId && candidate.branchId === identity.branchId && candidate.turn === turn ? candidate : null
-  const phase = (name, tools, instruction) => ({ name, tools: ['sike_read_turn', ...tools], instruction,
+  const phase = (name, tools, instruction, moduleKind = null) => ({ name, tools: ['sike_read_turn', ...tools], instruction, moduleKind,
     context: { turn, operationId: identity.operationId, expectedVersion: draft?.version ?? null,
       draftStatus: draft?.status ?? null, checkVersion: draft?.checks?.version ?? null,
       blockingIssues: (draft?.checks?.issues || []).map(issue => ({ code: issue.code, message: issue.message })),
@@ -23,8 +23,8 @@ export function dreamSikeToolPhase(chat, sessionId, turn) {
   const parallel = dreamSikeDraftModulePlan(chat, 'parallel')
   const review = dreamSikeDraftModulePlan(chat, 'review')
   if (parallel && !draftModuleReceiptCurrent(chat, 'parallel')) return phase('modules', ['sike_run_module'], review
-    ? '调用 review；宿主先更新过期平行事件，再整体审稿。' : '调用 parallel 补齐平行事件，再检查完整草稿。')
-  if (review && !draftModuleReceiptCurrent(chat, 'review')) return phase('review', ['sike_run_module'], '调用 review 审稿；使用返回的当前版本和缺陷。')
+    ? '调用 review；宿主先更新过期平行事件，再整体审稿。' : '调用 parallel 补齐平行事件，再检查完整草稿。', review ? 'review' : 'parallel')
+  if (review && !draftModuleReceiptCurrent(chat, 'review')) return phase('review', ['sike_run_module'], '调用 review 审稿；使用返回的当前版本和缺陷。', 'review')
   if (review && Object.values(draft.modules.review.review || {}).some(axis => axis.status === 'revise')) {
     // Only spend the revision budget on revise rounds; afterwards the notes still reach the check
     // step but no longer demand another editor pass, so the turn can reach confirmation.
@@ -42,9 +42,9 @@ export function dreamSikeToolPhase(chat, sessionId, turn) {
 /** Shared by the model prompt and rejected out-of-phase calls; never relies on old tool results. */
 export function dreamSikePhaseInstruction(phase) {
   if (!phase) return ''
-  return '【当前执行阶段】' + JSON.stringify({ phase: phase.name, allowedTools: phase.tools, ...phase.context })
+  return '【当前执行阶段】' + JSON.stringify({ phase: phase.name, allowedTools: phase.tools, moduleKind: phase.moduleKind, ...phase.context })
     + '\n' + phase.instruction
-    + ' 只调用 allowedTools 中的写作工具；expectedVersion 使用此处当前值，不能沿用历史版本。每个模型步骤只执行一次写作状态变更；收到结果后依据新版本继续，其他修改合并进 patches。'
+    + ' 只调用 allowedTools 中的写作工具；expectedVersion 使用此处当前值，不能沿用历史版本。每个模型步骤只执行一次写作状态变更；收到结果后依据新版本继续，其他修改合并进 patches。规则续页只使用实际返回的nextOffset，不在同一步猜测后续页。'
 }
 
 export function applyDreamSikeToolPhase(assembly, phase) {
@@ -52,7 +52,9 @@ export function applyDreamSikeToolPhase(assembly, phase) {
   const allowed = new Set(phase.tools)
   const keep = name => !names.has(name) || allowed.has(name)
   return { ...assembly,
-    tools: (assembly.tools || []).filter(tool => keep(tool.name)),
+    tools: (assembly.tools || []).filter(tool => keep(tool.name)).map(tool => tool.name === 'sike_run_module' && phase.moduleKind
+      ? { ...tool, parameters: { ...tool.parameters, properties: { ...tool.parameters?.properties,
+        kind: { ...tool.parameters?.properties?.kind, enum: [phase.moduleKind] } } } } : tool),
     sections: [...(assembly.sections || []).filter(section => !section.name?.startsWith('tool:') || keep(section.name.slice(5))),
       { name: 'dream-sike-current-phase', text: dreamSikePhaseInstruction(phase) }]
   }

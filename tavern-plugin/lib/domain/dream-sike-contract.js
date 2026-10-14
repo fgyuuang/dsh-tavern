@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 11
+const VERSION = 12
 export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
   '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
   '27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'f9b03e19-fd96-4782-8867-73ad2cbabfb9',
@@ -176,7 +176,7 @@ export function compileDreamSikeContract(snapshot) {
   const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
   const instruction = outputModeInstruction(outputMode) + (outputMode === 'plot' && followupEntries.length
     ? '\n【后续互动顺序】本局选定的行动选项与思客大调查、说书共创及小摘要由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option、dream_big_discuss、dream_discuss 或 dream_summary，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
-    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿，禁止前台直接生成平行区块。启用八股超杀或自检修复时，sike_run_module(kind="review", expectedVersion) 会先自动更新缺失或过期的平行事件，再独立审阅完整草稿。使用返回版本，把同次审稿缺陷合并到 sike_patch_draft 的 patches 数组一次局部修改，修订次数不设上限；修改后再次 review。全部 pass 后 sike_check_draft、sike_ready_draft，整体提交一次，变量结算依据包含平行事件的完整最终正文。' : '')
+    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿。启用八股超杀或自检修复时，review 会先更新缺失或过期的平行事件，再独立审阅完整草稿。使用返回的当前版本和执行阶段，按实际缺陷批量局部修改；局部修订次数不设上限。自动审稿不要求不断重写直到所有文风建议消失，保留剩余建议作为备注后进入检查；协议和审阅结构问题仍须处理。sike_check_draft 通过后 sike_ready_draft，整体提交一次，变量结算依据完整最终正文。' : '')
   const deferredFollowup = { entries: outputMode === 'plot' ? followupEntries : [],
     digest: createHash('sha256').update(JSON.stringify(followupEntries)).digest('hex') }
   const deferredDraft = { entries: outputMode === 'plot' ? draftEntries : [],

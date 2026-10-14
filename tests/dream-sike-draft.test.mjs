@@ -8,6 +8,19 @@ import {
 } from '../tavern-plugin/lib/domain/dream-sike-draft.js'
 import { registerDreamSikeTools } from '../tavern-plugin/lib/tools/dream-sike.js'
 
+test('独立模块额度耗尽暂停前台，保留原草稿与正式历史，不反复调用', async () => {
+  const {chat,identity}=fixture()
+  putDreamSikeDraft(chat,identity,'门口的人等你回应。')
+  const before=structuredClone(chat),registered=new Map(),cancellations=[]
+  registerDreamSikeTools({tools:{register:tool=>registered.set(tool.name,tool)},chatForSession:async()=>chat,
+    updateChat:async(_id,mutate)=>mutate(chat),activeTurnOf:()=>5,
+    draftModules:{execute:async()=>{throw Error('429: API rate limit for free users')}}})
+  const exec={agent:{session:{id:'session-1'},phase:{turn:5},cancel:reason=>cancellations.push(reason)}}
+  await assert.rejects(registered.get('sike_run_module').execute({kind:'review',expectedVersion:'1'},exec),/已暂停.*草稿已保留/)
+  assert.deepEqual(cancellations,[{kind:'parent'}])
+  assert.deepEqual(chat,before)
+})
+
 function fixture() {
   const chat = {
     id: 'chat-1', sessionId: 'session-1', mode: 'story', playPresetId: 'dream-sike-dsh',
@@ -255,10 +268,9 @@ test('原生 defineTool 注册六个回合工具，起草、检查、修订、�
   const exec = { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 5 } } }
   const batchSchema = registered.get('sike_patch_draft').parameters
   assert.deepEqual(batchSchema.required, ['expectedVersion'])
-  // The version and the patch list are annotation-only: a small model that sends "3" or a
-  // stringified array must reach the normalizer instead of failing the host's strict validator.
-  assert.equal(batchSchema.properties.expectedVersion.type, undefined)
-  assert.equal(batchSchema.properties.patches.type, undefined)
+  // Both the native structure and equivalent JSON text reach the normalizer.
+  assert.deepEqual(batchSchema.properties.expectedVersion.oneOf.map(schema => schema.type), ['integer','string'])
+  assert.deepEqual(batchSchema.properties.patches.oneOf.map(schema => schema.type), ['array','string'])
   await assert.rejects(registered.get('sike_patch_draft').execute({ expectedVersion: 1,
     patches: [{ find: 12, replacement: 'invalid' }] }, exec))
   const read = await registered.get('sike_read_turn').execute({}, exec)

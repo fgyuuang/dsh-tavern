@@ -44,3 +44,14 @@ test('rc.1 snapshot-only Session still limits requests to one retry', async () =
   assert.equal(await limiter.handle(payload, async () => {}), undefined)
   assert.equal(events.filter(event => event.type === 'llm/retry').length, 1)
 })
+
+test('免费额度耗尽不自动重试，也不交给宿主重试；普通瞬时429仍可重试一次', async () => {
+  const {session,payload}=fixture()
+  payload.retryPolicy.mode='always'
+  payload.failure={code:'UNKNOWN',message:'429: You’ve reached the API rate limit for free users. Upgrade to a Token Plan.'}
+  const limiter=createTavernRetryLimiter({owns:async()=>true,wait:async()=>true})
+  assert.equal(await limiter.handle(payload,async()=>{throw Error('must not delegate retry')}),undefined)
+  assert.equal(session.events.length,0)
+  payload.failure={code:'RATE_LIMIT',message:'429: too many requests'}
+  assert.deepEqual(await limiter.handle(payload,async()=>{}),{kind:'retry'})
+})

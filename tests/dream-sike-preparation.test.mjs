@@ -43,10 +43,12 @@ test('preparation rejects missing fields, excessive prose and reasoning protocol
   chat.preparedWorldBookContext = '书'.repeat(5000)
   const read = recordDreamSikeTurnRead(chat, identity)
   assert.equal(read.materials.worldbookTruncated, true)
-  for (const value of [{ ...brief(), scene: '短' }, { ...brief(), scene: '字'.repeat(401) }, { ...brief(), scene: '<think>完整思考过程</think>' }, { ...brief(), reasoning: '额外字段' }]) {
+  for (const value of [{ ...brief(), scene: ' ' }, { ...brief(), scene: '字'.repeat(401) }, { ...brief(), scene: '<think>完整思考过程</think>' }, { ...brief(), reasoning: '额外字段' }]) {
     assert.throws(() => prepareDreamSikeTurn(chat, identity, value))
   }
   assert.equal(chat.dreamSikePreparation.brief, null)
+  prepareDreamSikeTurn(chat, identity, { ...brief(), scene: '门口', stopAt: '等玩家回应' })
+  assert.equal(chat.dreamSikePreparation.brief.stopAt, '等玩家回应')
 })
 test('changed contract, branch, operation and turn cannot reuse a read or preparation', () => {
   for (const change of [i => ({ ...i, branchId: 'other' }), i => ({ ...i, turn: 2 }), i => ({ ...i, operationId: 'new' })]) {

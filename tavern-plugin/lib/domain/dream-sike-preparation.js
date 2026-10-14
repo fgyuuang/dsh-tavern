@@ -89,8 +89,8 @@ export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { 
   const normalized = {}
   for (const key of FIELDS) {
     const value = str(brief[key]).trim()
-    if (value.length < 8 || value.length > 400 || hasPrivateWritingProtocol(value)) {
-      throw new Error(key + ' 需 8–400 字符的事实或执行约束；不要提交完整思考过程')
+    if (!value || value.length > 400 || hasPrivateWritingProtocol(value)) {
+      throw new Error(key + ' 需非空且不超过400字符的事实或执行约束；不要提交完整思考过程')
     }
     normalized[key] = value
   }

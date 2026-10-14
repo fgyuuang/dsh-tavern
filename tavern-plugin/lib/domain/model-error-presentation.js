@@ -1,5 +1,14 @@
 // Some gateways echo the entire request inside their validation error. This
 // boundary keeps that payload out of turn/end and the visible conversation.
+export function exhaustedModelQuota(error) {
+  const seen = new Set()
+  for (let current = error; current && !seen.has(current); current = current.cause) {
+    seen.add(current)
+    if (current.code === 'QUOTA_EXCEEDED' || /free users|insufficient_quota|quota (?:has been )?exceeded|exceeded.*quota|额度.*(?:耗尽|用完)/i.test(String(current.message || ''))) return true
+  }
+  return false
+}
+
 export function presentModelError(error) {
   const message = String(error?.message ?? error ?? '')
   const status = message.match(/^\s*(?:HTTP\s*)?([45]\d\d)\b/i)?.[1]

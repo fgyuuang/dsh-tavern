@@ -1,5 +1,6 @@
 import { sessionEvents } from './session-events.js'
 import { randomUUID } from 'node:crypto'
+import { exhaustedModelQuota } from './model-error-presentation.js'
 
 const POLICY_KEY = 'dsh-tavern:max-attempts:2'
 const MAX_RETRIES = 1
@@ -43,6 +44,7 @@ export function createTavernRetryLimiter(options = {}) {
 
   async function handle(payload, next) {
     if (!await owns(payload.agent)) return next()
+    if (exhaustedModelQuota(payload.failure)) return undefined
     if (!retryable(payload)) return next()
     const session = payload.agent && payload.agent.session
     if (!session || typeof session.append !== 'function') return next()
