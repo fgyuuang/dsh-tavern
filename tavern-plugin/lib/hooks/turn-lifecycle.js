@@ -49,6 +49,8 @@ export function registerTurnLifecycleHooks({
     const chat = await chatForSession(sessionId)
     const dreamMode = chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')
     const draft = dreamMode ? readDreamSikeDraft(chat) : null
+    if (dreamMode && draft?.status === 'committed' && draft.turn === payload.turn
+      && draft.sessionId === sessionId && draft.branchId === chat.timeline?.branchId && chat.nativeCommits?.[String(payload.turn)]) return
     let ready = draft?.status === 'ready' && draft.turn === payload.turn && draft.sessionId === sessionId
       && draft.branchId === chat.timeline?.branchId && draft.storyRevision === chat.timeline?.revision
     if (ready) {
@@ -57,7 +59,7 @@ export function registerTurnLifecycleHooks({
       try { readyDreamSikeDraft(structuredClone(chat), dreamSikeTurnIdentity(chat, sessionId, payload.turn), draft.version) }
       catch { ready = false }
     }
-    if (dreamMode && (!ready || !assistant?.text)) {
+    if (dreamMode && (!ready || assistant === null)) {
       const fingerprint = JSON.stringify([draft?.version, draft?.status, draft?.checks?.version,
         draft?.checks?.issues?.map(issue => issue.code), draft?.checks?.editorial?.passed,
         chat.dreamSikePreparation?.preparedAt, chat.dreamSikePreparation?.ruleReadRanges?.length])
@@ -84,7 +86,7 @@ export function registerTurnLifecycleHooks({
       throw new Error(message)
     }
     incompleteStops.delete(payload.agent)
-    if (assistant === null || assistant.text === '') {
+    if (assistant === null || (assistant.text === '' && !(dreamMode && ready))) {
       const reasoningOnly = assistant !== null && assistant.reasoningOnly === true
       const message = reasoningOnly
         ? '模型本轮只返回了思考过程，没有返回正文；请重新生成本轮正文。'

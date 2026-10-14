@@ -370,12 +370,13 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   register(defineTool({
     name: 'sike_ready_draft',
-    description: '所有检查和修订完成后，最后确认当前版本正文。成功后草稿锁定，应立即结束回合并返回一句简短完成提示；正式正文由宿主提交一次。',
+    description: '所有检查和修订完成后，最后确认当前版本正文。成功后草稿锁定，宿主立即结束回合并提交正式正文一次，不需要额外模型回复。',
     parameters: { expectedVersion: integerInput('已检查通过的草稿版本，整数', true) },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, followedVersion(chat, identity, args.expectedVersion)), 'draft.ready')
-      return { report: '版本 ' + draft.version + ' 已确认并锁定。停止工具调用，结束本回合，返回一句简短完成提示；宿主将从已确认草稿提交正式正文一次。', draft }
+      exec.concludeTurn?.()
+      return { report: '版本 ' + draft.version + ' 已确认并锁定。宿主立即结束本回合，从已确认草稿提交正式正文一次。', draft }
     }
   }))
 }

@@ -58,7 +58,7 @@ import { installHostSessionPatch } from './domain/host-session-patch.js'
 import { installHostSubprocessPatch } from './domain/host-subprocess-patch.js'
 import { migrateInstalledLegacySessions } from './domain/legacy-session-migration.js'
 import { measureForegroundPressure } from './domain/foreground-context-pressure.js'
-import { replaceSessionSurface } from './domain/session-surface-mutations.js'
+import { projectAssistantReply } from './domain/session-reply-projection.js'
 import { createPresetDiagnostics } from './domain/preset-diagnostics.js'
 import { createIncrementalReplyView } from './domain/incremental-reply-view.js'
 import { createRequestPerformance } from './domain/request-performance.js'
@@ -4571,18 +4571,7 @@ export async function apply(ctx) {
   }
 
   function replaceAssistantReply(session, result, bodyText) {
-    if (result === null || result.text === bodyText) return
-    const previous = result.event && result.event.data && result.event.data.message
-    if (previous === null || typeof previous !== 'object') return
-    replaceSessionSurface(session, 'assistant/message', {
-      turn: Number(result.event.data && result.event.data.turn) || 0,
-      step: Number(result.event.data && result.event.data.step) || 1,
-      message: Object.assign({}, previous, {
-        id: randomUUID(),
-        source: { kind: 'model', provider: 'dsh-tavern', model: 'reply-projection' },
-        content: [{ type: 'text', text: bodyText }]
-      })
-    }, { start: result.index, end: result.index, sourceEventSeqs: [result.index] })
+    return projectAssistantReply(session, result, bodyText)
   }
 
   // A game keeps a snapshot of its preset, but edits to that preset apply from the
