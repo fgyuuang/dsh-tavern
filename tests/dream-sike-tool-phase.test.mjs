@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { dreamSikeToolPhase, applyDreamSikeToolPhase } from '../tavern-plugin/lib/domain/dream-sike-tool-phase.js'
+import { dreamSikeToolPhase, applyDreamSikeToolPhase, dreamSikePhaseInstruction } from '../tavern-plugin/lib/domain/dream-sike-tool-phase.js'
 import { dreamSikeTurnIdentity, putDreamSikeDraft, checkDreamSikeDraft, readyDreamSikeDraft, patchDreamSikeDraft } from '../tavern-plugin/lib/domain/dream-sike-draft.js'
 import { recordDreamSikeTurnRead, prepareDreamSikeTurn } from '../tavern-plugin/lib/domain/dream-sike-preparation.js'
 import { registerDreamSikeTools } from '../tavern-plugin/lib/tools/dream-sike.js'
@@ -63,7 +63,7 @@ test('同一步的预推测修改或确认不执行，下个模型步骤可继�
   let chat=fixture(); const tools=new Map()
   registerDreamSikeTools({tools:{register:t=>tools.set(t.name,t)},chatForSession:async()=>structuredClone(chat),
     updateChat:async(_id,mutate)=>{chat=await mutate(structuredClone(chat));return chat},activeTurnOf:()=>1})
-  const reviewSchema = tools.get('sike_check_draft').parameters.properties.review
+  const reviewSchema = tools.get('sike_check_draft').parameters.properties.review.oneOf[0]
   assert.equal(reviewSchema.type, 'object')
   assert.deepEqual(reviewSchema.required, ['character','knowledge','style','continuity','playerAgency','format'])
   for (const axis of Object.values(reviewSchema.properties)) {
@@ -123,11 +123,34 @@ test('审稿预算用尽后阶段不再要求新一轮修订，直接进入检�
   mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
   assert.equal(chat.dreamSikeDraft.editorialRounds, 2)
   assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'checking')
+  assert.match(dreamSikePhaseInstruction(dreamSikeToolPhase(chat, 's', 1)), /不追求每项永远全 pass/)
   const checked = checkDreamSikeDraft(chat, identity, 1)
   assert.equal(checked.checks.editorial.passed, true)
   assert.deepEqual(checked.checks.issues, [])
   assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'confirming')
+  const phase = dreamSikeToolPhase(chat, 's', 1)
+  assert.equal(phase.context.expectedVersion, 1)
+  assert.deepEqual(phase.context.blockingIssues, [])
+  assert.equal(phase.context.editorialNotes.length, 1)
+  assert.match(dreamSikePhaseInstruction(phase), /非阻断文风建议不要求再次审稿/)
+  assert.ok(phase.tools.includes('sike_patch_draft'), '用户仍可继续局部修改，不受修订额度限制')
   assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
+})
+
+test('实时阶段指令给出真实草稿版本、允许工具与当前阻断理由', () => {
+  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
+  putDreamSikeDraft(chat, identity, '<dream_body>门开了。')
+  checkDreamSikeDraft(chat, identity, 1)
+  const phase = dreamSikeToolPhase(chat, 's', 1)
+  const instruction = dreamSikePhaseInstruction(phase)
+  const current = JSON.parse(instruction.split('\n')[0].replace('【当前执行阶段】', ''))
+  assert.equal(current.phase, 'revision')
+  assert.equal(current.expectedVersion, 1)
+  assert.deepEqual(current.allowedTools, ['sike_read_turn', 'sike_patch_draft'])
+  assert.equal(current.blockingIssues[0].code, 'unbalanced-dream_body')
+  patchDreamSikeDraft(chat, identity, { expectedVersion: 1, find: '门开了。', replacement: '门开了。</dream_body>' })
+  assert.equal(dreamSikeToolPhase(chat, 's', 1).context.expectedVersion, 2)
+  assert.match(dreamSikePhaseInstruction(dreamSikeToolPhase(chat, 's', 1)), /"checkVersion":null/)
 })
 
 // A clean review resets the budget so a later revise round is not skipped.
