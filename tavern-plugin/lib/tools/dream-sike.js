@@ -36,6 +36,32 @@ function offsetArgument(value, fallback) {
   if (!Number.isSafeInteger(number) || number < 0) throw new Error('续读位置必须是非负整数')
   return number
 }
+// The model tracks the draft version loosely and often names an older one. When it points at a
+// different version of the same live, unconfirmed draft, follow the draft rather than spending the
+// step on a rejection; the module layer still guards against the draft changing mid-call.
+function followedVersion(chat, identity, value) {
+  const requested = draftVersion(value)
+  const draft = chat?.dreamSikeDraft
+  const live = draft && draft.status === 'draft' && draft.operationId === identity.operationId
+    && draft.branchId === identity.branchId && draft.turn === identity.turn ? draft.version : null
+  return Number.isSafeInteger(live) && live !== requested ? live : requested
+}
+const PREPARATION_KEYS = ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt']
+function briefArgument(args) {
+  const nested = jsonArgument(args?.brief, 'brief')
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) return nested
+  // The model sometimes flattens the six fields onto the top level instead of nesting them.
+  const flat = Object.fromEntries(PREPARATION_KEYS.filter(key => args?.[key] !== undefined).map(key => [key, args[key]]))
+  return Object.keys(flat).length ? flat : nested
+}
+function coverageArgument(value) {
+  // Coverage is optional read evidence. A free-text or malformed value is dropped rather than
+  // failing the step, because the field may be omitted entirely and is never worth the turn.
+  if (value === undefined || value === null) return undefined
+  let parsed = value
+  if (typeof value === 'string') { try { parsed = JSON.parse(value) } catch (_) { return undefined } }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined
+}
 const DRAFT_READ_CHARS = 8000
 
 function currentDraftView(chat, identity) {
@@ -229,26 +255,17 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     description: '读取回合后保存简短写作准备：当前场景、人物约束、认知边界、已选文风、当前推进和玩家停止位置。仅 preparationRequired=true 的剧情回合必须起草前调用，聊天和总结模式免除。这是执行简报，不接收完整思考链，不触发消息或变量结算。',
     parameters: {
       brief: {
-        type: 'object', required: true, additionalProperties: false,
-        description: '必须恰好提供六项，每项 8–400 字符，写事实或执行约束，不写内部推理或候选链分析。',
-        properties: Object.fromEntries(['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt'].map(key => [key, {
-          type: 'string', required: true,
-          description: key + '：8–400 字符的简短事实或执行约束'
-        }]))
+        type: 'json',
+        description: '必须恰好提供六项写作准备的对象：{scene, characters, knowledge, style, progression, stopAt}，每项 8–400 字符，写事实或执行约束，不写内部推理或候选链分析。也可把六项直接作为顶层参数传入。'
       },
       coverage: {
-        type: 'object', additionalProperties: false,
-        description: '可选读取依据。仅复制本回合 sike_read_turn 实际返回的摘要和引用；不写推理文本。省略比猜测摘要或引用更好。',
-        properties: {
-          contractDigest: { type: 'string' }, profileDigest: { type: 'string' },
-          ruleIds: { type: 'array', items: { type: 'string' } },
-          materialRefs: { type: 'array', items: { type: 'string' } }
-        }
+        type: 'json',
+        description: '可选读取依据对象 {contractDigest?, profileDigest?, ruleIds?, materialRefs?}。仅复制本回合 sike_read_turn 实际返回的摘要和引用；不写推理文本。省略比猜测更好。'
       }
     },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
-      const draft = await write(exec, (chat, identity) => prepareDreamSikeTurn(chat, identity, args.brief, Date.now(), { coverage: args.coverage }), 'turn.prepare')
+      const draft = await write(exec, (chat, identity) => prepareDreamSikeTurn(chat, identity, briefArgument(args), Date.now(), { coverage: coverageArgument(args.coverage) }), 'turn.prepare')
       return { report: '本回合写作准备已保存，已绑定当前分支与预设版本。可建立草稿；若更新了现有草稿的准备，请重新审稿。', draft }
     }
   }))
@@ -275,7 +292,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }, output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => patchDreamSikeDraft(chat, identity,
-        { expectedVersion: draftVersion(args.expectedVersion), find: args.find, replacement: args.replacement,
+        { expectedVersion: followedVersion(chat, identity, args.expectedVersion), find: args.find, replacement: args.replacement,
           patches: jsonArgument(args.patches, 'patches') }), 'draft.patch')
       return { report: '草稿现为版本 ' + draft.version + '，已修订 ' + draft.revisionCount + ' 次，次数不设上限。下一步整体审稿；review 调用会先自动补齐过期的平行事件。', draft }
     }
@@ -289,7 +306,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     async execute(args, exec) {
       if (!draftModules) throw new Error('当前宿主没有独立草稿模块执行器')
       const { chat, identity } = await resolve(exec)
-      const result = await draftModules.execute({ chat, identity, kind: args.kind, expectedVersion: draftVersion(args.expectedVersion), signal: exec.signal })
+      const result = await draftModules.execute({ chat, identity, kind: args.kind, expectedVersion: followedVersion(chat, identity, args.expectedVersion), signal: exec.signal })
       return { report: JSON.stringify({ module: result.module, reused: result.reused, version: result.draft.version,
         text: args.kind === 'parallel' ? result.draft.text.match(/<dream_parallel_event>[\s\S]*?<\/dream_parallel_event>/i)?.[0] : undefined,
         review: args.kind === 'review' ? result.draft.modules.review.review : undefined,
@@ -316,7 +333,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => checkDreamSikeDraft(chat, identity,
-        draftVersion(args.expectedVersion), { review: jsonArgument(args.review, 'review') }), 'draft.check')
+        followedVersion(chat, identity, args.expectedVersion), { review: jsonArgument(args.review, 'review') }), 'draft.check')
       const issues = draft.checks.issues
       const report = issues.length
         ? '当前草稿版本 ' + draft.version + '，发现 ' + issues.length + ' 项问题：' + issues.map(item => item.message).join('；')
@@ -335,7 +352,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     parameters: { expectedVersion: { type: 'json', required: true, description: '已检查通过的草稿版本，整数' } },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
-      const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, draftVersion(args.expectedVersion)), 'draft.ready')
+      const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, followedVersion(chat, identity, args.expectedVersion)), 'draft.ready')
       return { report: '版本 ' + draft.version + ' 已确认并锁定。停止工具调用，结束本回合，返回一句简短完成提示；宿主将从已确认草稿提交正式正文一次。', draft }
     }
   }))

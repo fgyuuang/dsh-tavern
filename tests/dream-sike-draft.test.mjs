@@ -133,8 +133,9 @@ test('模块修改记录和旧回合草稿投影保持 lossless JSON，读取时
   assert.deepEqual(JSON.parse(JSON.stringify(result)), result)
   assert.equal(JSON.parse(result.report).draft, null)
   const briefSchema = registered.get('sike_prepare_turn').parameters.properties.brief
-  assert.equal(briefSchema.type, 'object')
-  assert.deepEqual(briefSchema.required, ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt'])
+  // Annotation-only so the six facts are accepted whether the model nests them or flattens them.
+  assert.equal(briefSchema.type, undefined)
+  assert.match(briefSchema.description, /scene, characters, knowledge, style, progression, stopAt/)
 })
 
 test('原生执行轨迹按当前回合配对工具结果，只暴露安全摘要和耗时', () => {
@@ -344,4 +345,46 @@ test('草稿工具接受数字字符串版本与字符串化的 patches', async 
   const read = registered.get('sike_read_turn')
   const readBack = await read.execute({ draftOffset: '0', ruleLimit: '10', includeMaterials: false }, exec)
   assert.equal(JSON.parse(readBack.report).turn, 1)
+})
+
+const flatFixture = () => ({ id: 'chat-1', sessionId: 'session-1', mode: 'story', playPresetId: 'dream-sike-dsh', messages: [],
+  timeline: { branchId: 'branch-1', revision: 1, operations: { op: { id: 'op', kind: 'body', turn: 1, status: 'running', basedOn: { branchId: 'branch-1', revision: 1 } } } } })
+
+function registerTools(chat) {
+  const registered = new Map()
+  registerDreamSikeTools({
+    tools: { register(tool) { registered.set(tool.name, tool) } },
+    async chatForSession() { return chat },
+    async updateChat(_id, mutation) { return mutation(chat) },
+    activeTurnOf(exec) { return exec.agent.phase.turn }
+  })
+  return { registered, exec: { agent: { session: { id: 'session-1' }, phase: { kind: 'running', turn: 1 } } } }
+}
+
+// The model sometimes flattens the six facts onto the top level, and hands coverage over as prose.
+// Both shapes must still save the preparation, or the turn never reaches a draft.
+test('写作准备接受摊平的六项事实与文本形式的 coverage', async () => {
+  const chat = flatFixture()
+  chat.runtimePresetSnapshot = { back: { entries: [{ id: '0da6f4d7-961d-4966-a084-857a3dd876ad', name: '默认思维链', enabled: true, content: '写前按四章核对材料。' }] } }
+  const { registered, exec } = registerTools(chat)
+  const facts = { scene: '档案室，午后，林然整理封袋。', characters: '林然审慎，不主动拆封信件。', knowledge: '林然只看到封口，不知内容。',
+    style: '克制叙述，以动作表现迟疑。', progression: '林然把信推回桌面，等待指示。', stopAt: '停在玩家决定是否拆信之前。' }
+  await registered.get('sike_read_turn').execute({}, exec)
+  await registered.get('sike_prepare_turn').execute({ ...facts, coverage: 'rules 1-20 read; materials: action, recent floors' }, exec)
+  assert.equal(chat.dreamSikePreparation.brief.scene, facts.scene)
+  assert.equal(chat.dreamSikePreparation.brief.stopAt, facts.stopAt)
+  assert.equal(chat.dreamSikePreparation.coverage, null)
+})
+
+test('草稿工具在版本号过期时跟随当前草稿而不是直接拒绝', async () => {
+  const chat = flatFixture()
+  const identity = dreamSikeTurnIdentity(chat, 'session-1', 1)
+  putDreamSikeDraft(chat, identity, '门向内开了。', 10)
+  patchDreamSikeDraft(chat, identity, { expectedVersion: 1, find: '门向内开了。', replacement: '门向内开了，风灌进来。' }, 20)
+  assert.equal(chat.dreamSikeDraft.version, 2)
+  const { registered, exec } = registerTools(chat)
+  // The model still believes the draft is version 1.
+  const checked = await registered.get('sike_check_draft').execute({ expectedVersion: 1 }, exec)
+  assert.equal(checked.draft.checks.version, 2)
+  assert.equal((await registered.get('sike_ready_draft').execute({ expectedVersion: 1 }, exec)).draft.status, 'ready')
 })
