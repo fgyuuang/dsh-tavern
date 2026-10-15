@@ -4166,6 +4166,12 @@ export async function apply(ctx) {
         const change = await updateCard(args && args.path, args && args.patch)
         return { card: change.card, changed: change.changed }
       }
+      case 'getConversationReasoningConfig': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        const selection = chat ? modelSelection(sessionId) : null
+        return { selection, reasoning: selection ? await readBackgroundModelReasoning(llm, selection) : null }
+      }
       case 'getConversationModelConfig': return await conversationModelSettings.get(str(args?.sessionId))
       case 'setConversationModelConfig': return await conversationModelSettings.apply(str(args?.sessionId), args)
       case 'getConversationBackgroundModel':
