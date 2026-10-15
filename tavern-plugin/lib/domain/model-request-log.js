@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { normalizedContextUsage, contextUsageMetrics, summarizeContextUsage, requestPrefixMetrics } from './context-cache-metrics.js'
+import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -112,6 +113,142 @@ export function createModelRequestLog(options = {}) {
     })
   }
 
+  const executionLimits = Object.freeze({
+    query: policy => normalizeDreamSikeExecutionPolicy(policy).queryRequests,
+    initial: () => 1,
+    revision: policy => normalizeDreamSikeExecutionPolicy(policy).revisionRequests,
+    settlement: null,
+    addons: () => 1,
+    compaction: null,
+    maintenance: null
+  })
+  const executionStages = ['query', 'initial', 'revision', 'settlement', 'addons', 'addons-retry', 'compaction', 'maintenance']
+  function freshExecution(input, policy, stamp) {
+    return {
+      version: 1,
+      rootOperationId: str(input.rootOperationId),
+      branchId: str(input.branchId),
+      operationIds: [...new Set([str(input.rootOperationId), str(input.operationId)].filter(Boolean))],
+      turn: Math.max(0, Number(input.rootTurn ?? input.turn) || 0),
+      policy,
+      startedAt: stamp,
+      updatedAt: stamp,
+      counts: Object.fromEntries(executionStages.map(stage => [stage, 0])),
+      requestCount: 0,
+      requests: []
+    }
+  }
+
+  function executionFor(index, input, policy, stamp) {
+    const saved = index.executionUsage && typeof index.executionUsage === 'object' ? index.executionUsage : {}
+    const executions = Array.isArray(saved.executions) ? saved.executions : []
+    const rootOperationId = str(input.rootOperationId)
+    const branchId = str(input.branchId)
+    const current = executions.find(item => item?.rootOperationId === rootOperationId && item?.branchId === branchId)
+    return current ? { saved, executions, current } : { saved, executions, current: freshExecution(input, policy, stamp) }
+  }
+
+  /** Reserve the provider-boundary attempt in the same serialized index as request evidence. */
+  function reserveExecutionAttempt(input = {}) {
+    const chatId = str(input.chatId), attemptId = str(input.attemptId), stage = str(input.stage)
+    if (!chatId || !attemptId || !executionStages.includes(stage)) return Promise.resolve({ accepted: true, tracked: false })
+    return enqueue(chatId, async function () {
+      const stamp = now(), base = 'model-requests/' + chatId + '/'
+      let result = { accepted: true, tracked: false }
+      await updateJson(base + 'index.json', function (value) {
+        const index = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+        const policy = normalizeDreamSikeExecutionPolicy(input.policy)
+        const state = executionFor(index, input, policy, stamp)
+        const currentPolicy = normalizeDreamSikeExecutionPolicy(state.current.policy || policy)
+        state.current.policy = input.allowPolicyUpdate === true ? policy : currentPolicy
+        if (!Array.isArray(state.current.operationIds)) state.current.operationIds = [str(state.current.rootOperationId)].filter(Boolean)
+        const operationId = str(input.operationId)
+        if (operationId && !state.current.operationIds.includes(operationId)) state.current.operationIds.push(operationId)
+        state.current.operationIds = state.current.operationIds.slice(-32)
+        if (!state.current.counts || typeof state.current.counts !== 'object' || Array.isArray(state.current.counts)) {
+          state.current.counts = Object.fromEntries(executionStages.map(stage => [stage, 0]))
+        }
+        if (!Array.isArray(state.current.requests)) state.current.requests = []
+        const requests = state.current.requests
+        if (!Number.isSafeInteger(state.current.requestCount) || state.current.requestCount < requests.length) {
+          state.current.requestCount = requests.length
+        }
+        const previous = requests.find(request => request.attemptId === attemptId)
+        if (previous) {
+          result = { accepted: previous.status !== 'blocked', tracked: true, stage, attemptId, limit: previous.limit ?? null,
+            used: state.current.counts?.[stage] || 0, existing: true }
+          return index
+        }
+        const limitRule = executionLimits[stage]
+        const limit = typeof limitRule === 'function' ? limitRule(state.current.policy) : null
+        const used = Math.max(0, Number(state.current.counts?.[stage]) || 0)
+        const blocked = Number.isSafeInteger(limit) && used >= limit
+        const request = {
+          attemptId, stage, status: blocked ? 'blocked' : 'reserved',
+          operationId,
+          turn: Math.max(0, Number(input.rootTurn ?? input.turn) || 0),
+          step: Math.max(0, Number(input.step) || 0), purpose: str(input.purpose),
+          provider: str(input.provider), model: str(input.model), createdAt: stamp,
+          ...(limit === null ? {} : { limit })
+        }
+        if (!blocked) state.current.counts[stage] = used + 1
+        state.current.requestCount += 1
+        state.current.requests = requests.concat(request).slice(-128)
+        state.current.updatedAt = stamp
+        const executions = state.executions.filter(item => item !== state.current).concat(state.current).slice(-12)
+        result = { accepted: !blocked, tracked: true, stage, attemptId, limit, used: blocked ? used : used + 1, blocked }
+        return {
+          ...index,
+          version: 1,
+          chatId,
+          executionUsage: { version: 1, activeRootOperationId: state.current.rootOperationId, executions }
+        }
+      })
+      return result
+    })
+  }
+
+  function completeExecutionAttempt(input = {}) {
+    const chatId = str(input.chatId), rootOperationId = str(input.rootOperationId), branchId = str(input.branchId), attemptId = str(input.attemptId)
+    if (!chatId || !rootOperationId || !attemptId) return Promise.resolve(null)
+    return enqueue(chatId, async function () {
+      const stamp = now(), path = 'model-requests/' + chatId + '/index.json'
+      let completed = null
+      await updateJson(path, function (value) {
+        const index = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+        const saved = index.executionUsage && typeof index.executionUsage === 'object' ? index.executionUsage : {}
+        const executions = Array.isArray(saved.executions) ? saved.executions : []
+        const execution = executions.find(item => item?.rootOperationId === rootOperationId
+          && (!branchId || item?.branchId === branchId))
+        const request = execution?.requests?.find(item => item.attemptId === attemptId)
+        if (!request || request.status === 'blocked') return index
+        request.status = ['completed', 'failed', 'aborted'].includes(input.status) ? input.status : 'failed'
+        request.completedAt = stamp
+        request.elapsedMs = Math.max(0, stamp - (Number(request.createdAt) || stamp))
+        request.usage = normalizedContextUsage(input.usage)
+        request.error = str(input.error).slice(0, 500)
+        execution.updatedAt = stamp
+        completed = { ...request }
+        return { ...index, executionUsage: { ...saved, executions } }
+      })
+      return completed
+    })
+  }
+
+  async function executionUsage(chatId, rootOperationId, branchId) {
+    // This status projection must not wait for the much larger request-body evidence write.
+    const index = await readJson('model-requests/' + str(chatId) + '/index.json')
+    const saved = index?.executionUsage
+    const executions = Array.isArray(saved?.executions) ? saved.executions : []
+    const execution = rootOperationId
+      ? executions.find(item => (item?.rootOperationId === str(rootOperationId)
+        || item?.operationIds?.includes(str(rootOperationId)))
+        && (!branchId || item?.branchId === str(branchId)))
+      : executions.find(item => item?.rootOperationId === saved?.activeRootOperationId
+        && (!branchId || item?.branchId === str(branchId)))
+    return execution ? JSON.parse(JSON.stringify(execution)) : null
+  }
+
   async function record(input) {
     const chat = input.chat
     const context = input.context
@@ -131,6 +268,11 @@ export function createModelRequestLog(options = {}) {
       turn,
       agentTurn: Math.max(0, Number(coordinates && coordinates.turn) || 0),
       step: Math.max(1, Number(coordinates && coordinates.step) || 1),
+      attemptId: str(input.attemptId || coordinates?.attemptId),
+      stage: str(input.stage || coordinates?.stage),
+      rootOperationId: str(input.rootOperationId || coordinates?.rootOperationId || context?.rootOperationId),
+      branchId: str(input.branchId || coordinates?.branchId || context?.branchId),
+      purpose: str(input.purpose || requestOptions?.purpose),
       createdAt: stamp,
       status: 'running',
       requestMode: chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
@@ -156,11 +298,14 @@ export function createModelRequestLog(options = {}) {
         const current = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
         const requests = Array.isArray(current.requests) ? current.requests : []
         return {
+          ...current,
           version: 1,
           chatId: chat.id,
           requests: retainRecentBodies(requests.concat([{
             id: requestId, scope, task: record.task, sessionId: record.sessionId,
             turn: record.turn, agentTurn: record.agentTurn, step: record.step,
+            attemptId: record.attemptId, stage: record.stage, rootOperationId: record.rootOperationId,
+            branchId: record.branchId, purpose: record.purpose,
             createdAt: record.createdAt, preset: record.preset,
             provider: str(requestOptions?.provider), model: str(requestOptions?.model)
           }]), Math.max(turn, record.agentTurn), pruned)
@@ -186,7 +331,8 @@ export function createModelRequestLog(options = {}) {
     const createdAt = Number.isFinite(previous.createdAt) ? previous.createdAt : completedAt
     const result = {
       createdAt,
-      status: str(input.error) !== '' ? 'failed' : 'completed',
+      status: str(input.error) !== '' ? 'failed' : input.finish?.kind === 'aborted' ? 'aborted'
+        : input.finish?.kind === 'error' ? 'failed' : 'completed',
       completedAt,
       durationMs: Math.max(0, completedAt - createdAt),
       response: {
@@ -259,6 +405,8 @@ export function createModelRequestLog(options = {}) {
       const result = await readJson(base + entry.id + '.result.json')
       const row = { id: entry.id, scope: entry.scope, task: entry.task, sessionId: entry.sessionId,
         turn: entry.turn, agentTurn: entry.agentTurn, step: entry.step,
+        attemptId: entry.attemptId, stage: entry.stage, rootOperationId: entry.rootOperationId,
+        branchId: entry.branchId, purpose: entry.purpose,
         provider: entry.provider, model: entry.model, createdAt: entry.createdAt,
         status: result?.status || 'unknown', durationMs: result?.durationMs ?? null, ...contextUsageMetrics(result?.usage) }
       // Full bodies can be MBs. Default usage audits read sidecars only; opt-in
@@ -277,5 +425,6 @@ export function createModelRequestLog(options = {}) {
     return { version: 1, chatId, convention: 'dsh-disjoint-token-usage',
       source: 'provider-reported-stream-usage', summary: summarizeContextUsage(rows), requests: rows }
   }
-  return Object.freeze({ record, complete, evidence, list, detail, latest, latestForSession, contextCacheAudit })
+  return Object.freeze({ record, complete, evidence, list, detail, latest, latestForSession, contextCacheAudit,
+    reserveExecutionAttempt, completeExecutionAttempt, executionUsage })
 }

@@ -725,6 +725,7 @@ window.__ModuleLoader__.load({
 // @include ui/message-frame.js
 
 // @include features/dream-sike-followup.js
+// @include modules/dream-sike-preview.js
 // @include features/assistant-renderer.js
 
 // @include features/card-list.js

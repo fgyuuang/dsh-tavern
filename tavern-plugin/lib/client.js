@@ -11756,6 +11756,187 @@ function DreamSikeFollowup(props) {
             error ? h('p', { role: 'alert' }, error) : null
         ) : null);
 }
+// Decode only the dedicated draft tool's one top-level text argument. Incomplete
+// JSON stays display-only; it is never repaired into an executable tool call.
+function createDreamSikePreviewDecoder() {
+    let raw = "", offset = 0, stack = [], token = null, started = false, done = false, seenText = false, textStarted = false, text = "", high = "", invalid = false;
+    const escapes = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+    function reset() { raw = ""; offset = 0; stack = []; token = null; started = false; done = false; seenText = false; textStarted = false; text = ""; high = ""; invalid = false; }
+    function valueDone() {
+        const parent = stack.at(-1);
+        if (!parent) done = true;
+        else parent.phase = "comma-or-end";
+    }
+    function openContainer(kind) {
+        if (stack.length >= 64) { invalid = true; return; }
+        stack.push({ kind, phase: kind === "object" ? "key-or-end" : "value-or-end", top: stack.length === 0, isText: false });
+    }
+    function append(character) {
+        if (token.key) { if (token.top) token.value += character; return; }
+        if (!token.capture) return;
+        const code = character.charCodeAt(0);
+        if (high) {
+            text += code >= 0xdc00 && code <= 0xdfff ? high + character : "\ufffd";
+            high = "";
+            if (code >= 0xdc00 && code <= 0xdfff) return;
+        }
+        if (code >= 0xd800 && code <= 0xdbff) high = character;
+        else text += code >= 0xdc00 && code <= 0xdfff ? "\ufffd" : character;
+    }
+    function beginValue(character, parent) {
+        const capture = parent.kind === "object" && parent.top && parent.isText;
+        if (capture && character !== '"') { invalid = true; return; }
+        if (character === '"') {
+            token = { kind: "string", key: false, capture, escape: false, unicode: null, length: 0 };
+            if (capture) textStarted = true;
+        } else if (character === "{") openContainer("object");
+        else if (character === "[") openContainer("array");
+        else if (/[0-9-]/.test(character)) token = { kind: "number", value: character };
+        else if ("tfn".includes(character)) token = { kind: "literal", word: ({ t: "true", f: "false", n: "null" })[character], offset: 1 };
+        else invalid = true;
+    }
+    return {
+        read(value) {
+            if (typeof value !== "string" || value.length > 500000) { reset(); return null; }
+            if (!value.startsWith(raw)) reset();
+            raw = value;
+            while (!invalid && offset < raw.length) {
+                const character = raw[offset++];
+                if (token?.kind === "number") {
+                    if (/[0-9eE+.-]/.test(character)) {
+                        token.value += character;
+                        if (token.value.length > 128) invalid = true;
+                    } else {
+                        if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(token.value)) invalid = true;
+                        token = null; valueDone(); --offset;
+                    }
+                    continue;
+                }
+                if (token?.kind === "literal") {
+                    if (character !== token.word[token.offset++]) invalid = true;
+                    else if (token.offset === token.word.length) { token = null; valueDone(); }
+                    continue;
+                }
+                if (token?.kind === "string") {
+                    if (++token.length > (token.key ? 1024 : 400000)) { invalid = true; break; }
+                    if (token.unicode !== null) {
+                        if (!/[0-9a-f]/i.test(character)) { invalid = true; break; }
+                        token.unicode += character;
+                        if (token.unicode.length === 4) { append(String.fromCharCode(parseInt(token.unicode, 16))); token.unicode = null; }
+                    } else if (token.escape) {
+                        token.escape = false;
+                        if (character === "u") token.unicode = "";
+                        else if (Object.hasOwn(escapes, character)) append(escapes[character]);
+                        else invalid = true;
+                    } else if (character === "\\") token.escape = true;
+                    else if (character === '"') {
+                        if (token.key) {
+                            const parent = stack.at(-1);
+                            parent.isText = token.top && token.value === "text";
+                            if (parent.isText) { if (seenText) invalid = true; seenText = true; }
+                            parent.phase = "colon";
+                        } else {
+                            if (token.capture && high) { text += "\ufffd"; high = ""; }
+                            valueDone();
+                        }
+                        token = null;
+                    } else if (character.charCodeAt(0) < 32) invalid = true;
+                    else append(character);
+                    if (text.length > 100000) invalid = true;
+                    continue;
+                }
+                if (/[ \t\r\n]/.test(character)) continue;
+                if (!started) {
+                    started = true;
+                    if (character === "{") openContainer("object"); else invalid = true;
+                    continue;
+                }
+                if (done) { invalid = true; break; }
+                const parent = stack.at(-1);
+                const closing = parent.kind === "object" ? "}" : "]";
+                if (parent.phase === "comma-or-end") {
+                    if (character === closing) { stack.pop(); valueDone(); }
+                    else if (character === ",") parent.phase = parent.kind === "object" ? "key" : "value";
+                    else invalid = true;
+                } else if (parent.kind === "object" && ["key-or-end", "key"].includes(parent.phase)) {
+                    if (character === "}" && parent.phase === "key-or-end") { stack.pop(); valueDone(); }
+                    else if (character === '"') token = { kind: "string", key: true, top: parent.top, value: "", escape: false, unicode: null, length: 0 };
+                    else invalid = true;
+                } else if (parent.phase === "colon") {
+                    if (character === ":") parent.phase = "value"; else invalid = true;
+                } else if (parent.kind === "array" && parent.phase === "value-or-end" && character === "]") { stack.pop(); valueDone(); }
+                else beginValue(character, parent);
+            }
+            const privateProtocol = /<\/?(?:think|simple_thinking|dream_self_check|redemption_chain|thought_of_chain|thinking_step)(?:\s[^>]*)?>|```(?:thought|analysis|reasoning|redemption_chain|thought_of_chain|thinking_step)\b/i.test(text);
+            return !invalid && !privateProtocol && textStarted ? text : null;
+        }
+    };
+}
+
+function currentDreamSikePreviewTurn(snapshot) {
+    const timeline = snapshot && snapshot.timeline;
+    const turn = timeline?.turns?.get(timeline.turnOrder?.at(-1));
+    return turn?.status === "open" ? turn : null;
+}
+
+// Read the Step's native data source, including tool-only Steps that the host
+// correctly omits from its visible chat nodes. No Session or Tavern state writes.
+function DreamSikeLiveTextPreview(props) {
+    const turn = props.useChat(currentDreamSikePreviewTurn);
+    const step = turn?.steps?.at(-1);
+    const source = step?.data?.source?.("assistant-step");
+    const subscribe = React.useCallback(listener => source?.subscribe(listener) || (() => {}), [source]);
+    const snapshot = React.useCallback(() => source?.getSnapshot() || null, [source]);
+    const data = React.useSyncExternalStore(subscribe, snapshot, snapshot);
+    const reader = React.useRef(null);
+    const epoch = React.useRef(0);
+    const pending = React.useRef(null);
+    const latest = React.useRef(null);
+    const [preview, setPreview] = React.useState(null);
+    const turnKey = turn ? JSON.stringify([props.sessionId, turn.turn, turn.start?.seq]) : "";
+    const stepKey = step ? JSON.stringify([turnKey, step.step, step.start?.seq]) : "";
+    React.useEffect(function () {
+        ++epoch.current;
+        reader.current = null;
+        setPreview(previous => props.running && turnKey && previous?.turnKey === turnKey && previous.step < step?.step ? previous : null);
+        return function () {
+            ++epoch.current;
+            if (pending.current !== null) window.clearTimeout(pending.current);
+            pending.current = null;
+            reader.current = null;
+        };
+    }, [props.sessionId, props.running, turnKey, stepKey]);
+    React.useEffect(function () {
+        latest.current = { data, turnKey, stepKey, step: step?.step };
+        if (!props.running || !turnKey || !stepKey || pending.current !== null) return;
+        const generation = epoch.current;
+        // Throttle, rather than debounce: a continuous token stream must still paint.
+        pending.current = window.setTimeout(function () {
+            pending.current = null;
+            if (epoch.current !== generation) return;
+            const current = latest.current;
+            const call = current.data?.blocks?.find(block => block && block.kind === "tool-call" && block.name === "sike_put_draft" && typeof block.callId === "string" && block.callId);
+            if (!call) {
+                reader.current = null;
+                // Keep an already read draft while later checking Steps run;
+                // a reset in its own Step is a retry, so its old preview is gone.
+                setPreview(previous => previous?.turnKey === current.turnKey && previous.step < current.step ? previous : null);
+                return;
+            }
+            const callKey = JSON.stringify([current.stepKey, call.callId]);
+            if (reader.current?.key !== callKey) reader.current = { key: callKey, decoder: createDreamSikePreviewDecoder() };
+            const text = reader.current.decoder.read(call.argsRaw);
+            setPreview(previous => text && previous?.key === callKey && previous.text === text ? previous : text
+                ? { key: callKey, turnKey: current.turnKey, stepKey: current.stepKey, step: current.step, text } : null);
+        }, 100);
+    }, [props.sessionId, props.running, turnKey, stepKey, step?.step, data]);
+    if (!props.running || !turnKey || preview?.turnKey !== turnKey || preview.step > step?.step
+        || preview.step === step?.step && preview.stepKey !== stepKey) return null;
+    return React.createElement("section", { className: "dsh-sike-draft-section", "aria-label": "正文预览（未提交）", "data-dsh-draft-preview": true,
+        style: { maxWidth: props.maxWidth > 0 ? props.maxWidth + "px" : "100%", width: "100%", marginInline: "auto", minWidth: 0, boxSizing: "border-box" } },
+        React.createElement("div", { className: "dsh-sike-draft-muted", role: "status" }, "正文预览 · 未提交"),
+        React.createElement("pre", { className: "dsh-sike-draft-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "min(40vh, 24rem)", overflowY: "auto", font: "inherit" } }, preview.text));
+}
 		function createTavernFrameSlashExecutor(ctx, hostWindow) {
 			hostWindow = hostWindow || window;
             // A deliberately bounded, read-only subset of ST slash commands. Parse
@@ -14803,12 +14984,25 @@ function TavernOpeningInput(props) {
                         h("span", { className: "dsh-tavern-settings-copy" }, h("strong", { className: "dsh-tavern-settings-title" }, title), h("span", { className: "dsh-tavern-settings-desc" }, help)),
                         h("input", { type: "checkbox", role: "switch", "aria-label": title, disabled, checked: task ? data?.backgroundTasks[key] === true : data?.[key] === true, onChange: event => save(task ? { backgroundTasks: { [key]: event.target.checked } } : { [key]: event.target.checked }) }));
                 }
+                function executionPolicySelect(key, title, choices) {
+                    const policy = data?.dreamSikeExecutionPolicy || { queryRequests: 1, revisionRequests: 1 };
+                    return h("label", { key, className: "dsh-local-field" }, title,
+                        h("select", { className: "dsh-tavern-settings-select", "aria-label": title, disabled,
+                            value: policy[key], onChange: event => save({ dreamSikeExecutionPolicy: { ...policy, [key]: Number(event.target.value) } }) },
+                            choices.map(([value, label]) => h("option", { key: value, value }, label))));
+                }
+                const executionPolicy = data?.dreamSikeExecutionPolicy || { queryRequests: 1, revisionRequests: 1 };
                 return h("div", { className: "dsh-tavern-settings-section dsh-local-settings dsh-tavern-global-defaults" },
                     h("section", { className: "dsh-local-section" }, h("h3", null, "基本信息"),
                         h("label", { className: "dsh-local-field" }, "默认玩家称呼", h("input", { key: data?.playerName, defaultValue: data?.playerName || "", disabled, maxLength: 80, onBlur: event => { if (event.target.value !== data.playerName) save({ playerName: event.target.value }); } })),
                         h("label", { className: "dsh-local-field" }, "默认状态栏位置", h("select", { disabled, value: data?.statusBarPlacement || "sidebar", onChange: event => save({ statusBarPlacement: event.target.value }) }, h("option", { value: "sidebar" }, "侧边栏"), h("option", { value: "body" }, "正文下方"))),
                         h("label", { className: "dsh-local-field" }, "默认预设", h("select", { disabled, value: data?.preset || "", onChange: event => save(null, "selectPreset", { path: event.target.value }) }, h("option", { value: "" }, "不使用外部预设"), (data?.presets || []).filter(item => item.valid && item.recognized).map(item => h("option", { key: item.path, value: item.path }, item.title)))),
                         h("label", { className: "dsh-local-field" }, "默认长期偏好", h("select", { disabled, value: data?.profile.defaultProfileId || "", onChange: event => save(null, "manageUserPreferenceProfile", { action: "default", profileId: event.target.value }) }, h("option", { value: "" }, "不启用"), (data?.profile.profiles || []).filter(item => item.hasConfirmed).map(item => h("option", { key: item.id, value: item.id }, item.name))))),
+                    h("section", { className: "dsh-local-section", "aria-label": "梦境思客 Agent 执行默认" }, h("h3", null, "梦境思客 Agent 执行默认"),
+                        h("p", { className: "dsh-local-help" }, "仅供之后选择梦境思客DSH的新游戏继承；本局预算在本局设置中单独调整。"),
+                        executionPolicySelect("queryRequests", "正文前查询请求上限", [[1, "1 次"], [2, "2 次"]]),
+                        executionPolicySelect("revisionRequests", "正文修订与检查/恢复请求上限", [[0, "0 次"], [1, "1 次"], [2, "2 次"]]),
+                        h("p", { className: "dsh-local-help" }, "该额度计入初稿后的检查、审阅、修改及继续/恢复请求。前台计划上限：" + (Number(executionPolicy.queryRequests) + 1 + Number(executionPolicy.revisionRequests)) + " 次（查询 + 初稿 + 修订/恢复）；附加内容自动生成最多另 1 次。结算模型请求单独计数，可能因人物设计、工具续答或恢复而超过一次；它不计入这个前台上限。")),
                     h("section", { className: "dsh-local-section" }, h("h3", null, "后台结算"),
                         toggle("variables", "变量结算", "MVU 卡建议开启；普通卡不执行此任务。", true), toggle("posture", "人物姿势结算", "总结本轮结束时人物的位置、动作和姿势。", true), toggle("variableFeedback", "变量回灌前台", "每轮把上一轮变化的变量最新值告诉前台，减少前后不一致。", true)),
                     h("section", { className: "dsh-local-section" }, h("h3", null, "扩展功能"),
@@ -16820,11 +17014,12 @@ function TavernOpeningInput(props) {
 			}
 			function nativeToolStatus(status) {
 				switch (status) {
-					case "running": case "started": return "运行中";
+					case "running": case "started": case "reserved": return "运行中";
 					case "completed": case "success": case "ok": return "已完成";
 					case "failed": case "error": return "失败";
 					case "cancelled": return "已取消";
 					case "interrupted": return "已中断";
+					case "blocked": return "已拦截";
 					default: return "已记录";
 				}
 			}
@@ -16836,6 +17031,7 @@ function TavernOpeningInput(props) {
 				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh";
 				const [draft, setDraft] = React.useState(null);
 				const [executionTrace, setExecutionTrace] = React.useState([]);
+				const [execution, setExecution] = React.useState(null);
 				const [loading, setLoading] = React.useState(true);
 				const [error, setError] = React.useState("");
 				const [resuming, setResuming] = React.useState(false);
@@ -16862,6 +17058,7 @@ function TavernOpeningInput(props) {
 				React.useEffect(function () {
 					setDraft(null);
 					setExecutionTrace([]);
+					setExecution(null);
 					setLoading(true);
 					setError("");
 					if (!props.visible || !sessionId || !isPlayMode(mode) || !dreamMode) return;
@@ -16875,6 +17072,7 @@ function TavernOpeningInput(props) {
 							if (active) {
 								setDraft(result.draft && typeof result.draft === "object" ? result.draft : null);
 								setExecutionTrace(Array.isArray(result.executionTrace) ? result.executionTrace : []);
+								setExecution(result.execution && typeof result.execution === "object" ? result.execution : null);
 								setError("");
 							}
 						} catch (failure) {
@@ -16927,6 +17125,48 @@ function TavernOpeningInput(props) {
 				const trace = draft && Array.isArray(draft.trace) ? draft.trace : [];
 				const text = draft && typeof draft.text === "string" ? draft.text : "";
 				const revisions = Math.max(0, Number(draft && draft.revisionCount) || 0);
+				function renderExecutionUsage() {
+					if (!execution) return null;
+					const counts = execution.counts || {};
+					const limits = execution.limits || {};
+					const labels = { query: "写前查询", initial: "正文初稿", revision: "检查/修订/恢复", settlement: "状态结算", addons: "预设附加", "addons-retry": "附加手动重试", compaction: "压缩", maintenance: "其他后台" };
+					const requests = Array.isArray(execution.requests) ? execution.requests : [];
+					const counted = Object.values(counts).reduce(function (sum, value) { return sum + Math.max(0, Number(value) || 0); }, 0);
+					const blocked = requests.filter(function (item) { return item.status === "blocked"; }).length;
+					const total = counted;
+					const requestsTruncated = Number(execution.requestCount) > requests.length;
+					function tokenTotal(key) {
+						const values = requests.map(function (item) {
+							const value = item.usage && item.usage[key];
+							return value === null || value === undefined ? NaN : Number(value);
+						}).filter(Number.isFinite);
+						return values.length ? values.reduce(function (sum, value) { return sum + value; }, 0) : null;
+					}
+					const inputTokens = tokenTotal("inputTokens");
+					const cacheReadTokens = tokenTotal("cacheReadTokens");
+					const outputTokens = tokenTotal("outputTokens");
+					const stageRows = ["query", "initial", "revision", "settlement", "addons", "addons-retry", "compaction", "maintenance"]
+						.filter(function (stage) { return Number(counts[stage]) > 0 || Number.isFinite(Number(limits[stage])); })
+						.map(function (stage) {
+							const limit = Number.isFinite(Number(limits[stage])) ? " / " + limits[stage] : "";
+							return h("span", { key: stage }, labels[stage] + " " + (Number(counts[stage]) || 0) + limit);
+						});
+					const tokenText = [inputTokens === null ? "" : "输入 " + inputTokens,
+						cacheReadTokens === null ? "" : "缓存读 " + cacheReadTokens,
+						outputTokens === null ? "" : "输出 " + outputTokens].filter(Boolean).join(" · ")
+						+ (requestsTruncated && (inputTokens !== null || cacheReadTokens !== null || outputTokens !== null) ? "（最近 64 次记录）" : "");
+					return h("details", { className: "dsh-sike-draft-section dsh-sike-draft-usage" },
+						h("summary", null, "模型请求 · " + total + " 次" + (blocked ? " · 已拦截 " + blocked + (requestsTruncated ? "（最近 64 条）" : "") : "")),
+						h("div", { className: "dsh-sike-draft-meta" }, stageRows),
+						tokenText ? h("p", { className: "dsh-sike-draft-muted" }, tokenText) : null,
+						h("ol", { className: "dsh-sike-draft-list" }, requests.slice(-16).map(function (item, index) {
+							const elapsed = item.elapsedMs !== null && item.elapsedMs !== undefined && Number.isFinite(Number(item.elapsedMs)) ? " · " + Math.round(Number(item.elapsedMs)) + " ms" : "";
+							const detail = [item.provider, item.model, item.purpose].filter(Boolean).join(" · ");
+							return h("li", { key: item.attemptId || index },
+								(labels[item.stage] || item.stage || "模型请求") + " · " + nativeToolStatus(item.status) + elapsed
+									+ (detail ? " · " + brief(detail, 100) : ""));
+						})));
+				}
 				function renderExecutionTrace() {
 					if (!executionTrace.length) return null;
 					return h("details", { className: "dsh-sike-draft-trace dsh-sike-native-trace", "aria-label": "Agent 工具调用" },
@@ -16971,6 +17211,7 @@ function TavernOpeningInput(props) {
 				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用梦境思客DSH。") :
 					h("div", { className: "dsh-sike-draft-body" },
 						error ? h("div", { className: "dsh-card-error", role: "alert" }, "读取工作窗失败：" + error) : null,
+						renderExecutionUsage(),
 						loading && !draft ? h("div", { className: "dsh-tavern-empty" }, "正在读取当前回合…") :
 						!draft ? h(React.Fragment, null,
 							h("div", { className: "dsh-tavern-empty" }, executionTrace.length ? "Agent 正在准备本回合正文。" : "当前没有正文草稿。开始新回合后，这里会显示 Agent 的工作进度。"),
@@ -19516,6 +19757,7 @@ const contextCacheFeature = createContextCacheFeatureModule();
                         h(UserPreferenceProfileTab, { key: owner + ":profile", scope: { sessionId: owner }, conversationOnly: true }),
                         h("p", { className: "dsh-local-warning" }, "切换预设或长期偏好会使提示词缓存失效，首次请求会增加耗时和费用。")),
                     h(TavernConversationModels, { key: owner + ":models", sessionId: owner, sessions: props.sessions }),
+                    h(TavernConversationExecutionPolicy, { key: owner + ":execution-policy", sessionId: owner }),
                     h(TavernConversationBackgroundModel, { key: owner, sessionId: owner }), h(TavernConversationWritingSkills, { key: owner + ":skills", sessionId: owner })) : h("p", null, "请选择一个游玩对话。")));
         }
 
@@ -19590,6 +19832,57 @@ const contextCacheFeature = createContextCacheFeatureModule();
                     h("div", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : ""));
         }
 
+        function TavernConversationExecutionPolicy(props) {
+            const h = React.createElement;
+            const modeView = useLiveTavernView(props.sessionId, "dream-execution-policy-mode", [["playPresetId"]]);
+            const dreamPreset = modeView.view?.playPresetId === "dream-sike-dsh";
+            const [record, setRecord] = React.useState(null), [saving, setSaving] = React.useState(false);
+            const [error, setError] = React.useState(""), [notice, setNotice] = React.useState("");
+            React.useEffect(function () {
+                let active = true;
+                setRecord(null); setError(""); setNotice("");
+                if (dreamPreset) rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId).then(function (result) {
+                    if (active) { setRecord(result); setError(""); }
+                }, function (failure) { if (active) setError(String(failure.message || failure)); });
+                return function () { active = false; };
+            }, [props.sessionId, dreamPreset]);
+            if (!dreamPreset) return null;
+            async function save(policy) {
+                if (saving || !record || record.busy) return;
+                setSaving(true); setError(""); setNotice("");
+                try {
+                    const result = await rpc("setDreamSikeExecutionPolicy", { sessionId: props.sessionId, policy }, props.sessionId);
+                    setRecord(result); setNotice("已保存；新回合或继续中断回合时采用");
+                    liveTavernView.invalidate(props.sessionId);
+                    notifyTavernDataChanged(["sessions"], "play-controls");
+                } catch (failure) { setError(String(failure.message || failure)); }
+                finally { setSaving(false); }
+            }
+            function select(key, title, options) {
+                return h("label", { className: "dsh-local-field", key }, title,
+                    h("select", { className: "dsh-tavern-settings-select", "aria-label": title,
+                        value: record?.policy?.[key] ?? "", disabled: saving || !record || record.busy || !!error,
+                        onChange: event => save({ ...record.policy, [key]: Number(event.target.value) }) },
+                        options.map(([value, label]) => h("option", { key: value, value }, label))));
+            }
+            const policy = record?.policy || { queryRequests: 1, revisionRequests: 1 };
+            return h("section", { className: "dsh-local-section dsh-sike-execution-policy", "aria-label": "Agent 执行预算" },
+                h("h3", null, "Agent 执行"),
+                h("p", { className: "dsh-local-help" }, "独立设置本局各阶段的模型请求上限。运行中的回合不变；新回合采用新预算。继续中断回合时会重放原输入，并沿同一逻辑回合累计已用额度。"),
+                select("queryRequests", "正文前查询上限", [[1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
+                select("revisionRequests", "正文修订与检查/恢复上限", [[0, "最多 0 次（不请求检查或修改）"], [1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
+                h("p", { className: "dsh-local-help", "aria-live": "polite" }, record ? "该额度计入初稿后的检查、审阅、修改及继续/恢复请求。前台计划上限：" + (Number(policy.queryRequests) + 1 + Number(policy.revisionRequests)) + " 次（查询 + 初稿 1 次 + 修订/恢复）；附加内容自动生成最多另 1 次。结算模型请求单独计数，可能因人物设计、工具续答或恢复而超过一次；它不计入这个前台上限。" : "正在读取预算…"),
+                record?.busy ? h("p", { className: "dsh-local-warning", role: "status" }, "当前回合或后台任务正在运行，完成后可调整预算。",
+                    h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId)
+                        .then(setRecord, failure => setError(String(failure.message || failure))) }, "刷新状态")) : null,
+                error ? h("p", { role: "alert" }, error, h("button", { type: "button", className: "dsh-tavern-btn", disabled: saving, onClick: () => {
+                    setError(""); rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId)
+                        .then(setRecord, failure => setError(String(failure.message || failure)));
+                } }, "重试读取")) : null,
+                notice ? h("p", { role: "status" }, notice) : null,
+                saving ? h("p", { role: "status" }, "正在保存执行预算…") : null);
+        }
+
 		function TavernMoreActions(props) {
 			const [open, setOpen] = React.useState(false);
 			const [placement, setPlacement] = React.useState(null);
@@ -19660,7 +19953,9 @@ const contextCacheFeature = createContextCacheFeatureModule();
             const coordination = useTavernCoordination(props.sessionId, String(props.running));
             const activity = describeTavernActivity(coordination.view && coordination.view.activity);
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
-            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
+            return h(React.Fragment, null,
+              h(DreamSikeLiveTextPreview, { ...props, maxWidth: composerWidth }),
+              h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
                 style: composerWidth > 0 ? { maxWidth: composerWidth + "px", marginInline: "auto", boxSizing: "border-box" } : undefined },
                 h("div", { className: "dsh-sike-interaction-identity" },
                     h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
@@ -19673,7 +19968,7 @@ const contextCacheFeature = createContextCacheFeatureModule();
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openDraft(props.sessionId) }, "正文工作窗"),
                     props.messageId ? h(CandidateAction, { ...props, agentDock: true }) : null,
                     h(TavernMoreActions, props)),
-                  props.children));
+                  props.children)));
         }
 
 		function CandidateDockActions(props) {

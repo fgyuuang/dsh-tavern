@@ -955,6 +955,7 @@
                         h(UserPreferenceProfileTab, { key: owner + ":profile", scope: { sessionId: owner }, conversationOnly: true }),
                         h("p", { className: "dsh-local-warning" }, "切换预设或长期偏好会使提示词缓存失效，首次请求会增加耗时和费用。")),
                     h(TavernConversationModels, { key: owner + ":models", sessionId: owner, sessions: props.sessions }),
+                    h(TavernConversationExecutionPolicy, { key: owner + ":execution-policy", sessionId: owner }),
                     h(TavernConversationBackgroundModel, { key: owner, sessionId: owner }), h(TavernConversationWritingSkills, { key: owner + ":skills", sessionId: owner })) : h("p", null, "请选择一个游玩对话。")));
         }
 
@@ -1029,6 +1030,57 @@
                     h("div", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : ""));
         }
 
+        function TavernConversationExecutionPolicy(props) {
+            const h = React.createElement;
+            const modeView = useLiveTavernView(props.sessionId, "dream-execution-policy-mode", [["playPresetId"]]);
+            const dreamPreset = modeView.view?.playPresetId === "dream-sike-dsh";
+            const [record, setRecord] = React.useState(null), [saving, setSaving] = React.useState(false);
+            const [error, setError] = React.useState(""), [notice, setNotice] = React.useState("");
+            React.useEffect(function () {
+                let active = true;
+                setRecord(null); setError(""); setNotice("");
+                if (dreamPreset) rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId).then(function (result) {
+                    if (active) { setRecord(result); setError(""); }
+                }, function (failure) { if (active) setError(String(failure.message || failure)); });
+                return function () { active = false; };
+            }, [props.sessionId, dreamPreset]);
+            if (!dreamPreset) return null;
+            async function save(policy) {
+                if (saving || !record || record.busy) return;
+                setSaving(true); setError(""); setNotice("");
+                try {
+                    const result = await rpc("setDreamSikeExecutionPolicy", { sessionId: props.sessionId, policy }, props.sessionId);
+                    setRecord(result); setNotice("已保存；新回合或继续中断回合时采用");
+                    liveTavernView.invalidate(props.sessionId);
+                    notifyTavernDataChanged(["sessions"], "play-controls");
+                } catch (failure) { setError(String(failure.message || failure)); }
+                finally { setSaving(false); }
+            }
+            function select(key, title, options) {
+                return h("label", { className: "dsh-local-field", key }, title,
+                    h("select", { className: "dsh-tavern-settings-select", "aria-label": title,
+                        value: record?.policy?.[key] ?? "", disabled: saving || !record || record.busy || !!error,
+                        onChange: event => save({ ...record.policy, [key]: Number(event.target.value) }) },
+                        options.map(([value, label]) => h("option", { key: value, value }, label))));
+            }
+            const policy = record?.policy || { queryRequests: 1, revisionRequests: 1 };
+            return h("section", { className: "dsh-local-section dsh-sike-execution-policy", "aria-label": "Agent 执行预算" },
+                h("h3", null, "Agent 执行"),
+                h("p", { className: "dsh-local-help" }, "独立设置本局各阶段的模型请求上限。运行中的回合不变；新回合采用新预算。继续中断回合时会重放原输入，并沿同一逻辑回合累计已用额度。"),
+                select("queryRequests", "正文前查询上限", [[1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
+                select("revisionRequests", "正文修订与检查/恢复上限", [[0, "最多 0 次（不请求检查或修改）"], [1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
+                h("p", { className: "dsh-local-help", "aria-live": "polite" }, record ? "该额度计入初稿后的检查、审阅、修改及继续/恢复请求。前台计划上限：" + (Number(policy.queryRequests) + 1 + Number(policy.revisionRequests)) + " 次（查询 + 初稿 1 次 + 修订/恢复）；附加内容自动生成最多另 1 次。结算模型请求单独计数，可能因人物设计、工具续答或恢复而超过一次；它不计入这个前台上限。" : "正在读取预算…"),
+                record?.busy ? h("p", { className: "dsh-local-warning", role: "status" }, "当前回合或后台任务正在运行，完成后可调整预算。",
+                    h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId)
+                        .then(setRecord, failure => setError(String(failure.message || failure))) }, "刷新状态")) : null,
+                error ? h("p", { role: "alert" }, error, h("button", { type: "button", className: "dsh-tavern-btn", disabled: saving, onClick: () => {
+                    setError(""); rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId)
+                        .then(setRecord, failure => setError(String(failure.message || failure)));
+                } }, "重试读取")) : null,
+                notice ? h("p", { role: "status" }, notice) : null,
+                saving ? h("p", { role: "status" }, "正在保存执行预算…") : null);
+        }
+
 		function TavernMoreActions(props) {
 			const [open, setOpen] = React.useState(false);
 			const [placement, setPlacement] = React.useState(null);
@@ -1099,7 +1151,9 @@
             const coordination = useTavernCoordination(props.sessionId, String(props.running));
             const activity = describeTavernActivity(coordination.view && coordination.view.activity);
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
-            return h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
+            return h(React.Fragment, null,
+              h(DreamSikeLiveTextPreview, { ...props, maxWidth: composerWidth }),
+              h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
                 style: composerWidth > 0 ? { maxWidth: composerWidth + "px", marginInline: "auto", boxSizing: "border-box" } : undefined },
                 h("div", { className: "dsh-sike-interaction-identity" },
                     h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
@@ -1112,7 +1166,7 @@
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openDraft(props.sessionId) }, "正文工作窗"),
                     props.messageId ? h(CandidateAction, { ...props, agentDock: true }) : null,
                     h(TavernMoreActions, props)),
-                  props.children));
+                  props.children)));
         }
 
 		function CandidateDockActions(props) {

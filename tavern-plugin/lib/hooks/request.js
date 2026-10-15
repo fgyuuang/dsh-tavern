@@ -46,7 +46,22 @@ export function registerRequestHooks({
     if (sessionId !== '') {
       const previous = requestCoordinates.get(sessionId)
       const frame = previous?.frame && (previous.framePending === true || previous.turn === payload.turn) ? previous.frame : undefined
-      requestCoordinates.set(sessionId, { turn: payload.turn, step: payload.step, ...(frame ? { frame } : {}) })
+      const sameStep = previous?.turn === payload.turn && previous?.step === payload.step
+      const background = backgroundAgentRunner.requestContext(sessionId)
+      const preserved = { ...(previous || {}) }
+      delete preserved.source
+      if (!frame) { delete preserved.frame; delete preserved.framePending }
+      requestCoordinates.set(sessionId, {
+        ...preserved, turn: payload.turn, step: payload.step,
+        attemptId: randomUUID(), attemptOrdinal: sameStep ? (Number(previous?.attemptOrdinal) || 1) + 1 : 1,
+        ...(frame ? { frame } : {}),
+        ...(background ? {
+          executionStage: background.stage,
+          rootTurn: background.rootTurn,
+          rootOperationId: background.rootOperationId,
+          branchId: background.branchId
+        } : {})
+      })
     }
     return await next()
   })

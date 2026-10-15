@@ -140,6 +140,7 @@ export function createDreamSikeDraftModules({ read, update, tasks, run, selectio
         : '当前只执行 review 六维审稿。用 sike_submit_module({text:JSON.stringify({character:{status:"pass",evidence:"具体正文依据至少八个字符"},knowledge:{status:"pass",evidence:"具体正文依据至少八个字符"},style:{status:"pass",evidence:"具体正文依据至少八个字符"},continuity:{status:"pass",evidence:"具体正文依据至少八个字符"},playerAgency:{status:"pass",evidence:"具体正文依据至少八个字符"},format:{status:"pass",evidence:"具体正文依据至少八个字符"}})}) 提交；按实际正文填 pass 或 revise 及依据。'
       const moduleSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
       trace = await run({ sessionId: chat.sessionId, task: 'dream-draft-module', selection: model, persistent: true,
+        rootOperationId: identity.operationId, rootTurn: identity.turn, branchId: identity.branchId, stage: 'addons',
         persistentSessionId: taskRun.participantRequest.sessionId || '', rewindTo: taskRun.participantRequest.rewindTo,
         signal: moduleSignal, onPersistentSessionReady: id => taskRun.bindSession(id, { stateOnly: true }),
         system: '你在正式提交之前独立执行选定作者模块：' + kind + '。遵循下列作者原文的内容职责；旧文本传输标签与私有思考输出由原生工具协议取代。不提交正式剧情或变量，也不创建其他 Agent。用 sike_submit_module 提交，成功后停止。\n【作者模块原文】\n' + plan.rules + (plan.authorContext ? '\n【已选正文写法】\n' + plan.authorContext : '') + '\n【本次唯一提交任务】\n' + submission,

@@ -7,6 +7,7 @@ import { synchronizeTemplateHistory } from '../domain/template-history.js'
 import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '../domain/dream-sike-draft.js'
 import { randomUUID } from 'node:crypto'
 import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
+import { dreamSikeExecutionStageForPhase } from '../domain/dream-sike-execution-usage.js'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
@@ -15,6 +16,7 @@ export function registerTurnLifecycleHooks({
   clearRuntimePresetRequestState,
   contentText,
   ctx,
+  executionUsageForChat,
   ensureNativeSystemPrefix,
   foregroundHandoff,
   foregroundStrategies,
@@ -26,6 +28,7 @@ export function registerTurnLifecycleHooks({
   readChatCard,
   replaceAssistantReply,
   requestIdForTurn,
+  requestCoordinates,
   runtimePrompt,
   sessionStore,
   turnOrchestrator,
@@ -151,7 +154,22 @@ export function registerTurnLifecycleHooks({
       const extra = await pluginPromptSections({ gameId: agent.session.id })
       if (extra.length) assembled.sections = [...(assembled.sections || []), ...extra]
     }
-    const phase = dreamSikeToolPhase(chat, agent.session.id, Number(agent.phase?.turn))
+    const turn = Number(agent.phase?.turn)
+    let phase = dreamSikeToolPhase(chat, agent.session.id, turn)
+    if (phase && chat?.id) {
+      const usage = await executionUsageForChat?.(chat.id, phase.context.executionRootOperationId, phase.context.branchId)
+      phase = dreamSikeToolPhase(chat, agent.session.id, turn, usage)
+      requestCoordinates.set(agent.session.id, Object.assign({}, requestCoordinates.get(agent.session.id), {
+        turn, step: Number(agent.phase?.step) || 0,
+        executionStage: dreamSikeExecutionStageForPhase(phase),
+        operationId: phase.context.operationId,
+        rootOperationId: phase.context.executionRootOperationId,
+        rootTurn: phase.context.executionRootTurn,
+        branchId: phase.context.branchId,
+        allowExecutionPolicyUpdate: phase.context.executionResumed === true,
+        executionPolicy: chat.dreamSikeExecutionPolicy
+      }))
+    }
     return prependSystemInstruction(applyDreamSikeToolPhase(assembled, phase), chat ? runtimePrompt('system-append') : '')
   })
 }

@@ -10,6 +10,7 @@ import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeResourcePath } from './file-resources.js'
 import { diffJson } from './json-mutation.js'
 import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn, dreamSikeTurnIdentity, readyDreamSikeDraft } from './dream-sike-draft.js'
+import { rebindDreamSikePreparation } from './dream-sike-preparation.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -274,6 +275,8 @@ export function createTurnOrchestrator(options) {
     const turn = Math.max(0, Number(input.turn) || 0)
     const requestId = str(input.requestId).trim()
     const userText = str(input.userText).trim()
+    const resumeFromTurn = Number.isSafeInteger(chat.foregroundError?.turn) ? chat.foregroundError.turn
+      : Number.isSafeInteger(chat.dreamSikeResume?.failedTurn) ? chat.dreamSikeResume.failedTurn : null
     const requestCommit = commitForRequest(chat, requestId)
     if (requestCommit !== null) {
       return {
@@ -298,7 +301,7 @@ export function createTurnOrchestrator(options) {
       // body.begin (including legacy timeline normalization) only edits metadata.
       // Keep the history already detached by chatForSession; full timeline.apply
       // remains deeply isolated for callers that edit or restore message bodies.
-      const begun = timeline.apply({ chat: { ...chat, messages: [] }, intent: { kind: 'body.begin', turn, userText } })
+      const begun = timeline.apply({ chat: { ...chat, messages: [] }, intent: { kind: 'body.begin', turn, userText, resumeFromTurn } })
       chat = { ...begun.chat, messages: chat.messages }
       foregroundOperation = begun.value
       if (chat.dreamSikeResume) {
@@ -308,6 +311,22 @@ export function createTurnOrchestrator(options) {
           branchId: foregroundOperation.basedOn.branchId,
           storyRevision: foregroundOperation.basedOn.revision
         }, now())) chatChanged = true
+      }
+      if (foregroundOperation.resumeFromOperationId) {
+        const sourceOperation = chat.timeline.operations[foregroundOperation.resumeFromOperationId]
+        if (sourceOperation) {
+          const rebound = rebindDreamSikePreparation(chat, {
+            chatId: str(chat.id), sessionId: input.sessionId, turn: Number(sourceOperation.turn) || 0,
+            operationId: str(sourceOperation.id), branchId: str(sourceOperation.basedOn?.branchId),
+            storyRevision: Number(sourceOperation.basedOn?.revision) || 0
+          }, {
+            chatId: str(chat.id), sessionId: input.sessionId, turn,
+            operationId: foregroundOperation.operationId,
+            branchId: str(foregroundOperation.basedOn.branchId),
+            storyRevision: Number(foregroundOperation.basedOn.revision) || 0
+          })
+          if (rebound) chatChanged = true
+        }
       }
       const cachedFrame = rememberedFrame(chat, foregroundOperation.operationId)
       if (cachedFrame !== null) {
@@ -449,6 +468,8 @@ export function createTurnOrchestrator(options) {
     const turn = Math.max(0, Number(input.turn) || 0)
     const requestId = str(input.requestId).trim()
     const userText = str(input.userText).trim()
+    const resumeFromTurn = Number.isSafeInteger(chat.foregroundError?.turn) ? chat.foregroundError.turn
+      : Number.isSafeInteger(chat.dreamSikeResume?.failedTurn) ? chat.dreamSikeResume.failedTurn : null
     const requestCommit = commitForRequest(chat, requestId)
     if (requestCommit !== null) {
       return {
@@ -458,7 +479,7 @@ export function createTurnOrchestrator(options) {
         mode
       }
     }
-    const begun = timeline.apply({ chat, intent: { kind: 'body.begin', turn, userText } })
+    const begun = timeline.apply({ chat, intent: { kind: 'body.begin', turn, userText, resumeFromTurn } })
     chat = begun.chat
     const operation = chat.timeline.operations[begun.value.operationId]
     if (operation && !Object.hasOwn(operation, 'sceneWorldbook') && typeof options.captureSceneWorldbook === 'function') {

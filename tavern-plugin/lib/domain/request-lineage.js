@@ -7,6 +7,7 @@
 // Marking returns a copy: the request may belong to the host or another hook, and
 // the host may hand it over frozen (issue #148: manual story compaction failed).
 const HANDLED = Symbol.for('dsh-tavern.request-handled')
+const MODEL_ATTEMPT = Symbol.for('dsh-tavern.model-attempt')
 
 /** A copy of the request recording that `stage` produced it (and every copy derived from it). */
 export function markRequestHandled(request, stage) {
@@ -18,4 +19,16 @@ export function markRequestHandled(request, stage) {
 /** True when `stage` already produced this request or an ancestor it was copied from. */
 export function requestHandledBy(request, stage) {
   return request !== null && typeof request === 'object' && Array.isArray(request[HANDLED]) && request[HANDLED].includes(stage)
+}
+
+/** Attach the provider-boundary attempt identity through every projection copy. */
+export function markRequestAttempt(request, attempt) {
+  if (request === null || typeof request !== 'object' || !attempt || typeof attempt !== 'object') return request
+  return { ...request, [MODEL_ATTEMPT]: Object.freeze({ ...attempt }) }
+}
+
+/** Read the attempt identity copied through request projection middleware. */
+export function requestAttemptOf(request) {
+  const attempt = request !== null && typeof request === 'object' ? request[MODEL_ATTEMPT] : null
+  return attempt && typeof attempt === 'object' ? attempt : null
 }

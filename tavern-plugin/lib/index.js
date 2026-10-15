@@ -7,6 +7,8 @@ import { registerTurnLifecycleHooks } from './hooks/turn-lifecycle.js'
 import { registerGameplayTools } from './tools/gameplay.js'
 import { registerDreamSikeTools } from './tools/dream-sike.js'
 import { conversationPresetSettings, updateConversationPresetSettings } from './domain/conversation-preset-settings.js'
+import { normalizeDreamSikeExecutionPolicy } from './domain/dream-sike-execution-policy.js'
+import { dreamSikeExecutionView } from './domain/dream-sike-execution-usage.js'
 import { registerGameMemoryTools } from './tools/game-memory.js'
 import { createGameMemoryWorkspace } from './domain/game-memory-workspace.js'
 import { createCardProjects } from './domain/card-projects.js'
@@ -146,7 +148,7 @@ import { createForegroundFrameSessionAdapter } from './domain/foreground-frame-s
 import { HISTORY_RECALL_TOOL, createHistoryRecall, renderHistoryRecall } from './domain/history-recall.js'
 import { createModelRequestLog } from './domain/model-request-log.js'
 import { createDisplayRuntimeCoalescer } from './domain/display-runtime-coalescer.js'
-import { MVU_SUBMIT_UPDATE_TOOL, collectMvuHelperContext, createMvuSettlementModule } from './domain/mvu-background-settlement.js'
+import { MVU_SUBMIT_UPDATE_TOOL, SETTLEMENT_SUBMIT_TOOL_NAME, collectMvuHelperContext, createMvuSettlementModule, createSettlementSubmitTool, normalizeSettlementSubmission } from './domain/mvu-background-settlement.js'
 import { applyMvuSettlementEffect } from './domain/mvu-settlement-effect.js'
 import { createMvuSettlementReconciler } from './domain/mvu-settlement-reconciler.js'
 import {
@@ -159,7 +161,7 @@ import {
 import { createLedgerEditor } from './domain/ledger-editor.js'
 import { readLedger, LEDGER_SUBMIT_TOOL } from './domain/story-ledger.js'
 import { createManualLedger } from './domain/manual-ledger.js'
-import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, lastSubmittedPosture, normalizePostureSubmission } from './domain/posture-submission.js'
+import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, lastSubmittedPosture } from './domain/posture-submission.js'
 import { TAVERN_COMPATIBILITY_CAPABILITIES, createTavernCompatibilityDiagnosticStore } from './domain/tavern-compatibility-diagnostics.js'
 import { createMvuDiagnosticStore, createMvuDiagnosticExport, sanitizeRuntimeDiagnostics, sanitizeModuleFailure, sanitizeMvuLoadDiagnostic, redactMvuLoadError } from './domain/mvu-diagnostics.js'
 import { createPlayChatDebugReference, readPlayChatDebugTurn } from './domain/play-chat-debug.js'
@@ -3038,6 +3040,11 @@ export async function apply(ctx) {
       if (snapshot === null) return
       const taskRun = await backgroundTasks.begin(snapshot, 'settlement', { reuseSnapshot: true })
       snapshot = taskRun.chat
+      const rootOperationId = Object.values(snapshot.timeline?.operations || {})
+        .filter(operation => operation?.kind === 'body' && operation.status === 'completed'
+          && Number(operation.turn) === settlementTurn(snapshot)
+          && operation.committedBranchId === taskRun.basedOn.branchId)
+        .sort((left, right) => (Number(right.committedRevision) || 0) - (Number(left.committedRevision) || 0))[0]?.id || ''
       let backgroundSessionId = str(taskRun.participantRequest.sessionId)
       let backgroundBoundary = null
       try {
@@ -3074,19 +3081,22 @@ export async function apply(ctx) {
                 lifecycleRevision: Number(snapshot.tavernHelperLifecycleRevision || 0),
                 swipeId: mvuTarget.swipeId,
                 posture: prepared?.posture ?? target.mvu.delivery?.posture,
-                ...(prepared ? { prepared: structuredClone({ submission: prepared.submission, receipt: prepared.receipt, effect: prepared.effect, posture: prepared.posture }) } : {})
+                ...(prepared?.receipt && prepared?.submission ? { prepared: structuredClone({ submission: prepared.submission, receipt: prepared.receipt, effect: prepared.effect, posture: prepared.posture }) } : {})
               }
             })
           }
           const settlementInput = {
             extraTask: memoryTask,
-            onSubmission: submission => saveDelivery(submission),
+            onSubmission: (submission, prepared) => saveDelivery(submission, prepared),
             onPrepared: prepared => saveDelivery(prepared.submission, prepared),
             guidance: mvuTarget.message.mvu.guidance || '',
             preserveForeground: variableRetry,
             onPersistentSessionReady: id => taskRun.bindSession(id, { stateOnly: true }),
             backgroundTasks: backgroundTasksSettings,
             operationId: taskRun.operationId,
+            rootOperationId,
+            rootTurn: settlementTurn(snapshot),
+            stage: 'settlement',
             chatId: snapshot.id,
             branchId: taskRun.basedOn.branchId,
             basedOnRevision: taskRun.basedOn.revision,
@@ -3150,16 +3160,30 @@ export async function apply(ctx) {
             throw error
           }
           result = { posture: mvuResult.posture }
-        } else if (!backgroundTasksSettings.posture && !backgroundTasksSettings.characterDesign && !memoryTask) {
+        } else if (!backgroundTasksSettings.posture && !backgroundTasksSettings.characterDesign && (!memoryTask || memoryTask.complete())) {
           result = {}
         } else {
           const selection = backgroundModelSelection(snapshot)
           if (selection === null) throw new Error('没有可用的模型配置，请先在当前会话的模型选择器中选择模型')
           let submittedPosture = null
+          let settlementSubmission = null
+          let settlementFailure = ''
+          let settlementSubmissionSeen = false
+          const memoryPending = Boolean(memoryTask && !memoryTask.complete())
+          const settlementEnabled = backgroundTasksSettings.posture || memoryPending
+          const settlementTool = settlementEnabled ? createSettlementSubmitTool({
+            variables: false,
+            posture: backgroundTasksSettings.posture,
+            memory: memoryPending
+          }) : null
           let settlementToolTail = Promise.resolve()
           const run = await backgroundAgentRunner.run({
             onPersistentSessionReady: id => taskRun.bindSession(id, { stateOnly: true }),
             task: 'settlement',
+            rootOperationId,
+            rootTurn: settlementTurn(snapshot),
+            branchId: taskRun.basedOn.branchId,
+            stage: 'settlement',
             backgroundTasks: backgroundTasksSettings,
             persistent: true,
             persistentSessionId: backgroundSessionId,
@@ -3173,40 +3197,55 @@ export async function apply(ctx) {
               source: { kind: 'plugin', plugin: 'dsh-tavern' }
             }],
             system: [
-              backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '本轮不生成或提交姿势。完成启用的后台任务后简短回复完成。',
+              backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '本轮不生成或提交姿势。',
               ...(backgroundTasksSettings.characterDesign ? ['若发现重要人物需要建立、补全或修订长期设计，在当前后台 Agent 内调用 skill 加载 character-design，并按 Skill 读取或保存人物档案；无需也不得创建另一个 Agent。',
-              '人物设计保存独立于姿势结算；完成设计后继续当前任务。'] : []),
-              backgroundTasksSettings.posture ? 'posture_submit 是本任务最后一步。' : '',
-              memoryTask?.system || ''
+              '人物设计保存独立于状态结算；完成档案读取与保存后必须先调用 character_design_finish，再继续当前任务。'] : []),
+              settlementEnabled ? '所有人物设计阶段必须先结束。然后只调用一次 settlement_submit，一次提交本轮全部启用的姿势和记忆字段；不得使用旧的分项提交工具。提交后立即结束本轮。' : '本轮没有待提交的姿势或记忆；完成人物设计后简短结束。',
+              memoryTask?.singleSubmitSystem || ''
             ].join('\n\n'),
-            tools: [...(memoryTask?.tools || []), ...(backgroundTasksSettings.posture ? [POSTURE_SUBMIT_TOOL] : []), ...(backgroundTasksSettings.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])],
+            tools: [...(settlementTool ? [settlementTool] : []), ...(backgroundTasksSettings.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])],
+            strictToolSet: true,
+            rejectToolNames: [MVU_SUBMIT_UPDATE_TOOL.name, POSTURE_SUBMIT_TOOL_NAME, GAME_MEMORY_SUBMIT_TOOL.name, SETTLEMENT_SUBMIT_TOOL_NAME],
             maxToolCalls: 12,
             temperature: 0.2,
             sessionId: snapshot.sessionId,
             webSearchEnabled: snapshot.webSearchEnabled === true,
             signal,
-            stopToolsWhen: function () { return (submittedPosture !== null || !backgroundTasksSettings.posture && memoryTask !== null) && (!memoryTask || memoryTask.complete()) },
-            acceptWithoutText: function () { return (submittedPosture !== null || !backgroundTasksSettings.posture && memoryTask !== null) && (!memoryTask || memoryTask.complete()) },
+            stopToolsWhen: function () { return Boolean(settlementFailure || settlementSubmission) },
+            acceptWithoutText: function () { return Boolean(settlementFailure || settlementSubmission) },
             onToolCall(call) {
               const pending = settlementToolTail.then(async function () {
-                if (memoryTask?.tools.some(tool => tool.name === call?.name)) return memoryTask.execute(call)
+                if (settlementFailure) return JSON.stringify({ ok: false, retryable: false, error: settlementFailure })
+                if (settlementSubmission) return JSON.stringify({ ok: false, retryable: false, error: '本轮结算已提交，拒绝重复提交。' })
                 if (call && (call.name === CHARACTER_DESIGN_READ_TOOL.name || call.name === CHARACTER_DESIGN_SAVE_TOOL.name)) {
-                  if (!backgroundTasksSettings.characterDesign) return JSON.stringify({ ok: false, error: '人物设计已关闭' })
-                  if (submittedPosture !== null) return JSON.stringify({ ok: false, retryable: false, error: '姿势已经提交，本轮后台任务已结束' })
+                  if (!backgroundTasksSettings.characterDesign || settlementSubmissionSeen) return JSON.stringify({ ok: false, retryable: false, error: '人物设计阶段已关闭或本轮结算已开始' })
                   return await characterDesignDocuments.execute(snapshot.id, call)
                 }
-                if (!backgroundTasksSettings.posture || !call || call.name !== POSTURE_SUBMIT_TOOL_NAME) {
-                  return JSON.stringify({ ok: false, retryable: true, error: '请使用当前后台任务提供的提交工具' })
+                if (!settlementEnabled || !call || call.name !== SETTLEMENT_SUBMIT_TOOL_NAME) {
+                  const legacy = [MVU_SUBMIT_UPDATE_TOOL.name, POSTURE_SUBMIT_TOOL_NAME, GAME_MEMORY_SUBMIT_TOOL.name].includes(call?.name)
+                  settlementFailure = legacy ? '旧的变量、姿势和记忆分项提交工具已停用；本任务只接受 settlement_submit。' : '请使用当前后台任务提供的 settlement_submit 工具。'
+                  return JSON.stringify({ ok: false, retryable: false, error: settlementFailure })
                 }
+                if (settlementSubmissionSeen) return JSON.stringify({ ok: false, retryable: false, error: '本轮只接受一次 settlement_submit。' })
+                settlementSubmissionSeen = true
                 try {
-                  if (memoryTask && !memoryTask.complete()) throw new Error('请先提交本轮记忆更新')
-                  submittedPosture = normalizePostureSubmission(call.arguments, {
+                  const normalized = normalizeSettlementSubmission(call.arguments, {
+                    variables: false,
+                    posture: backgroundTasksSettings.posture,
+                    memory: memoryPending,
                     charName: card && card.name,
                     macroState: snapshot.macroState
                   })
+                  if (memoryPending) {
+                    const staged = JSON.parse(await memoryTask.execute({ name: GAME_MEMORY_SUBMIT_TOOL.name, arguments: normalized.memory }))
+                    if (staged?.ok !== true || !memoryTask.complete()) throw new Error(str(staged?.error || '本局记忆暂存失败'))
+                  }
+                  submittedPosture = normalized.posture || ''
+                  settlementSubmission = { posture: submittedPosture }
                   return JSON.stringify({ ok: true })
                 } catch (error) {
-                  return JSON.stringify({ ok: false, retryable: true, error: str(error && error.message || error) })
+                  settlementFailure = str(error && error.message || error)
+                  return JSON.stringify({ ok: false, retryable: false, error: settlementFailure })
                 }
               })
               settlementToolTail = pending.catch(function () {})
@@ -3214,9 +3253,10 @@ export async function apply(ctx) {
             }
           })
           await settlementToolTail
-          if (backgroundTasksSettings.posture && submittedPosture === null) throw new Error('后台 Agent 未调用 posture_submit 提交有效姿势')
+          if (settlementFailure) throw new Error('后台结算未提交：' + settlementFailure)
+          if (settlementEnabled && !settlementSubmission) throw new Error('后台 Agent 未调用 settlement_submit 提交姿势与待处理记忆')
           if (memoryTask && !memoryTask.complete()) throw new Error('后台 Agent 尚未完成本局记忆更新')
-          result = { ...(submittedPosture || {}) }
+          result = { ...(submittedPosture ? { posture: submittedPosture } : {}) }
           text = str(run.text) || JSON.stringify(result)
           backgroundSessionId = str(run.traceSessionId)
           backgroundBoundary = Number.isSafeInteger(run.traceBoundary) ? run.traceBoundary : null
@@ -3226,7 +3266,7 @@ export async function apply(ctx) {
         const completion = {
           ...(mvuTarget && (mvuResult?.effect?.changes || []).every(c => c.path[0] !== 'messages' || Number.isInteger(c.path[1]))
             ? {messageIndices:[mvuTarget.messageId,...(mvuResult?.effect?.changes || []).filter(c=>c.path[0]==='messages').map(c=>c.path[1])]} : {}),
-          stateChanged: Boolean(mvuResult?.effect?.changes?.length) || Boolean(mvuResult && mvuResult.receipt && mvuResult.receipt.status === 'updated') ||
+          stateChanged: Boolean(memoryTask?.hasPendingCommit?.()) || Boolean(mvuResult?.effect?.changes?.length) || Boolean(mvuResult && mvuResult.receipt && mvuResult.receipt.status === 'updated') ||
             str(result && result.posture).trim() !== '',
           participant: taskRun.participant({ sessionId: backgroundSessionId, boundary: backgroundBoundary }),
           apply(draft, scope) {
@@ -3888,6 +3928,37 @@ export async function apply(ctx) {
         const settings = await updateTavernSettings({ defaultPlayPresetId: args?.presetId })
         return { defaultPlayPresetId: settings.defaultPlayPresetId }
       }
+      case 'getDreamSikeExecutionPolicy': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        if (!chat || groupOfMode(chat.mode) !== 'play' || chat.playPresetId !== DREAM_SIKE_AGENT_PRESET) throw new Error('请先在本局设置中选择梦境思客DSH')
+        const busy = agentRegistry.get(sessionId)?.phase?.kind === 'running'
+          || backgroundTasks.activity(chat).busy || tavernScriptDispatch.status(sessionId).busy
+          || ['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) || chat.regenInProgress
+          || replayFailedTurnActive(chat.id)
+        return { policy: normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy), busy, nextTurn: true }
+      }
+      case 'setDreamSikeExecutionPolicy': {
+        const sessionId = str(args?.sessionId)
+        const chat = await chatForSession(sessionId)
+        if (!chat || groupOfMode(chat.mode) !== 'play' || chat.playPresetId !== DREAM_SIKE_AGENT_PRESET) throw new Error('请先在本局设置中选择梦境思客DSH')
+        if (!Object.hasOwn(args || {}, 'policy')) throw new Error('缺少梦境思客执行策略')
+        const policy = normalizeDreamSikeExecutionPolicy(args.policy)
+        const assertIdle = current => {
+          if (current.playPresetId !== DREAM_SIKE_AGENT_PRESET || agentRegistry.get(sessionId)?.phase?.kind === 'running'
+            || backgroundTasks.activity(current).busy || tavernScriptDispatch.status(sessionId).busy
+            || ['pending', 'running', 'waiting-runtime'].includes(current.settleStatus) || current.regenInProgress
+            || replayFailedTurnActive(current.id)) throw new Error('请等待当前回合完成后再修改执行预算')
+        }
+        assertIdle(chat)
+        const saved = await updateChat(chat.id, current => {
+          assertIdle(current)
+          current.dreamSikeExecutionPolicy = policy
+          current.dreamSikeExecutionPolicyRevision = (Number(current.dreamSikeExecutionPolicyRevision) || 0) + 1
+          return current
+        }, { source: 'dream-sike.execution-policy' })
+        return { policy: normalizeDreamSikeExecutionPolicy(saved.dreamSikeExecutionPolicy), busy: false, nextTurn: true }
+      }
       case 'getConversationPresetSettings': {
         const sessionId = str(args?.sessionId)
         const chat = await chatForSession(sessionId)
@@ -4293,11 +4364,16 @@ export async function apply(ctx) {
       }
       case 'getDraftView': {
         const sessionId = str(args?.sessionId)
-        const chat = await chatHeaderForSession(sessionId, ['dreamSikeDraft', 'dreamSikeResume', 'timeline.branchId', 'timeline.revision', 'timeline.operations', 'playPresetId', 'suppressedDshTurns'])
+        const chat = await chatHeaderForSession(sessionId, ['dreamSikeDraft', 'dreamSikeResume', 'dreamSikeExecutionPolicy', 'timeline.branchId', 'timeline.revision', 'timeline.operations', 'playPresetId', 'suppressedDshTurns'])
         const { draft, traceTarget } = dreamSikeDraftWorkTarget(chat)
         const nativeSession = agentRegistry.get(sessionId)?.session || sessionStore.get(sessionId)
         const executionTrace = chat?.playPresetId === DREAM_SIKE_AGENT_PRESET
           ? dreamSikeExecutionTrace(nativeSession, traceTarget) : []
+        const executionRoot = str(traceTarget?.operationId || draft?.operationId)
+        const executionBranch = str(traceTarget?.branchId || draft?.branchId || chat?.timeline?.branchId)
+        const executionUsage = chat?.playPresetId === DREAM_SIKE_AGENT_PRESET
+          ? await modelRequestLog.executionUsage(chat.id, executionRoot || undefined, executionBranch) : null
+        const execution = dreamSikeExecutionView(executionUsage, chat?.dreamSikeExecutionPolicy)
         if (draft) {
           draft.resumable = false
           const agent = agentRegistry.get(sessionId)
@@ -4325,7 +4401,7 @@ export async function apply(ctx) {
             }
           }
         }
-        return { draft, executionTrace }
+        return { draft, executionTrace, execution }
       }
       case 'resumeDreamSikeDraft': {
         const sessionId = str(args?.sessionId)
@@ -4763,6 +4839,7 @@ export async function apply(ctx) {
     clearRuntimePresetRequestState,
     contentText,
     ctx,
+    executionUsageForChat: (chatId, operationId, branchId) => modelRequestLog.executionUsage(chatId, operationId, branchId),
     ensureNativeSystemPrefix,
     foregroundHandoff,
     foregroundStrategies,
@@ -4772,6 +4849,7 @@ export async function apply(ctx) {
     pluginPromptSections: pluginApi.promptSections,
     publishResourceWorkspace,
     readChatCard,
+    requestCoordinates,
     replaceAssistantReply,
     requestIdForTurn,
     runtimePrompt,
@@ -4791,7 +4869,8 @@ export async function apply(ctx) {
       searchWorldbook,
       tools,
     })
-    registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools, draftModules: dreamSikeDraftModules })
+    registerDreamSikeTools({ chatForSession, updateChat, activeTurnOf, tools, requestCoordinates, draftModules: dreamSikeDraftModules,
+      executionUsageForChat: (chatId, operationId, branchId) => modelRequestLog.executionUsage(chatId, operationId, branchId) })
     registerGameMemoryTools({ tools, workspace: gameMemory, chatForSession: sessionId => chatHeaderForSession(sessionId, ['gameMemory']) })
     registerUserProfileTools({
       chatForSession,

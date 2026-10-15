@@ -1,15 +1,14 @@
 import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
-import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
+import { assertDreamSikePreparation, dreamSikePreparationView, prepareDreamSikeWriting } from './dream-sike-preparation.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
-import { dreamSikeDraftModulePlan, draftModuleReceiptCurrent, draftModuleBase } from './dream-sike-draft-modules.js'
+import { draftModuleBase } from './dream-sike-draft-modules.js'
+import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 
 const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
 const MAX_FIND_CHARS = 4_000
 const MAX_REPLACEMENT_CHARS = 8_000
-// The six-axis review is a model reading freshly generated prose, so it reliably finds something
-// worth revising and an all-pass gate would never terminate. Allow this many revise-driven
-// revision rounds; later notes are kept for the record but stop blocking confirmation.
+// Legacy integrations may import this constant. New submissions use the per-chat policy.
 export const DREAM_SIKE_MAX_EDITORIAL_ROUNDS = 1
 
 function str(value) { return typeof value === 'string' ? value : '' }
@@ -140,7 +139,8 @@ export function dreamSikeDraftView(chat) {
     ...definedProps({
       turn: draft.turn, operationId: draft.operationId, branchId: draft.branchId,
       version: draft.version, status: current ? str(draft.status) : 'stale',
-      text: draft.text, revisionCount: draft.revisionCount
+      text: draft.text, revisionCount: draft.revisionCount,
+      executionPolicy: draft.executionPolicy
     }),
     changes: (Array.isArray(draft.changes) ? draft.changes : []).map(change => definedProps({
       kind: change.kind, summary: change.kind ? change.summary : undefined,
@@ -166,7 +166,8 @@ export function dreamSikeDraftWorkTarget(chat) {
   ).sort((left, right) => left.turn - right.turn || (left.createdAt || 0) - (right.createdAt || 0)).at(-1)
   return {
     draft: runningBody && savedDraft?.operationId !== runningBody.id ? null : savedDraft,
-    traceTarget: runningBody ? { turn: runningBody.turn, status: 'running' } : savedDraft
+    traceTarget: runningBody ? { turn: runningBody.turn, status: 'running', operationId: runningBody.id,
+      branchId: timeline.branchId } : savedDraft
   }
 }
 
@@ -240,7 +241,7 @@ export function dreamSikeExecutionTrace(session, draft) {
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
   assertDreamSikePreparation(chat, identity)
-  if (dreamSikeDraftModulePlan(chat, 'parallel')) text = draftModuleBase(text, 'parallel')
+  if (dreamSikeContractView(chat.runtimePresetSnapshot)?.followupModules?.some(module => module.id === '807eefad-93ca-490c-a629-1d51038e3626')) text = draftModuleBase(text, 'parallel')
   assertDraftText(text)
   const previous = readDreamSikeDraft(chat)
   if (sameIdentity(previous, identity)) {
@@ -266,7 +267,7 @@ export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, rep
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后修订')
   if (patches !== undefined && (find !== undefined || replacement !== undefined)) throw new Error('批量 patches 与单项 find/replacement 只能选择一种')
   const items = patches === undefined ? [{ find, replacement }] : patches
-  if (!Array.isArray(items) || items.length < 1 || items.length > 8) throw new Error('一次批量修订接受 1–8 个局部片段；修订次数不设上限')
+  if (!Array.isArray(items) || items.length < 1 || items.length > 8) throw new Error('一次批量修订接受 1–8 个局部片段，次数采用本局修订额度')
   let nextText = draft.text
   const changes = []
   for (const patch of items) {
@@ -294,6 +295,41 @@ export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, rep
   draft.phase = 'revision'
   draft.trace.push({ phase: 'revision', action: '已局部修订', at: now })
   draft.updatedAt = now
+  return copy(draft)
+}
+
+/** One host transaction saves the authored body, its optional brief, and its review. */
+export function submitDreamSikeDraft(chat, identity, { text, brief, review }, now = Date.now()) {
+  const previous = requireMatchingDraft(chat, identity)
+  if (previous?.status === 'ready' && previous.text === text) return readyDreamSikeDraft(chat, identity, previous.version, now)
+  prepareDreamSikeWriting(chat, identity, brief, now)
+  putDreamSikeDraft(chat, identity, text, now)
+  chat.dreamSikeDraft.executionPolicy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
+  return finishDreamSikeDraftSubmission(chat, identity, chat.dreamSikeDraft.version, review, now)
+}
+
+function requireMatchingDraft(chat, identity) {
+  return sameIdentity(chat.dreamSikeDraft, identity) ? chat.dreamSikeDraft : null
+}
+
+/** A repair request applies its entire patch batch before checking the resulting version. */
+export function reviseDreamSikeDraft(chat, identity, { expectedVersion, review, ...patch }, now = Date.now()) {
+  const draft = requireCurrentDraft(chat, identity)
+  const policy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
+  if ((Number(draft.revisionCount) || 0) >= policy.revisionRequests) {
+    throw Object.assign(new Error('本回合局部修订额度已用尽，草稿已保留。若要继续处理，请结束当前失败运行后调整本局预算；继续时会沿用本逻辑回合已用请求数。'), { code: 'DREAM_SIKE_REVISION_LIMIT' })
+  }
+  patchDreamSikeDraft(chat, identity, { expectedVersion, ...patch }, now)
+  draft.executionPolicy = policy
+  return finishDreamSikeDraftSubmission(chat, identity, draft.version, review, now)
+}
+
+/** Deterministic checks and confirmation never need a separate model request. */
+export function finishDreamSikeDraftSubmission(chat, identity, expectedVersion, review, now = Date.now()) {
+  checkDreamSikeDraft(chat, identity, expectedVersion, { now, review })
+  const draft = chat.dreamSikeDraft
+  if (draft.checks.editorial) draft.inlineReview = { version: draft.version, review: copy(draft.checks.editorial.review) }
+  if (!draft.checks.issues.length) readyDreamSikeDraft(chat, identity, draft.version, now)
   return copy(draft)
 }
 
@@ -352,23 +388,21 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后检查')
   const issues = inspectDreamSikeDraft(draft.text).concat(inspectDreamSikeContractDraft(chat, draft.text))
-  for (const kind of ['parallel', 'review']) {
-    if (dreamSikeDraftModulePlan(chat, kind) && !draftModuleReceiptCurrent(chat, kind)) issues.push(issue('module-' + kind + '-pending', '请先对当前草稿版本运行 sike_run_module(kind="' + kind + '")；模块缺失或已随草稿修订过期'))
-  }
-  if (draftModuleReceiptCurrent(chat, 'review')) review = draft.modules.review.review
+  if (review === undefined && draft.inlineReview?.version === draft.version) review = draft.inlineReview.review
   draft.checks = { version: draft.version, issues, checkedAt: now }
   if (needsDreamSikeEditorialReview(chat)) {
     const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
     const editorial = inspectEditorialReview(review)
-    const rounds = Number(draft.editorialRounds) || 0
+    const policy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
+    const rounds = Number(draft.revisionCount) || 0
     // Structure problems (missing axis, invalid evidence) always block; revise notes only block
     // while the revision budget lasts. Without this the editor's never-empty findings deadlock
     // every turn: the review always returns revise, so confirmation could never succeed.
-    const exhausted = rounds > DREAM_SIKE_MAX_EDITORIAL_ROUNDS
+    const exhausted = rounds >= policy.revisionRequests
     const blocking = exhausted
-      ? editorial.issues.filter(item => !/^editorial-revise-/.test(item.code))
+      ? editorial.issues.filter(item => !/^editorial-revise-/.test(item.code) || item.code === 'editorial-revise-format')
       : editorial.issues
-    const notes = exhausted ? editorial.issues.filter(item => /^editorial-revise-/.test(item.code)) : []
+    const notes = exhausted ? editorial.issues.filter(item => /^editorial-revise-/.test(item.code) && item.code !== 'editorial-revise-format') : []
     issues.push(...blocking)
     draft.checks.editorial = {
       required: true, version: draft.version, contractDigest: str(contract?.digest),

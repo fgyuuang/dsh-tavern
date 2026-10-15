@@ -22,6 +22,7 @@ export function recordDreamSikeTurnRead(chat, identity, now = Date.now(), served
   const current = chat.dreamSikePreparation
   if (same(current, identity) && current.contractDigest === digest) {
     addServedReferences(current, served)
+    if (served.finishResearch === true) current.queriesCompleteAt = now
     return clone(current)
   }
   const worldbook = str(chat.preparedWorldBookContext)
@@ -35,6 +36,7 @@ export function recordDreamSikeTurnRead(chat, identity, now = Date.now(), served
     }
   }
   addServedReferences(receipt, served)
+  if (served.finishResearch === true) receipt.queriesCompleteAt = now
   chat.dreamSikePreparation = receipt
   return clone(receipt)
 }
@@ -77,6 +79,38 @@ export function dreamSikePreparationView(chat, identity) {
   return same(receipt, identity) ? clone(receipt) : null
 }
 
+/** Rebind a completed read receipt when a failed body is replayed on the same story base. */
+export function rebindDreamSikePreparation(chat, fromIdentity, toIdentity) {
+  if (!chat || !fromIdentity || !toIdentity
+    || fromIdentity.chatId !== toIdentity.chatId || fromIdentity.sessionId !== toIdentity.sessionId
+    || fromIdentity.branchId !== toIdentity.branchId || fromIdentity.storyRevision !== toIdentity.storyRevision) return false
+  const receipt = chat.dreamSikePreparation
+  if (!same(receipt, fromIdentity)
+    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) return false
+  const rebound = { ...receipt, ...toIdentity }
+  chat.dreamSikePreparation = rebound
+  const draft = chat.dreamSikeDraft
+  if (same(draft?.preparation, fromIdentity)) draft.preparation = clone(rebound)
+  return true
+}
+
+/** The writing submission may carry a brief; never invent one when it was omitted. */
+export function prepareDreamSikeWriting(chat, identity, brief, now = Date.now()) {
+  if (!needsDreamSikePreparation(chat)) return null
+  if (brief !== undefined && brief !== null) return prepareDreamSikeTurn(chat, identity, brief, now)
+  const receipt = chat.dreamSikePreparation
+  if (!same(receipt, identity) || !receipt.readAt
+    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) {
+    throw new Error('请先读取本回合材料与当前作者规则，再提交正文')
+  }
+  if (!receipt.preparedAt) {
+    receipt.preparedAt = now
+    receipt.briefOmitted = true
+    receipt.submissionMode = 'inline'
+  }
+  return clone(receipt)
+}
+
 /** Save the short writing brief. Never accept a transcript of private thinking. */
 export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { coverage } = {}) {
   const receipt = chat.dreamSikePreparation
@@ -102,6 +136,7 @@ export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { 
   if (receipt.preparedAt && JSON.stringify(receipt.brief) === JSON.stringify(normalized)
     && JSON.stringify(receipt.coverage || null) === JSON.stringify(normalizedCoverage)) return clone(receipt)
   receipt.brief = normalized
+  delete receipt.briefOmitted
   receipt.coverage = normalizedCoverage
   receipt.preparedAt = now
   if (currentDraft) {
@@ -118,8 +153,9 @@ export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { 
 export function assertDreamSikePreparation(chat, identity, draft = null) {
   if (!needsDreamSikePreparation(chat)) return
   const receipt = draft?.preparation || chat.dreamSikePreparation
-  if (!same(receipt, identity) || !receipt.preparedAt || !receipt.brief) {
-    throw new Error('本局已启用写前决策流程：先 sike_read_turn，再 sike_prepare_turn 保存简短写作准备，才能起草或确认')
+  if (!same(receipt, identity) || !receipt.preparedAt
+    || (!receipt.brief && !(receipt.submissionMode === 'inline' && receipt.briefOmitted === true && receipt.readAt))) {
+    throw new Error('本局已启用写前决策流程：先 sike_read_turn，再随正文提交可选六项简报；作者核对步骤仍须在内部执行')
   }
   if (receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) {
     throw new Error('预设规则已变化，请重新读取回合并更新写作准备')

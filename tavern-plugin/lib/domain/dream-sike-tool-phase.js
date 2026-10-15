@@ -1,42 +1,81 @@
-import { dreamSikeTurnIdentity, DREAM_SIKE_MAX_EDITORIAL_ROUNDS } from './dream-sike-draft.js'
-import { assertDreamSikePreparation, dreamSikePreparationView, needsDreamSikePreparation } from './dream-sike-preparation.js'
-import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from './dream-sike-draft-modules.js'
+import { dreamSikeTurnIdentity } from './dream-sike-draft.js'
+import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
+import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
+import { dreamSikeExecutionCounts } from './dream-sike-execution-usage.js'
 
 const names = new Set(['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft'])
-export function dreamSikeToolPhase(chat, sessionId, turn) {
+const queryTools = new Set(['tavern_memory', 'tavern_read_variables', 'tavern_recall_history', 'worldbook_search',
+  'tavern_read_worldbook', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_preset', 'tavern_read_regex_library',
+  'tavern_read_play_chat', 'tavern_read_script', 'tavern_read_skill_reference', 'skill', 'web_search'])
+
+export function dreamSikeToolPhase(chat, sessionId, turn, executionUsage, {
+  inFlightAttemptId, inFlightStep, inFlightRootOperationId, inFlightBranchId
+} = {}) {
   if (chat?.playPresetId !== 'dream-sike-dsh') return null
   let identity
   try { identity = dreamSikeTurnIdentity(chat, sessionId, turn) } catch { return null }
+  const operation = chat.timeline?.operations?.[identity.operationId]
+  const executionRootOperationId = String(operation?.executionRootOperationId || identity.operationId)
+  const executionRootTurn = Math.max(0, Number(operation?.executionRootTurn ?? operation?.turn ?? turn) || 0)
+  const executionResumed = executionRootOperationId !== identity.operationId
+  const branchId = identity.branchId
+  const usageMatches = executionUsage?.rootOperationId === executionRootOperationId && executionUsage?.branchId === branchId
+  const currentUsage = usageMatches ? executionUsage : null
   const candidate = chat.dreamSikeDraft
   const draft = candidate?.operationId === identity.operationId && candidate.branchId === identity.branchId && candidate.turn === turn ? candidate : null
-  const phase = (name, tools, instruction, moduleKind = null) => ({ name, tools: ['sike_read_turn', ...tools], instruction, moduleKind,
-    context: { turn, operationId: identity.operationId, expectedVersion: draft?.version ?? null,
+  const ledgerPolicy = normalizeDreamSikeExecutionPolicy(currentUsage?.policy || chat.dreamSikeExecutionPolicy)
+  const configuredPolicy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
+  const policy = executionResumed ? configuredPolicy : ledgerPolicy
+  const observedCounts = dreamSikeExecutionCounts(currentUsage)
+  const admissionCounts = { ...observedCounts }
+  const coordinatesMatch = inFlightRootOperationId === executionRootOperationId && inFlightBranchId === branchId
+  const inFlight = coordinatesMatch && inFlightAttemptId
+    ? currentUsage?.requests?.find(request => request.attemptId === inFlightAttemptId)
+    : coordinatesMatch && Number.isSafeInteger(inFlightStep)
+      ? currentUsage?.requests?.findLast(request => ['reserved', 'completed'].includes(request.status)
+        && request.step === inFlightStep && request.turn === turn)
+      : null
+  if (inFlight && ['reserved', 'completed'].includes(inFlight.status) && Number(admissionCounts[inFlight.stage]) > 0) admissionCounts[inFlight.stage]--
+  const remaining = Math.max(0, policy.revisionRequests - admissionCounts.revision)
+  const queryRemaining = Math.max(0, policy.queryRequests - admissionCounts.query)
+  const phase = (name, tools, instruction, moduleKind = null) => ({ name, tools, instruction, moduleKind,
+    context: { turn, operationId: identity.operationId, executionRootOperationId, executionRootTurn,
+      executionResumed, branchId, expectedVersion: draft?.version ?? null,
       draftStatus: draft?.status ?? null, checkVersion: draft?.checks?.version ?? null,
+      queryRequests: policy.queryRequests, queryRequestsUsed: observedCounts.query,
+      queryRequestsRemaining: Math.max(0, policy.queryRequests - observedCounts.query),
+      revisionRequests: policy.revisionRequests, revisionRequestsUsed: observedCounts.revision,
+      revisionsRemaining: Math.max(0, policy.revisionRequests - observedCounts.revision),
       blockingIssues: (draft?.checks?.issues || []).map(issue => ({ code: issue.code, message: issue.message })),
       editorialNotes: draft?.checks?.editorial?.notes || [] } })
   const preparation = dreamSikePreparationView(chat, identity)
-  if (needsDreamSikePreparation(chat) && !preparation?.readAt) return phase('reading', [], '先读取当前回合与规则；按需分页和检索。')
+  const requiresRead = true
+  const readComplete = Boolean(preparation?.queriesCompleteAt)
+  if (requiresRead && !preparation?.readAt && queryRemaining === 0) {
+    return phase('query-paused', [], '查询额度已用完但当前回合材料尚未成功读取；保留本轮，不能跳过必要材料检查。')
+  }
+  if (requiresRead && preparation?.readAt && !readComplete && queryRemaining === 0) {
+    return phase('query-paused', [], '作者规则或必要材料仍未读完，查询额度已用尽；保留本轮，不得跳过未读规则直接起草。')
+  }
+  if (requiresRead && (!preparation?.readAt || !readComplete && queryRemaining > 0)) {
+    return phase('reading', ['sike_read_turn', ...queryTools], '先用一次请求读取本回合材料与作者规则，并在同一请求内按需调用允许的记忆、历史、世界书和变量检索工具。sike_read_turn 的 finishResearch 默认 true；仅当已经明确缺少关键资料且查询额度仍有剩余时才传 false，以保留一次补查。每个模型请求都计入查询额度。')
+  }
+  if (!draft) {
+    if (admissionCounts.initial > 0) return remaining
+      ? phase('draft-retry', ['sike_put_draft'], '上一次初稿请求没有建立可用草稿；本次重新提交完整正文与六维 review，计入一次修订/恢复额度。')
+      : phase('paused', [], '初稿请求已失败，修订/恢复额度为零；保留本轮状态，调整额度后继续。')
+    return phase('draft', ['sike_put_draft'], '查询结束后一次提交 text 与六维 review；可选 brief 同时提交。宿主在同一写入中保存、检查并确认，通过后直接结束，不再单独调用 prepare、check 或 ready。')
+  }
   try { assertDreamSikePreparation(chat, identity) }
   catch { return phase('preparation', ['sike_prepare_turn'], '读取后保存六项写作准备，再建立主线草稿。') }
-  if (!draft) return phase('draft', ['sike_put_draft'], '只建立主线草稿；平行事件由独立模块合入。')
   if (draft.status === 'ready') return { ...phase('ready', [], '草稿已确认。结束工具调用，返回一句完成提示。'), tools: [] }
-  const parallel = dreamSikeDraftModulePlan(chat, 'parallel')
-  const review = dreamSikeDraftModulePlan(chat, 'review')
-  if (parallel && !draftModuleReceiptCurrent(chat, 'parallel')) return phase('modules', ['sike_run_module'], review
-    ? '调用 review；宿主先更新过期平行事件，再整体审稿。' : '调用 parallel 补齐平行事件，再检查完整草稿。', review ? 'review' : 'parallel')
-  if (review && !draftModuleReceiptCurrent(chat, 'review')) return phase('review', ['sike_run_module'], '调用 review 审稿；使用返回的当前版本和缺陷。', 'review')
-  if (review && Object.values(draft.modules.review.review || {}).some(axis => axis.status === 'revise')) {
-    // Only spend the revision budget on revise rounds; afterwards the notes still reach the check
-    // step but no longer demand another editor pass, so the turn can reach confirmation.
-    if ((Number(draft.editorialRounds) || 0) <= DREAM_SIKE_MAX_EDITORIAL_ROUNDS) {
-      return phase('revision', ['sike_patch_draft'], '把同次审稿缺陷合并为 patches 一次局部修改；原文不确定时先读取当前草稿。')
-    }
-  }
-  if (draft.checks?.version !== draft.version) return phase('checking', ['sike_check_draft', 'sike_patch_draft'],
-    '检查当前草稿；已有当前独立审稿回执时不必重新提交 review。审稿后仍保留的文风建议由宿主记录，是否阻断以当前 checks.issues 为准；不追求每项永远全 pass。收到检查结果后，再在下一模型步骤确认。')
+  if (draft.checks?.version !== draft.version) return phase('checking', ['sike_check_draft', ...(remaining ? ['sike_patch_draft'] : [])],
+    '对当前完整草稿提交六维 review；宿主同时检查并直接确认，通过即结束。需要修订时一次提交批量补丁与修改后 review，不再单独请求 ready。')
   if (draft.checks.issues.some(issue => /^editorial-(missing|extra-axis|invalid-)/.test(issue.code))) return phase('checking', ['sike_check_draft'], '补齐六维审阅结构和具体依据后重新检查；审阅参数缺失不要求修改正文。')
-  if (draft.checks.issues.length) return phase('revision', ['sike_patch_draft'], '依据检查缺陷局部修改；不重复建立草稿，也不预推测后续版本。')
-  return phase('confirming', ['sike_ready_draft', 'sike_patch_draft'], '当前检查通过，确认当前版本；记录中的非阻断文风建议不要求再次审稿。仍可自主局部修订，补丁次数不设上限；若修改则重新检查当前版本。')
+  if (draft.checks.issues.length) return remaining
+    ? phase('revision', ['sike_patch_draft'], '依据本次缺陷一次提交 patches 与修改后六维 review；宿主批量应用、检查并直接确认。不重复建立草稿，不猜测版本，不为非阻断建议反复审稿。')
+    : { ...phase('paused', [], '局部修订额度已用尽，协议或格式问题仍未通过；保留当前草稿并暂停，调整额度后继续。'), tools: [] }
+  return phase('confirming', ['sike_ready_draft'], '旧检查已通过，直接确认当前版本；正常的新正文与补丁提交由宿主自动完成此步骤。')
 }
 
 /** Shared by the model prompt and rejected out-of-phase calls; never relies on old tool results. */
@@ -50,7 +89,8 @@ export function dreamSikePhaseInstruction(phase) {
 export function applyDreamSikeToolPhase(assembly, phase) {
   if (!phase) return assembly
   const allowed = new Set(phase.tools)
-  const keep = name => !names.has(name) || allowed.has(name)
+  const queryStage = phase.name === 'reading'
+  const keep = name => (!names.has(name) && (!queryTools.has(name) || queryStage)) || allowed.has(name)
   return { ...assembly,
     tools: (assembly.tools || []).filter(tool => keep(tool.name)).map(tool => tool.name === 'sike_run_module' && phase.moduleKind
       ? { ...tool, parameters: { ...tool.parameters, properties: { ...tool.parameters?.properties,

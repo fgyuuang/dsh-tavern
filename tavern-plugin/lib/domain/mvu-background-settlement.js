@@ -7,10 +7,11 @@ import {
 } from './character-design-document.js'
 import { variableDiagnosticSummary } from './mvu-diagnostics.js'
 import { normalizeBackgroundTasks } from './tavern-settings.js'
-import { POSTURE_SUBMIT_TOOL, POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission } from './posture-submission.js'
+import { POSTURE_SUBMIT_TOOL_NAME, normalizePostureSubmission } from './posture-submission.js'
 import { resolveRuntimeMacroText } from './runtime-content-projection.js'
 
 export const MVU_SUBMIT_UPDATE_TOOL_NAME = 'mvu_submit_update'
+export const SETTLEMENT_SUBMIT_TOOL_NAME = 'settlement_submit'
 
 // Keep the provider-facing schema flat: some OpenAI-compatible gateways narrow
 // arbitrary JSON unions to a single primitive type. Decode values at our boundary.
@@ -47,6 +48,61 @@ export const MVU_SUBMIT_UPDATE_TOOL = Object.freeze({
     required: ['operations']
   })
 })
+
+const memoryWriteSchema = {
+  type: 'object', additionalProperties: false,
+  properties: { path: { type: 'string' }, text: { type: 'string' } },
+  required: ['path', 'text']
+}
+
+/** Build the single settlement payload for the enabled state channels. */
+export function createSettlementSubmitTool({ variables = true, posture = false, memory = false } = {}) {
+  const properties = {}
+  const required = []
+  if (variables) {
+    properties.operations = {
+      type: 'array',
+      description: '官方 MVU JSON Patch 方言。path/from 使用完整变量快照中的绝对路径（例如 /stat_data/角色/好感度）；有变化时提交完整 operations，没有变化时提交空数组。',
+      items: operationSchema
+    }
+    required.push('operations')
+  }
+  if (posture) {
+    properties.posture = { type: 'string', description: '本轮结束时正文可见的主要人物姿势、站位、衣着与持物状态。' }
+    required.push('posture')
+  }
+  if (memory) {
+    properties.memory = {
+      type: 'object', additionalProperties: false,
+      properties: {
+        writes: { type: 'array', items: memoryWriteSchema },
+        deletes: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['writes', 'deletes'],
+      description: '本局持久记忆文件变更；无变化时提交空 writes 和 deletes。'
+    }
+    required.push('memory')
+  }
+  const channels = [variables && '变量', posture && '姿势', memory && '记忆'].filter(Boolean).join('、') || '结算'
+  const description = [
+    `一次性提交本轮${channels}。只调用 settlement_submit 一次，并在同一参数中填写所有启用字段。`,
+    variables ? '变量仍须遵守人物卡结构、更新规则和 MVU 校验；写入值使用 valueJson JSON 编码字符串。' : '',
+    posture ? '姿势只记录正文已经确认的本轮结束状态。' : '',
+    memory ? '记忆只记录已发生事实和人物各自所知；路径仅限 memory/、characters/、tables/。' : '',
+    '校验失败时本轮停止并保留可恢复状态；不要另行调用旧变量、姿势或记忆提交工具，也不要重复提交。'
+  ].filter(Boolean).join('\n')
+  return Object.freeze({
+    name: SETTLEMENT_SUBMIT_TOOL_NAME,
+    description,
+    parameters: Object.freeze({
+      type: 'object', additionalProperties: false, properties, required
+    })
+  })
+}
+
+// Broad compatibility export. Runtime tasks should use the factory so the
+// schema requires exactly the channels enabled for the current turn.
+export const SETTLEMENT_SUBMIT_TOOL = createSettlementSubmitTool({ variables: true, posture: true, memory: true })
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -284,11 +340,79 @@ function normalizeOperation(raw, index) {
 /** Validate and normalize the single tool submission before any runtime effect. */
 export function normalizeMvuToolSubmission(value) {
   const input = object(value)
-  if (!Array.isArray(input.operations)) throw new Error('mvu_submit_update 缺少 operations 数组')
+  if (!Array.isArray(input.operations)) throw new Error('结算提交缺少 operations 数组')
   // Older callers may still include `analysis`; it is intentionally ignored.
   return {
     operations: input.operations.map(normalizeOperation)
   }
+}
+
+function normalizeSettlementMemoryPath(value, label) {
+  if (typeof value !== 'string' || value.length > 240 || value !== value.normalize('NFC') || /[\\<>:"|?*\p{C}]/u.test(value)) {
+    throw new Error(label + ' 无效')
+  }
+  const parts = value.split('/')
+  if (!['memory', 'characters', 'tables'].includes(parts[0])) throw new Error(label + ' 须位于 memory/、characters/ 或 tables/ 下')
+  for (const part of parts) {
+    if (!part || part.length > 96 || part.startsWith('.') || /^[\s]|[.\s]$/.test(part)
+      || /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(part)
+      || /^(?:node_modules|objects|snapshots|game-memory|__proto__|prototype|constructor)$/i.test(part)) {
+      throw new Error(label + ' 含有保留名称')
+    }
+  }
+  if (!/\.(?:md|json|csv|txt)$/i.test(value)) throw new Error(label + ' 仅支持 md/json/csv/txt 文件')
+  return value
+}
+
+/** Normalize the shared settlement_submit payload before any persistence or runtime effect. */
+export function normalizeSettlementSubmission(value, options = {}) {
+  const input = object(value)
+  const variablesEnabled = options.variables !== false
+  const postureEnabled = options.posture === true
+  const memoryEnabled = options.memory === true
+  const result = {}
+  if (variablesEnabled) {
+    const submission = resolveMvuSubmissionMacros(normalizeMvuToolSubmission(input), options)
+    if (options.currentVariables !== undefined) assertMvuValueKinds(submission.operations, options.currentVariables)
+    result.submission = submission
+  } else if (input.operations !== undefined) {
+    throw new Error('本轮未启用变量结算，不能提交 operations')
+  }
+  if (postureEnabled) {
+    result.posture = normalizePostureSubmission({ posture: input.posture }, options).posture
+  } else if (input.posture !== undefined) {
+    throw new Error('本轮姿势结算已关闭，不能提交 posture')
+  }
+  if (memoryEnabled) {
+    const memory = object(input.memory)
+    if (!Array.isArray(memory.writes) || !Array.isArray(memory.deletes)) {
+      throw new Error('settlement_submit 必须提供 memory.writes 和 memory.deletes；无变化时提交空数组')
+    }
+    if (memory.writes.length > 32 || memory.deletes.length > 32) throw new Error('单次记忆文件修改数量超限')
+    let memoryBytes = 0
+    const paths = new Set()
+    for (const item of memory.writes) {
+      const path = normalizeSettlementMemoryPath(item?.path, '记忆写入路径')
+      if (typeof item.text !== 'string' || item.text.includes('\u0000') || Buffer.byteLength(item.text, 'utf8') > 256 * 1024) {
+        throw new Error('记忆写入文本无效或超过单文件大小限制')
+      }
+      memoryBytes += Buffer.byteLength(item.text, 'utf8')
+      if (memoryBytes > 4 * 1024 * 1024) throw new Error('记忆文件总量超过限制')
+      const key = path.toLowerCase()
+      if (paths.has(key)) throw new Error('记忆文件修改存在重复路径：' + path)
+      paths.add(key)
+    }
+    for (const path of memory.deletes) {
+      const normalized = normalizeSettlementMemoryPath(path, '记忆删除路径')
+      const key = normalized.toLowerCase()
+      if (paths.has(key)) throw new Error('记忆文件修改存在重复路径：' + normalized)
+      paths.add(key)
+    }
+    result.memory = clone(memory)
+  } else if (input.memory !== undefined) {
+    throw new Error('本轮未启用持久记忆，不能提交 memory')
+  }
+  return result
 }
 
 function valueKind(value) {
@@ -431,12 +555,12 @@ export function createMvuBackgroundTaskFrame(input = {}) {
       guidance: str(input.guidance).trim(),
       updateOnlyFromStory: true
     },
-    outputContract: { tool: MVU_SUBMIT_UPDATE_TOOL_NAME, required: true, singleCommit: true, maxToolCalls: 3 }
+    outputContract: { tool: SETTLEMENT_SUBMIT_TOOL_NAME, required: true, singleCommit: true, maxToolCalls: 1 }
   })
 }
 
 /** Stable, isolated input for one background provider request. */
-export function projectMvuBackgroundRequest(frame) {
+export function projectMvuBackgroundRequest(frame, { memory = false } = {}) {
   if (!frame || frame.taskType !== 'mvu-variable-settlement') throw new Error('不是 MVU 变量结算 Frame')
   const state = object(frame.authoritativeState)
   const output = object(frame.foregroundOutput)
@@ -472,11 +596,13 @@ export function projectMvuBackgroundRequest(frame) {
       '只根据【正文】中已经确认发生的事实结算变量，不得读取或推断玩家意图。',
       '不得根据旧轮剧情、隐藏思考、候选项或未发生事件更新变量。',
       ...(tasks.characterDesign ? ['若确实需要人物设计，在当前后台 Agent 内先加载 character-design 并调用人物档案工具；无需也不得创建另一个 Agent。完成后继续本轮结算。'] : []),
-      tasks.posture ? '在同一次回复中同时调用 posture_submit 和 mvu_submit_update，分别提交本轮结束时可见的人物姿势与变量变化；两者互不依赖，无需等待前一个工具返回。不得在回复正文输出 JSON。' : '本轮姿势结算已关闭，直接提交变量，不生成姿势。',
-      '本轮必须调用 mvu_submit_update；姿势和变量分别以各自工具返回结果为准，只补交未完成项。',
+      tasks.posture ? '将变量与本轮结束时可见的人物姿势放在同一个 settlement_submit 调用中；不得拆成多个工具调用，也不得在回复正文输出 JSON。' : '本轮姿势结算已关闭，不要生成姿势。',
+      memory ? '若启用持久记忆，把记忆 writes/deletes 放在同一次 settlement_submit 的 memory 字段中；不得单独调用记忆提交工具。' : '',
+      '本轮只允许一次 settlement_submit。宿主会校验完整提交；失败时停止本轮，不再发起自动修正请求。',
       '数值不确定时，合理即可，不要求必须精确。'
-    ].join('\n'),
-    tools: [...(tasks.posture ? [POSTURE_SUBMIT_TOOL] : []), ...(tasks.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : []), MVU_SUBMIT_UPDATE_TOOL]
+    ].filter(Boolean).join('\n'),
+    tools: [createSettlementSubmitTool({ variables: true, posture: tasks.posture, memory }),
+      ...(tasks.characterDesign ? [CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL] : [])]
   }
 }
 
@@ -485,13 +611,15 @@ export function createMvuSettlementModule(options = {}) {
   if (!options.model || typeof options.model.run !== 'function') throw new Error('MVU Settlement 缺少后台模型 adapter')
   if (!options.runtime || typeof options.runtime.settleMvuUpdate !== 'function') throw new Error('MVU Settlement 缺少官方 Runtime adapter')
   const characterDesign = options.characterDesign
-  const maxAttempts = Math.max(1, Math.min(3, Math.floor(Number(options.maxAttempts) || 3)))
+  // This remains a broad task-tool guard for optional maintenance tools. The
+  // settlement payload itself has an independent hard limit of one attempt.
+  const maxToolCalls = Math.max(1, Math.min(3, Math.floor(Number(options.maxAttempts) || 3))) + 12
   function taskFrame(input) {
     return createMvuBackgroundTaskFrame(input)
   }
 
-  async function applySubmission(input, frame, submission, diagnosticId) {
-    if (input.onSubmission) await input.onSubmission(clone(submission))
+  async function applySubmission(input, frame, submission, diagnosticId, prepared) {
+    if (input.onSubmission) await input.onSubmission(clone(submission), prepared ? clone(prepared) : undefined)
     const applied = await options.runtime.settleMvuUpdate({
       compactResult: true,
       durable: Boolean(input.onSubmission), signal: input.signal,
@@ -553,25 +681,73 @@ export function createMvuSettlementModule(options = {}) {
 
   async function settleVariables(input = {}) {
     const frame = taskFrame(input)
-    const request = projectMvuBackgroundRequest(frame)
     const extraTask = input.extraTask || null
     const tasks = normalizeBackgroundTasks(input.backgroundTasks)
+    const memoryPending = Boolean(extraTask && !extraTask.complete())
+    const request = projectMvuBackgroundRequest(frame, { memory: memoryPending })
     let attempt = 0
     let result = null
     let feedback = null
     let posture = null
+    let settlementSubmissionSeen = false
+    let terminalFailure = false
     let traceSessionId = str(input.persistentSessionId)
     let traceBoundary = null
     let diagnosticId = frame.frameId + ':attempt-1'
     let toolTail = Promise.resolve()
-    let retryNotBefore = 0
+    const executionPolicy = {
+      settlementTool: SETTLEMENT_SUBMIT_TOOL_NAME,
+      maxSettlementSubmissions: 1,
+      retrySettlementValidationInAgent: false,
+      maintenanceStage: tasks.characterDesign ? 'maintenance' : null,
+      maintenanceMayRequireAdditionalRequests: tasks.characterDesign === true
+    }
     async function record(stage, details = {}) {
       try { await options.diagnostics?.record(input.sessionId, { diagnosticId, operationId: input.operationId, chatId: input.chatId, branchId: input.branchId, basedOnRevision: input.basedOnRevision, messageId: input.messageId, swipeId: input.swipeId, attempt, traceSessionId, stage, ...details }) } catch { /* Diagnostics must not change settlement behaviour. */ }
     }
+    async function rejectSettlement(error, details = {}) {
+      terminalFailure = true
+      feedback = { ok: false, retryable: false, error: str(error?.message || error), ...details }
+      await record('submission-rejected', { error: feedback.error, ...details })
+      return JSON.stringify(feedback)
+    }
+    function memoryInstruction() {
+      if (!extraTask) return ''
+      const source = typeof extraTask.singleSubmitSystem === 'string' && extraTask.singleSubmitSystem.trim() !== ''
+        ? extraTask.singleSubmitSystem : str(extraTask.system)
+      const compatible = source
+        .replace(/[^。\n]*必须[^。\n]*tavern_memory_submit[^。\n]*。/g, '')
+        .replace(/tavern_memory_submit/g, 'settlement_submit 的 memory 字段')
+      return [compatible, memoryPending
+        ? '本轮记忆通过唯一的 settlement_submit 调用提交于 memory 字段；没有变化时提交空 writes 和 deletes。不要调用独立记忆提交工具。'
+        : '本轮记忆已经暂存或完成；settlement_submit 不包含 memory 字段，也不要再次生成或提交记忆。'].filter(Boolean).join('\n')
+    }
+    async function prepareMemory(value) {
+      if (!extraTask) {
+        if (value !== undefined) throw new Error('本轮未启用持久记忆，不能提交 memory 字段')
+        return
+      }
+      if (extraTask.complete()) {
+        if (value !== undefined) throw new Error('本轮记忆已暂存或完成，不要重复提交 memory 字段')
+        return
+      }
+      if (!value || !Array.isArray(value.writes) || !Array.isArray(value.deletes)) {
+        throw new Error('settlement_submit 必须提供 memory.writes 和 memory.deletes；无变化时提交空数组')
+      }
+      if (typeof extraTask.execute !== 'function') throw new Error('本局记忆聚合提交工具不可用')
+      let response
+      try {
+        response = JSON.parse(await extraTask.execute({ name: 'tavern_memory_submit', arguments: value }))
+      } catch (error) {
+        throw new Error('记忆暂存失败：' + str(error?.message || error))
+      }
+      if (response?.ok !== true || !extraTask.complete()) {
+        throw new Error(str(response?.error || '记忆暂存未完成'))
+      }
+    }
     async function executeTool(call) {
-      if (extraTask?.tools.some(tool => tool.name === call?.name)) return extraTask.execute(call)
-      if (extraTask && !extraTask.complete() && [MVU_SUBMIT_UPDATE_TOOL_NAME, POSTURE_SUBMIT_TOOL_NAME].includes(call?.name)) {
-        return JSON.stringify({ ok: false, retryable: true, error: '请先使用 tavern_memory_submit 提交本轮记忆更新；无变化时提交空数组。' })
+      if (terminalFailure || (feedback?.ok === true && settlementSubmissionSeen)) {
+        return JSON.stringify({ ok: false, retryable: false, error: '本轮结算已终止或提交完成，拒绝后续工具调用。' })
       }
       if (call && (call.name === CHARACTER_DESIGN_READ_TOOL_NAME || call.name === CHARACTER_DESIGN_SAVE_TOOL_NAME)) {
         if (!tasks.characterDesign) return JSON.stringify({ ok: false, error: '人物设计已关闭' })
@@ -580,50 +756,51 @@ export function createMvuSettlementModule(options = {}) {
         }
         return await characterDesign.execute(input.chatId, call)
       }
-      if (call && call.name === POSTURE_SUBMIT_TOOL_NAME) {
-        if (!tasks.posture) return JSON.stringify({ ok: false, error: '姿势结算已关闭' })
-        if (posture !== null) return JSON.stringify({ ok: true, alreadySubmitted: true })
-        try {
-          posture = normalizePostureSubmission(call.arguments, {
-            charName: input.charName,
-            macroState: input.macroState
-          })
-          if (input.onPrepared && result && ['updated', 'unchanged'].includes(result.receipt?.status)) {
-            await input.onPrepared(clone({ ...result, posture: posture.posture }))
-          }
-          return JSON.stringify({ ok: true })
-        } catch (error) {
-          return JSON.stringify({ ok: false, retryable: true, error: str(error && error.message || error) })
-        }
+      if (!call || call.name !== SETTLEMENT_SUBMIT_TOOL_NAME) {
+        const legacy = [MVU_SUBMIT_UPDATE_TOOL_NAME, POSTURE_SUBMIT_TOOL_NAME,
+          ...(extraTask?.tools || []).map(tool => tool.name)].includes(call?.name)
+        return await rejectSettlement(new Error(legacy
+          ? '旧变量、姿势和记忆提交工具已停用；请在一次 settlement_submit 中提交所有启用字段。'
+          : '后台结算只接受 settlement_submit 聚合提交。'))
       }
-      // Serialize parallel calls too. Success or an unsafe-to-retry failure is terminal.
-      if (feedback && (feedback.ok || !feedback.retryable)) return JSON.stringify(feedback)
-      if (attempt >= maxAttempts) return JSON.stringify({ ...feedback, ok: false, retryable: false })
-      attempt++
-      diagnosticId = frame.frameId + ':attempt-' + attempt
-      await record('start', { variables: variableDiagnosticSummary(input.currentVariables) })
-      let submission
-      try {
-        if (!call || call.name !== MVU_SUBMIT_UPDATE_TOOL_NAME) throw new Error('后台 Agent 调用了未授权的变量工具')
-        submission = resolveMvuSubmissionMacros(normalizeMvuToolSubmission(call.arguments), input)
-        assertMvuValueKinds(submission.operations, input.currentVariables)
-        if (feedback && submission.operations.length === 0) throw new Error('上一批更新未通过校验，请修正完整 operations，不能用空数组跳过失败')
-      } catch (error) {
-        await record('submission-rejected', { error: error.message, argumentKeys: Object.keys(object(call?.arguments)), operations: object(call?.arguments).operations })
-        feedback = { ok: false, retryable: attempt < maxAttempts, rolledBack: true, error: error.message, currentVariables: promptVariables(input.currentVariables), attemptsRemaining: maxAttempts - attempt }
-        result = { variables: clone(input.currentVariables), receipt: { version: 1, status: 'error',
-          summary: feedback.error, diagnosticId, changes: [], sideEffects: [], failures: [{ message: feedback.error }] } }
+      if (settlementSubmissionSeen) {
+        terminalFailure = true
+        feedback = { ok: false, retryable: false, error: '本轮只接受一次 settlement_submit，重复提交已拒绝。' }
         return JSON.stringify(feedback)
       }
-      await record('submitted', { operations: submission.operations })
+      settlementSubmissionSeen = true
+      attempt++
+      diagnosticId = frame.frameId + ':attempt-1'
+      await record('start', { variables: variableDiagnosticSummary(input.currentVariables) })
+      let submission, preparedPosture
+      try {
+        const normalized = normalizeSettlementSubmission(call.arguments, {
+          variables: true,
+          posture: tasks.posture,
+          memory: memoryPending,
+          currentVariables: input.currentVariables,
+          charName: input.charName,
+          macroState: input.macroState
+        })
+        submission = normalized.submission
+        preparedPosture = normalized.posture ? { posture: normalized.posture } : null
+        await prepareMemory(normalized.memory)
+      } catch (error) {
+        return await rejectSettlement(error, { argumentKeys: Object.keys(object(call?.arguments)) })
+      }
+      posture = preparedPosture || null
+      await record('submitted', {
+        operations: submission.operations,
+        postureSubmitted: posture !== null,
+        memoryPrepared: memoryPending
+      })
       let applied
       try {
-        const waitMs = retryNotBefore - Date.now()
-        if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs))
-        applied = await applySubmission(input, frame, submission, diagnosticId)
+        applied = await applySubmission(input, frame, submission, diagnosticId, preparedPosture)
       } catch (error) {
         // A timeout or disk error may have an uncertain outcome; do not replay a delta.
         await record('failed', { error: str(error.message || error) })
+        terminalFailure = true
         feedback = { ok: false, retryable: false, error: str(error.message || error), note: '执行或保存结果无法确认，停止自动重试以避免重复更新。' }
         result = { submission, receipt: { version: 1, status: 'error', summary: feedback.error, diagnosticId, changes: [], sideEffects: [], failures: [{ message: feedback.error }] } }
         return JSON.stringify(feedback)
@@ -631,6 +808,7 @@ export function createMvuSettlementModule(options = {}) {
       if (applied.applied.deferred === true) {
         await record('deferred')
         const receipt = pendingReceipt(applied.applied, diagnosticId)
+        terminalFailure = true
         feedback = { ok: false, retryable: false, deferred: true, deferredReason: receipt.deferredReason, error: receipt.summary }
         result = { variables: clone(input.currentVariables), submission,
           receipt }
@@ -638,6 +816,7 @@ export function createMvuSettlementModule(options = {}) {
       }
       if (applied.applied.stale === true) {
         await record('stale')
+        terminalFailure = true
         feedback = { ok: false, retryable: false, error: '变量结算目标已经变化，迟到结果未写入。' }
         result = { receipt: { version: 1, status: 'stale', summary: feedback.error, changes: [], sideEffects: [], failures: [] } }
         return JSON.stringify(feedback)
@@ -645,7 +824,6 @@ export function createMvuSettlementModule(options = {}) {
       const after = applied.after
       const audit = applied.audit
       const rolledBack = applied.rolledBack
-      retryNotBefore = rolledBack ? Date.now() + Math.max(0, Math.min(3100, Number(applied.applied.retryAfterMs) || 0)) : 0
       const changes = applied.changes
       const sideEffects = applied.sideEffects
       const status = applied.status
@@ -657,26 +835,34 @@ export function createMvuSettlementModule(options = {}) {
       if (input.onPrepared && audit.failures.length === 0) await input.onPrepared(clone({ ...result, posture: posture?.posture }))
       feedback = {
         ok: audit.failures.length === 0,
-        retryable: rolledBack && applied.applied.retryable === true && attempt < maxAttempts,
+        retryable: false,
         rolledBack, status, changes, failures: audit.failures,
         runtimeDiagnostics: applied.applied.diagnostics || [],
-        ...(audit.failures.length === 0 ? {} : { error: '变量更新未通过校验；请对照 rejectedOperations 的提交值与执行后值检查人物卡约束，修正完整 operations，不得原样重试失败项，也不得绕过校验。', rejectedOperations: rejectedOperations(submission.operations, audit.failures, after), ...retryPromptState(after, frame.authoritativeState.variableSchema) }),
-        attemptsRemaining: maxAttempts - attempt
+        ...(audit.failures.length === 0 ? {} : { error: '变量更新未通过校验；本轮自动修订已停止。请检查执行回执后使用手动重试，不能绕过人物卡约束。', rejectedOperations: rejectedOperations(submission.operations, audit.failures, after), ...retryPromptState(after, frame.authoritativeState.variableSchema) })
       }
-      await record('result', { status, rolledBack, retryable: feedback.retryable, variables: variableDiagnosticSummary(after), changes, sideEffects, failures: audit.failures, runtimeDiagnostics: applied.applied.diagnostics || [] })
+      terminalFailure = audit.failures.length > 0
+      await record('result', { status, rolledBack, retryable: false, variables: variableDiagnosticSummary(after), changes, sideEffects, failures: audit.failures, runtimeDiagnostics: applied.applied.diagnostics || [] })
       return JSON.stringify(feedback)
     }
     let run = {}
     try {
       run = await options.model.run({
         task: 'settlement', backgroundTasks: tasks, persistent: true, persistentSessionId: traceSessionId, rewindTo: -1,
+        rootOperationId: str(input.rootOperationId), rootTurn: Math.max(0, Number(input.rootTurn ?? input.turn) || 0),
+        branchId: str(input.branchId), stage: 'settlement',
         onPersistentSessionReady: input.onPersistentSessionReady,
         selection: input.selection, messages: request.messages, turnContext: request.turnContext,
-        system: [str(input.system).trim(), request.system, extraTask?.system].filter(Boolean).join('\n\n'),
-        tools: [...(extraTask?.tools || []), ...request.tools], maxToolCalls: maxAttempts + 12,
+        system: [str(input.system).trim(), request.system, memoryInstruction()].filter(Boolean).join('\n\n'),
+        // The aggregate tool is the only state-submission schema exposed here.
+        tools: [...request.tools],
+        strictToolSet: true,
+        rejectToolNames: [MVU_SUBMIT_UPDATE_TOOL_NAME, POSTURE_SUBMIT_TOOL_NAME,
+          ...(extraTask?.tools || []).map(tool => tool.name)],
+        maxToolCalls,
         toolLimitMessage: '本轮后台工具调用过多，请停止额外查询；变量更新仍不得跳过校验。',
-        stopToolsWhen: () => feedback !== null && (feedback.ok || !feedback.retryable) && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
-        acceptWithoutText: () => result !== null && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
+        stopToolsWhen: () => terminalFailure || feedback?.ok === true && settlementSubmissionSeen
+          && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
+        acceptWithoutText: () => terminalFailure || result !== null && (!tasks.posture || posture !== null) && (!extraTask || extraTask.complete()),
         temperature: 0.1, sessionId: input.sessionId, turn: Math.max(0, Number(input.turn) || 0), signal: input.signal,
         webSearchEnabled: input.webSearchEnabled === true,
         onToolCall(call) {
@@ -693,23 +879,37 @@ export function createMvuSettlementModule(options = {}) {
       // Never re-run the entire model task after a possible commit.
       if (!result || (error.cause?.code === 'BACKGROUND_MODEL_IDLE_TIMEOUT' && !['updated', 'unchanged'].includes(result.receipt?.status))) {
         error.traceSessionId = traceSessionId
+        error.executionPolicy = executionPolicy
         throw error
       }
     }
     await toolTail
     if (!result) {
-      const error = new Error(feedback?.error || '后台 Agent 未调用 mvu_submit_update')
+      const error = new Error(feedback?.error || '后台 Agent 未调用 settlement_submit')
       error.traceSessionId = traceSessionId
       error.traceBoundary = traceBoundary
+      error.executionPolicy = executionPolicy
+      error.mvuReceipt = {
+        version: 1, status: 'error', summary: error.message, diagnosticId, changes: [],
+        failures: Array.isArray(feedback?.failures) && feedback.failures.length ? feedback.failures : [{ message: error.message }],
+        ...(feedback?.rejectedOperations ? { rejectedOperations: feedback.rejectedOperations } : {})
+      }
       throw error
     }
     if (tasks.posture && posture === null) {
       const error = new Error('后台 Agent 未提交有效姿势')
       error.traceSessionId = traceSessionId
       error.traceBoundary = traceBoundary
+      error.executionPolicy = executionPolicy
       throw error
     }
-    if (extraTask && !extraTask.complete()) throw new Error('后台 Agent 尚未完成本局记忆更新')
+    if (extraTask && !extraTask.complete()) {
+      const error = new Error('后台 Agent 尚未完成本局记忆更新')
+      error.traceSessionId = traceSessionId
+      error.traceBoundary = traceBoundary
+      error.executionPolicy = executionPolicy
+      throw error
+    }
     await record('finished', { status: result.receipt.status })
     return {
       frame,
@@ -717,7 +917,8 @@ export function createMvuSettlementModule(options = {}) {
       posture: posture?.posture,
       traceSessionId,
       traceBoundary,
-      ...result
+      ...result,
+      executionPolicy
     }
   }
 

@@ -53,17 +53,20 @@ export async function createGameMemoryTask({ workspace, chat, taskRun }) {
     || prepared.receipt?.expectedHead !== (chat.gameMemory?.head || null))) prepared = null
   if (prepared) await workspace.validatePrepared(chat, prepared)
   const listing = await workspace.list(chat, { limit: 20 })
+  const singleSubmitSystem = [
+    '【本局持久记忆】',
+    '你负责根据本轮已确认正文维护本局文档。按需使用 tavern_memory 读取与搜索；记忆更新放入本次 settlement_submit 的 memory 字段，不要单独调用记忆提交工具。没有变化时提交空 writes 和 deletes。',
+    '优先维护 memory/current-scene.md、memory/open-threads.md 与需要变化的人物记忆；章节记忆保留回合出处。记忆只描述已发生事实，人物所知分别记录。核心设定修改须有玩家明确要求。',
+    '后续压缩与新分支会从这些文档恢复；不要复制整段聊天或重复保存 MVU 数值。',
+    JSON.stringify(listing),
+    alreadyApplied ? '本轮记忆已经保存，可直接完成其余结算；本次提交不要包含 memory 字段。' : prepared ? '本轮记忆已经暂存，可直接完成其余结算；本次提交不要包含 memory 字段。' : ''
+  ].filter(Boolean).join('\n')
   return {
     tools: [GAME_MEMORY_SUBMIT_TOOL],
-    system: [
-      '【本局持久记忆】',
-      '你负责根据本轮已确认正文维护本局文档。按需使用 tavern_memory 读取与搜索，必须在提交变量或姿势之前调用 tavern_memory_submit；没有变化时提交空数组。',
-      '优先维护 memory/current-scene.md、memory/open-threads.md 与需要变化的人物记忆；章节记忆保留回合出处。记忆只描述已发生事实，人物所知分别记录。核心设定修改须有玩家明确要求。',
-      '后续压缩与新分支会从这些文档恢复；不要复制整段聊天或重复保存 MVU 数值。',
-      JSON.stringify(listing),
-      alreadyApplied ? '本轮记忆已经保存，可直接完成其余结算，无需重复更新文档。' : prepared ? '本轮记忆已暂存，可直接完成其余结算。' : ''
-    ].filter(Boolean).join('\n'),
+    singleSubmitSystem,
+    system: singleSubmitSystem,
     complete: () => alreadyApplied || prepared !== null,
+    hasPendingCommit: () => !alreadyApplied && prepared !== null,
     async execute(call) {
       if (call?.name !== GAME_MEMORY_SUBMIT_TOOL.name) return JSON.stringify({ ok: false, error: '未知记忆工具' })
       if (alreadyApplied) return JSON.stringify({ ok: true, alreadyApplied: true, head: chat.gameMemory.head })

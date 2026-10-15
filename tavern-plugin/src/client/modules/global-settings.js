@@ -29,12 +29,25 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, TavernD
                 h("span", { className: "dsh-tavern-settings-copy" }, h("strong", { className: "dsh-tavern-settings-title" }, title), h("span", { className: "dsh-tavern-settings-desc" }, help)),
                 h("input", { type: "checkbox", role: "switch", "aria-label": title, disabled, checked: task ? data?.backgroundTasks[key] === true : data?.[key] === true, onChange: event => save(task ? { backgroundTasks: { [key]: event.target.checked } } : { [key]: event.target.checked }) }));
         }
+        function executionPolicySelect(key, title, choices) {
+            const policy = data?.dreamSikeExecutionPolicy || { queryRequests: 1, revisionRequests: 1 };
+            return h("label", { key, className: "dsh-local-field" }, title,
+                h("select", { className: "dsh-tavern-settings-select", "aria-label": title, disabled,
+                    value: policy[key], onChange: event => save({ dreamSikeExecutionPolicy: { ...policy, [key]: Number(event.target.value) } }) },
+                    choices.map(([value, label]) => h("option", { key: value, value }, label))));
+        }
+        const executionPolicy = data?.dreamSikeExecutionPolicy || { queryRequests: 1, revisionRequests: 1 };
         return h("div", { className: "dsh-tavern-settings-section dsh-local-settings dsh-tavern-global-defaults" },
             h("section", { className: "dsh-local-section" }, h("h3", null, "基本信息"),
                 h("label", { className: "dsh-local-field" }, "默认玩家称呼", h("input", { key: data?.playerName, defaultValue: data?.playerName || "", disabled, maxLength: 80, onBlur: event => { if (event.target.value !== data.playerName) save({ playerName: event.target.value }); } })),
                 h("label", { className: "dsh-local-field" }, "默认状态栏位置", h("select", { disabled, value: data?.statusBarPlacement || "sidebar", onChange: event => save({ statusBarPlacement: event.target.value }) }, h("option", { value: "sidebar" }, "侧边栏"), h("option", { value: "body" }, "正文下方"))),
                 h("label", { className: "dsh-local-field" }, "默认预设", h("select", { disabled, value: data?.preset || "", onChange: event => save(null, "selectPreset", { path: event.target.value }) }, h("option", { value: "" }, "不使用外部预设"), (data?.presets || []).filter(item => item.valid && item.recognized).map(item => h("option", { key: item.path, value: item.path }, item.title)))),
                 h("label", { className: "dsh-local-field" }, "默认长期偏好", h("select", { disabled, value: data?.profile.defaultProfileId || "", onChange: event => save(null, "manageUserPreferenceProfile", { action: "default", profileId: event.target.value }) }, h("option", { value: "" }, "不启用"), (data?.profile.profiles || []).filter(item => item.hasConfirmed).map(item => h("option", { key: item.id, value: item.id }, item.name))))),
+            h("section", { className: "dsh-local-section", "aria-label": "梦境思客 Agent 执行默认" }, h("h3", null, "梦境思客 Agent 执行默认"),
+                h("p", { className: "dsh-local-help" }, "仅供之后选择梦境思客DSH的新游戏继承；本局预算在本局设置中单独调整。"),
+                executionPolicySelect("queryRequests", "正文前查询请求上限", [[1, "1 次"], [2, "2 次"]]),
+                executionPolicySelect("revisionRequests", "正文修订与检查/恢复请求上限", [[0, "0 次"], [1, "1 次"], [2, "2 次"]]),
+                h("p", { className: "dsh-local-help" }, "该额度计入初稿后的检查、审阅、修改及继续/恢复请求。前台计划上限：" + (Number(executionPolicy.queryRequests) + 1 + Number(executionPolicy.revisionRequests)) + " 次（查询 + 初稿 + 修订/恢复）；附加内容自动生成最多另 1 次。结算模型请求单独计数，可能因人物设计、工具续答或恢复而超过一次；它不计入这个前台上限。")),
             h("section", { className: "dsh-local-section" }, h("h3", null, "后台结算"),
                 toggle("variables", "变量结算", "MVU 卡建议开启；普通卡不执行此任务。", true), toggle("posture", "人物姿势结算", "总结本轮结束时人物的位置、动作和姿势。", true), toggle("variableFeedback", "变量回灌前台", "每轮把上一轮变化的变量最新值告诉前台，减少前后不一致。", true)),
             h("section", { className: "dsh-local-section" }, h("h3", null, "扩展功能"),

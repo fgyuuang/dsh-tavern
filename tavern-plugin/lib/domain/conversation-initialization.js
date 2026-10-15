@@ -9,6 +9,7 @@ import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
 import { normalizeBackgroundTasks, normalizePlayDefaults } from './tavern-settings.js'
 import { normalizePlayPresetId } from './dream-sike-mode.js'
+import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 import { ensureSessionSeedTrajectory } from './session-seed-trajectory.js'
 import { defaultUserPreferenceProfile } from './user-preference-profile.js'
 
@@ -165,6 +166,9 @@ export function createConversationInitialization(options) {
     const openingTarget = typeof sessionId === 'string' && sessionId !== '' ? await native.wait(sessionId) : undefined
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
     chat.playPresetId = selectedPlayPresetId
+    if (selectedPlayPresetId === 'dream-sike-dsh') {
+      chat.dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy(defaults.dreamSikeExecutionPolicy)
+    }
     chat.bypassPlanId = runtimePresetSnapshot && runtimePresetSnapshot.planId || ''
     chat.runtimePresetSnapshot = runtimePresetSnapshot
     chat.runtimePresetPath = str(runtimePresetSnapshot && runtimePresetSnapshot.presetPath)

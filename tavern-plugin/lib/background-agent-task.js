@@ -265,6 +265,26 @@ export function createBackgroundAgentTask(options) {
             (input.task !== 'character-design' || registeredShared?.allowDuringCharacterDesign === true) ? registeredShared : undefined
           const current = allowed.get(tool.name) || (shared && shared.tool)
           if (current === undefined) {
+            if (Array.isArray(input.rejectToolNames) && input.rejectToolNames.includes(tool.name)) {
+              if (typeof input.stopToolsWhen === 'function' && input.stopToolsWhen()) {
+                return JSON.stringify({ ok: false, retryable: false, message: '当前任务已经提交完成，请结束本轮。' })
+              }
+              toolCallCount++
+              const result = str(await input.onToolCall({ name: tool.name, arguments: args }))
+              if (typeof input.stopToolsWhen === 'function' && input.stopToolsWhen()) execution?.concludeTurn?.()
+              return result
+            }
+            if (input.strictToolSet === true) {
+              toolCallCount++
+              if (typeof input.onToolCall === 'function') {
+                const result = str(await input.onToolCall({ name: tool.name, arguments: args }))
+                if (typeof input.stopToolsWhen === 'function' && input.stopToolsWhen()) execution?.concludeTurn?.()
+                return result
+              }
+              execution?.concludeTurn?.()
+              return JSON.stringify({ ok: false, retryable: false,
+                error: '当前任务不允许调用 ' + tool.name + '；本轮已停止，避免重复重试。' })
+            }
             return JSON.stringify({
               ok: false,
               retryable: true,

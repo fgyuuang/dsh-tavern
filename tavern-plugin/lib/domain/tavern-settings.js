@@ -1,6 +1,7 @@
 import { compactionPolicy } from './auto-compaction.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
 import { normalizePlayPresetId, setDefaultPlayPreset } from './dream-sike-mode.js'
+import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -22,6 +23,7 @@ export function normalizePlayDefaults(value) {
   return { playerName: typeof input.playerName === 'string' ? input.playerName.trim().slice(0, 80) || '你' : '你',
     statusBarPlacement: input.statusBarPlacement === 'body' ? 'body' : 'sidebar',
     backgroundTasks: normalizeBackgroundTasks(input.backgroundTasks),
+    dreamSikeExecutionPolicy: normalizeDreamSikeExecutionPolicy(input.dreamSikeExecutionPolicy),
     webSearchEnabled: input.webSearchEnabled === true, sceneImagesEnabled: input.sceneImagesEnabled === true }
 }
 
@@ -35,7 +37,14 @@ export function applyTavernSettingsPatch(current, patch) {
     if (Object.hasOwn(patch, 'statusBarPlacement') && !['body', 'sidebar'].includes(patch.statusBarPlacement)) throw new Error('状态栏位置无效')
     for (const key of ['variables', 'posture', 'variableFeedback']) if (Object.hasOwn(object(patch.backgroundTasks), key) && typeof patch.backgroundTasks[key] !== 'boolean') throw new Error('默认结算开关必须为布尔值')
     const current = normalizePlayDefaults(next.defaultPlaySettings)
-    next.defaultPlaySettings = normalizePlayDefaults({ ...current, ...patch, backgroundTasks: { ...current.backgroundTasks, ...object(patch.backgroundTasks) } })
+    let dreamSikeExecutionPolicy = current.dreamSikeExecutionPolicy
+    if (Object.hasOwn(patch, 'dreamSikeExecutionPolicy')) {
+      const policyPatch = patch.dreamSikeExecutionPolicy
+      if (policyPatch === null || typeof policyPatch !== 'object' || Array.isArray(policyPatch)) throw new Error('梦境思客执行策略格式无效')
+      dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy({ ...current.dreamSikeExecutionPolicy, ...policyPatch })
+    }
+    next.defaultPlaySettings = normalizePlayDefaults({ ...current, ...patch, dreamSikeExecutionPolicy,
+      backgroundTasks: { ...current.backgroundTasks, ...object(patch.backgroundTasks) } })
   }
   if (Object.hasOwn(input, 'defaultWritingSkill')) {
     const { name, enabled } = object(input.defaultWritingSkill)

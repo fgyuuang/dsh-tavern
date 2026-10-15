@@ -13,8 +13,8 @@ const stageDefinitions = [
   ['role-scene', '角色与场景', '读取角色、视角、玩家动作及人物可知信息，沿用已选作者规则。'],
   ['narration', '叙事与文风', '按已选文风、叙事者、字数和附加规则组织正文。'],
   ['planning', '写前决策', '执行作者的设定检索、视角核对、写规检查与事件推进步骤。'],
-  ['output', '正文与独立剧情模块', '先写主线草稿，独立生成已启用平行事件并合入草稿，整体审稿后提交一次。'],
-  ['review-state', '审稿与状态结算', '按已选检查规则修订草稿，最终正文确认后结算状态。'],
+  ['output', '正文初稿', '一次建立主线草稿，并随正文提交作者要求的六维审阅；通过后由宿主提交正文。'],
+  ['review-state', '按需修订与状态结算', '只在正文检查发现具体问题时按本局请求额度修订；正文提交后后台结算权威状态。'],
   ['followup', '后续互动', '正文与状态结算完成后，另一次调用按作者规则生成已选共创、行动选项和本回合摘要。'],
   ['model', '模型与材料接入', '管理模型适配及外部数据库、表格材料的兼容状态。']
 ]
@@ -111,9 +111,9 @@ export function buildDreamSikeAgentProfile(snapshot, mode = 'tavern', options = 
       resolvedDigest: resolved.resolvedDigest, contractDigest: resolved.contractDigest } }
 }
 export function readDreamSikeAgentRules(chat, request = {}) {
-  const offset = request.offset ?? 0, limit = request.limit ?? 4, contentOffset = request.contentOffset ?? 0, maxChars = request.maxChars ?? 12000
+  const offset = request.offset ?? 0, limit = request.limit ?? 50, contentOffset = request.contentOffset ?? 0, maxChars = request.maxChars ?? 20000
   if (![offset, contentOffset].every(value => Number.isSafeInteger(value) && value >= 0)
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > 10 || !Number.isSafeInteger(maxChars) || maxChars < 1 || maxChars > 12000) throw new Error('作者规则分页参数无效')
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > 50 || !Number.isSafeInteger(maxChars) || maxChars < 1 || maxChars > 20000) throw new Error('作者规则分页参数无效')
   const snapshot = chat?.runtimePresetSnapshot
   const resolved = resolveRules(snapshot, contextFor(chat, request.context))
   const summary = rule => rule ? { key: rule.key, identifier: rule.identifier, name: rule.name,

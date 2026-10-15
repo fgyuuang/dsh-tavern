@@ -28,11 +28,12 @@
 			}
 			function nativeToolStatus(status) {
 				switch (status) {
-					case "running": case "started": return "运行中";
+					case "running": case "started": case "reserved": return "运行中";
 					case "completed": case "success": case "ok": return "已完成";
 					case "failed": case "error": return "失败";
 					case "cancelled": return "已取消";
 					case "interrupted": return "已中断";
+					case "blocked": return "已拦截";
 					default: return "已记录";
 				}
 			}
@@ -44,6 +45,7 @@
 				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh";
 				const [draft, setDraft] = React.useState(null);
 				const [executionTrace, setExecutionTrace] = React.useState([]);
+				const [execution, setExecution] = React.useState(null);
 				const [loading, setLoading] = React.useState(true);
 				const [error, setError] = React.useState("");
 				const [resuming, setResuming] = React.useState(false);
@@ -70,6 +72,7 @@
 				React.useEffect(function () {
 					setDraft(null);
 					setExecutionTrace([]);
+					setExecution(null);
 					setLoading(true);
 					setError("");
 					if (!props.visible || !sessionId || !isPlayMode(mode) || !dreamMode) return;
@@ -83,6 +86,7 @@
 							if (active) {
 								setDraft(result.draft && typeof result.draft === "object" ? result.draft : null);
 								setExecutionTrace(Array.isArray(result.executionTrace) ? result.executionTrace : []);
+								setExecution(result.execution && typeof result.execution === "object" ? result.execution : null);
 								setError("");
 							}
 						} catch (failure) {
@@ -135,6 +139,48 @@
 				const trace = draft && Array.isArray(draft.trace) ? draft.trace : [];
 				const text = draft && typeof draft.text === "string" ? draft.text : "";
 				const revisions = Math.max(0, Number(draft && draft.revisionCount) || 0);
+				function renderExecutionUsage() {
+					if (!execution) return null;
+					const counts = execution.counts || {};
+					const limits = execution.limits || {};
+					const labels = { query: "写前查询", initial: "正文初稿", revision: "检查/修订/恢复", settlement: "状态结算", addons: "预设附加", "addons-retry": "附加手动重试", compaction: "压缩", maintenance: "其他后台" };
+					const requests = Array.isArray(execution.requests) ? execution.requests : [];
+					const counted = Object.values(counts).reduce(function (sum, value) { return sum + Math.max(0, Number(value) || 0); }, 0);
+					const blocked = requests.filter(function (item) { return item.status === "blocked"; }).length;
+					const total = counted;
+					const requestsTruncated = Number(execution.requestCount) > requests.length;
+					function tokenTotal(key) {
+						const values = requests.map(function (item) {
+							const value = item.usage && item.usage[key];
+							return value === null || value === undefined ? NaN : Number(value);
+						}).filter(Number.isFinite);
+						return values.length ? values.reduce(function (sum, value) { return sum + value; }, 0) : null;
+					}
+					const inputTokens = tokenTotal("inputTokens");
+					const cacheReadTokens = tokenTotal("cacheReadTokens");
+					const outputTokens = tokenTotal("outputTokens");
+					const stageRows = ["query", "initial", "revision", "settlement", "addons", "addons-retry", "compaction", "maintenance"]
+						.filter(function (stage) { return Number(counts[stage]) > 0 || Number.isFinite(Number(limits[stage])); })
+						.map(function (stage) {
+							const limit = Number.isFinite(Number(limits[stage])) ? " / " + limits[stage] : "";
+							return h("span", { key: stage }, labels[stage] + " " + (Number(counts[stage]) || 0) + limit);
+						});
+					const tokenText = [inputTokens === null ? "" : "输入 " + inputTokens,
+						cacheReadTokens === null ? "" : "缓存读 " + cacheReadTokens,
+						outputTokens === null ? "" : "输出 " + outputTokens].filter(Boolean).join(" · ")
+						+ (requestsTruncated && (inputTokens !== null || cacheReadTokens !== null || outputTokens !== null) ? "（最近 64 次记录）" : "");
+					return h("details", { className: "dsh-sike-draft-section dsh-sike-draft-usage" },
+						h("summary", null, "模型请求 · " + total + " 次" + (blocked ? " · 已拦截 " + blocked + (requestsTruncated ? "（最近 64 条）" : "") : "")),
+						h("div", { className: "dsh-sike-draft-meta" }, stageRows),
+						tokenText ? h("p", { className: "dsh-sike-draft-muted" }, tokenText) : null,
+						h("ol", { className: "dsh-sike-draft-list" }, requests.slice(-16).map(function (item, index) {
+							const elapsed = item.elapsedMs !== null && item.elapsedMs !== undefined && Number.isFinite(Number(item.elapsedMs)) ? " · " + Math.round(Number(item.elapsedMs)) + " ms" : "";
+							const detail = [item.provider, item.model, item.purpose].filter(Boolean).join(" · ");
+							return h("li", { key: item.attemptId || index },
+								(labels[item.stage] || item.stage || "模型请求") + " · " + nativeToolStatus(item.status) + elapsed
+									+ (detail ? " · " + brief(detail, 100) : ""));
+						})));
+				}
 				function renderExecutionTrace() {
 					if (!executionTrace.length) return null;
 					return h("details", { className: "dsh-sike-draft-trace dsh-sike-native-trace", "aria-label": "Agent 工具调用" },
@@ -179,6 +225,7 @@
 				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用梦境思客DSH。") :
 					h("div", { className: "dsh-sike-draft-body" },
 						error ? h("div", { className: "dsh-card-error", role: "alert" }, "读取工作窗失败：" + error) : null,
+						renderExecutionUsage(),
 						loading && !draft ? h("div", { className: "dsh-tavern-empty" }, "正在读取当前回合…") :
 						!draft ? h(React.Fragment, null,
 							h("div", { className: "dsh-tavern-empty" }, executionTrace.length ? "Agent 正在准备本回合正文。" : "当前没有正文草稿。开始新回合后，这里会显示 Agent 的工作进度。"),

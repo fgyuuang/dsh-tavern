@@ -270,7 +270,11 @@ export function createBackgroundAgentSessions(options, task) {
       selection: { ...input.selection },
       maxTokens,
       task: str(input.task) || 'background',
-      turn: Math.max(0, Number(input.turn) || 0)
+      turn: Math.max(0, Number(input.turn) || 0),
+      rootTurn: Math.max(0, Number(input.rootTurn ?? input.turn) || 0),
+      rootOperationId: str(input.rootOperationId),
+      branchId: str(input.branchId),
+      stage: str(input.stage) || ({ settlement: 'settlement', 'dream-followup': 'addons', 'dream-draft-module': 'addons' }[str(input.task)] || 'maintenance')
     })
     try {
       return await task.execute({ agent: handle.agent, state, traceSessionId, persistent }, input)

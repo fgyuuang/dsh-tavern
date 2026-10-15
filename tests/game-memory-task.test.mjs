@@ -63,21 +63,45 @@ test('回退后的后台迟到提交不能更新记忆或变量', async () => {
   assert.equal(h.current().variables, undefined)
 })
 
-test('MVU 工具在记忆暂存前不会执行，结算失败不会使记忆提前生效', async () => {
+test('聚合提交先校验记忆再执行 MVU，结算失败不会使暂存记忆提前生效', async () => {
   const h = harness(), feedback = [], task = await h.coordinator.begin(h.current(), 'settlement')
   const memory = await createGameMemoryTask({ workspace: h.workspace, chat: task.chat, taskRun: task })
-  let executions = 0
-  const module = createMvuSettlementModule({ model: { async run(input) {
-    feedback.push(JSON.parse(await input.onToolCall({ name: 'mvu_submit_update', arguments: { operations: [] } })))
-    await input.onToolCall(submission)
-    feedback.push(JSON.parse(await input.onToolCall({ name: 'mvu_submit_update', arguments: { operations: [] } })))
+  let executions = 0, runs = 0
+  const invalid = createMvuSettlementModule({ model: { async run(input) {
+    runs++
+    feedback.push(JSON.parse(await input.onToolCall({ name: 'settlement_submit', arguments: { operations: [], memory: { writes: [{ path: '../outside.md', text: '无效写入' }], deletes: [] } } })))
     assert.equal(input.stopToolsWhen(), true)
+    assert.equal(input.acceptWithoutText(), true)
     return {}
-  } }, runtime: { async settleMvuUpdate() { executions++; return { variables: { stat_data: {} }, validation: { changes: [], sideEffects: [], failures: [] } } } } })
-  await module.settleVariables({ extraTask: memory, backgroundTasks: { posture: false, characterDesign: false }, chatId: h.current().id, operationId: task.operationId, branchId: task.basedOn.branchId, basedOnRevision: task.basedOn.revision, sessionId: 's', storyText: '她进入钟楼。', currentVariables: { stat_data: {} }, messageId: 0, swipeId: 0 })
+  } }, runtime: { async settleMvuUpdate() { executions++; throw Error('无效记忆不得执行 MVU') } } })
+  const base = { extraTask: memory, backgroundTasks: { posture: false, characterDesign: false }, chatId: h.current().id, operationId: task.operationId, branchId: task.basedOn.branchId, basedOnRevision: task.basedOn.revision, sessionId: 's', storyText: '她进入钟楼。', currentVariables: { stat_data: {} }, messageId: 0, swipeId: 0 }
+  await assert.rejects(invalid.settleVariables(base), /记忆写入路径/)
   assert.equal(feedback[0].ok, false)
-  assert.equal(feedback[1].ok, true)
+  assert.equal(feedback[0].retryable, false)
+  assert.equal(memory.complete(), false)
+  assert.equal(executions, 0)
+  assert.equal((await h.workspace.list(h.current())).total, 0)
+  const module = createMvuSettlementModule({ model: { async run(input) {
+    runs++
+    feedback.push(JSON.parse(await input.onToolCall({ name: 'settlement_submit', arguments: { operations: [], memory: submission.arguments } })))
+    assert.equal(input.stopToolsWhen(), true)
+    assert.equal(input.acceptWithoutText(), true)
+    return {}
+  } }, runtime: { async settleMvuUpdate() {
+    executions++
+    assert.equal(memory.complete(), true)
+    assert.equal((await h.workspace.list(h.current())).total, 0)
+    throw Error('模拟变量执行失败')
+  } } })
+  const result = await module.settleVariables(base)
+  assert.equal(feedback[1].ok, false)
+  assert.equal(feedback[1].retryable, false)
+  assert.match(feedback[1].error, /模拟变量执行失败/)
+  assert.equal(result.receipt.status, 'error')
   assert.equal(executions, 1)
+  assert.equal(runs, 2)
+  assert.equal(memory.complete(), true)
+  assert.equal(h.current().gameMemory, undefined)
   await task.commit({ status: 'failed' })
   assert.equal((await h.workspace.list(h.current())).total, 0)
 })

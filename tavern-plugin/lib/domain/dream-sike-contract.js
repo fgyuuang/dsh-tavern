@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
-const VERSION = 12
+const VERSION = 13
 export const DREAM_SIKE_FOLLOWUP_IDS = Object.freeze([
   '11cdd506-1513-4008-b6b9-c883dbad65c5', 'f96f47f7-01ef-4676-b0fe-6f254ae7e550',
   '27bf435f-4283-4937-8c6f-3c31abc4f6d2', 'f9b03e19-fd96-4782-8867-73ad2cbabfb9',
-  '6a8e799c-9445-44f2-a853-c6c71b92b855'
+  '6a8e799c-9445-44f2-a853-c6c71b92b855', '807eefad-93ca-490c-a629-1d51038e3626'
 ])
 export const DREAM_SIKE_DRAFT_MODULE_IDS = Object.freeze({
   parallel: ['807eefad-93ca-490c-a629-1d51038e3626'],
@@ -41,7 +41,7 @@ function outputModeInstruction(mode) {
   const selected = mode === 'summary'
     ? '当前选择原预设“大总结模式”。暂停剧情写作，依照已选原文总结历史；保留原文要求的剧情总结、角色总结、细节与伏笔三组 Markdown 表格，避免重复已总结剧情。'
     : '当前选择原预设“聊天模式”（DREAM_CHAT）。依照已选原文与玩家正常聊天，长度适中，不套用剧情文风。'
-  return `【Agent 当前输出模式】\n${selected}\n原模式明确免除 DREAM_PLOT 及其他剧情输出协议，因此本回合不要求 dream_plot、dream_body、dream_after_format、场景栏、平行事件、剧情字数、剧情文风或写前六项剧情简报。已启用的原模式内容定义回复要求。\n通过 sike_put_draft 建立本回合唯一回复，以 sike_check_draft 检查原生提交协议，sike_ready_draft 确认后仅提交原文一次。工具协议、后台变量结算与私有推理边界仍适用；不要在回复或工具参数输出 think、simple_thinking、thinking_step、思考前缀或完整私有推理。`
+  return `【Agent 当前输出模式】\n${selected}\n原模式明确免除 DREAM_PLOT 及其他剧情输出协议，因此本回合不要求 dream_plot、dream_body、dream_after_format、场景栏、平行事件、剧情字数、剧情文风或写前六项剧情简报。已启用的原模式内容定义回复要求。\n通过 sike_put_draft 一次提交本回合唯一回复，宿主检查原生协议，通过后直接确认并提交一次，不再单独请求 check 或 ready。工具协议、后台变量结算与私有推理边界仍适用；不要在回复或工具参数输出 think、simple_thinking、thinking_step、思考前缀或完整私有推理。`
 }
 const WRAPPERS = new Set([
   '15b0ffd7-b3f3-42bd-989d-12b48c3b64e3', 'e0032969-7a36-4fe1-8bb9-c01effb1860b',
@@ -52,13 +52,13 @@ const WRAPPERS = new Set([
 
 export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 本局选定的原酒馆预设仍定义人物分析、叙事者、文风、视角、输入转述、字数、场景栏、平行事件及卡片格式。逐项执行已启用规则；未启用条目不加载。Skills 提供方法，不覆盖本局选择。当前玩家明确的修改优先于默认写法。
-原预设的正文/XML/HTML要求约束完整可渲染文档。sike_put_draft 先保存主线、dream_plot、dream_body、dream_after_format、dream_scene 及卡片 HTML；平行事件由独立模块插入 dream_parallel_event，前台不必预填。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
+原预设的正文/XML/HTML要求约束可渲染文档。sike_put_draft 一次提交主线、dream_plot、dream_body、dream_after_format、dream_scene 及卡片 HTML；平行事件与其他附加内容在正文和状态结算后一起独立展示，不插入本次正文。这些外壳不约束原生工具调用。变量交由后台结算，禁止混入 UpdateVariable。
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
 原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history、dreamer_input、writing_setting 的开闭标签条目已按原生边界移除，这些名称在保留下来的作者原句中表示待核对的材料范围，按 sike_read_turn 的 materialAreas 解析为当前卡片、有效世界书、状态、本回合输入和分支历史；按名称对应的分析职责照旧执行，不因标签不存在而跳过，也不把原生工具消息改为旧酒馆的文本协议。
 首次读取回合保留材料、规则与当前草稿。连续续读作者规则时使用 includeMaterials=false、includeDraft=false，避免每页重复材料；只续读草稿时使用 includeRules=false。压缩、重启后或需要重新核对材料时显式 includeMaterials=true、includeRules=true。引用和摘要不能代替尚未读取的原文。
-已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；再用 sike_prepare_turn 保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，之后才能建立草稿。候选事件链在内部评估，不提交推理过程。这个准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
-建立唯一草稿后，以六项可观察标准审稿：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、场景/平行事件/卡片格式。通过 sike_check_draft 的 review 提供各项 pass/revise 和简短正文依据；这是审稿结果，不是推理过程。同次审稿发现的具体缺陷合并为 sike_patch_draft 的 patches 数组，一次局部修订并重新审稿，修订次数不设上限，无问题允许零补丁。不能用“标签没错”代替文风检查。
-简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写、转述、禁止抢话、深度扮演与大纲模式的角色控制范围采用本局选定原文，不能把这些选项写成同一种行为；未授权的重大决定仍留给玩家，深度扮演的明确授权仅在当前回合生效。若选定平行事件，则允许读者看到场外事件，但场内人物不能因此自动知情。
+已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；查询结束后用 sike_put_draft 一次提交正文与六维 review。可在同次提交的 brief 中保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，不要求单独 prepare 请求。省略 brief 不免除作者原文的内部核对，宿主不会伪造简报。候选事件链在内部评估，不提交推理过程。读取和准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
+按选中作者的完整审稿规则检查正文，以六项可观察标准提交 review：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、当前正文场景与卡片格式。各项为 pass/revise 和简短具体正文依据；这是审稿结果，不是推理过程。宿主同次保存、检查，通过后直接确认并结束，不再发起独立 review Agent 或额外 check/ready 请求。同次发现的具体缺陷合并为 sike_patch_draft 的 patches 数组，并一并提交修改后 review。局部修订额度由本局设置为 0–2 次，无问题允许零补丁。额度耗尽后非阻断文风和内容建议记作备注，协议、格式和审阅结构错误仍暂停保留草稿。不能用“标签没错”代替文风检查。
+简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写、转述、禁止抢话、深度扮演与大纲模式的角色控制范围采用本局选定原文，不能把这些选项写成同一种行为；未授权的重大决定仍留给玩家，深度扮演的明确授权仅在当前回合生效。若选定平行事件，结算后仍按作者原文输出场外展示，但它是派生内容，不回写本轮变量、记忆或正式世界事实，场内人物不能因此自动知情。需要改变权威状态的事件留待后续正式剧情确认。
 确认后仅提交草稿原文一次，不在聊天重写或缩短正文。压缩后本契约和已选规则仍会重新装配；长期事实按需从记忆及原历史恢复。`
 
 function identifier(entry) {
@@ -117,7 +117,7 @@ function adapt(entry) {
       .replace('对于作废段落，输出`</dream_delete>`。', '对于作废段落，用唯一定位的局部补丁删除或改写，不在正文输出 dream_delete。')
       .replace('每次分析开头为：`<!-- 分析之`。', '检查结果采用原生审稿工具的简短可观察依据，不输出分析注释。')
       .replace('正文的**每一段**都必须先草稿、分析，再输出正文。', '正文的**每一段**都必须经过草稿与检查，正式提交仅使用修正后的正文。')
-      .replace(/## 输出格式规范[\s\S]*?(?=## 范例)/, '## 原生执行格式\n通过 sike_check_draft 检查草稿，发现具体问题时调用 sike_patch_draft 并复查。以下为作者原示例，仅作为规则参照；其中的注释、分析和 dream_delete 不是正式输出格式。\n\n') }
+      .replace(/## 输出格式规范[\s\S]*?(?=## 范例)/, '## 原生执行格式\n按上述完整作者规则检查每段，在 sike_put_draft 同次提交正文及六维 review；发现具体缺陷时，在本局修订额度内一次提交 sike_patch_draft 的 patches 与修改后 review。宿主同次检查并确认，不再发起独立审稿。以下为作者原示例，仅作为规则参照；其中的注释、分析和 dream_delete 不是正式输出格式。\n\n') }
   }
   if (id === IDS.flash && content.includes('{{setvar::sleep_var_thinking_level::') && content.includes('思考核心在于角色分析和遵守写规')) {
     return { action: 'agent-style-focus', content: content
@@ -129,7 +129,7 @@ function adapt(entry) {
   if (id === IDS.selfCheck && content.includes('# 检查范围') && content.includes('# 修复格式') && content.includes('# 输出格式')) {
     return { action: 'agent-editorial-review', content: content
       .replace('FIND、REPLACE 成对输出。', 'FIND、REPLACE 成对作为局部修订参数，分别对应 find、replacement。')
-      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_patch_draft 的 expectedVersion、patches 数组一次提交同次审稿的多个局部修改；也支持单项 find、replacement。每次依据工具返回的新版本继续核对。使用 sike_check_draft 的 review 记录逐项审稿结果和简短正文依据，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则，修订次数不设上限。明确缺陷须处理；无问题允许零补丁，不强凑改动数量。') }
+      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_put_draft 的 review 记录上述逐项审稿结果和简短正文依据；若需修订，使用 sike_patch_draft 的 expectedVersion、patches 数组及修改后 review 一次提交。也支持单项 find、replacement。宿主按返回的当前版本校验并直接确认，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则；本局修订额度为 0–2 次，无问题允许零补丁，不强凑改动数量。额度耗尽后纯文风和内容建议记为备注，协议、格式或审阅结构错误暂停保留草稿。') }
   }
   if (id === IDS.parallel && content.includes('# 平行事件思考') && content.includes('# 平行事件输出')) return { action: 'native-parallel-format', content: content
     .replace('在`<simple_thinking>`内进行一次简短的思考。该思考遵循以下步骤：', '在内部进行一次简短的核对，不向正文输出核对过程。该核对遵循以下步骤：')
@@ -158,13 +158,10 @@ export function compileDreamSikeContract(snapshot) {
     for (const entry of sourceEntries) {
       if (!entry || entry.enabled === false || entry.marker === true || !str(entry.content).trim()) continue
       const deferred = DREAM_SIKE_FOLLOWUP_IDS.includes(identifier(entry))
-      const candidateKind = Object.entries(DREAM_SIKE_DRAFT_MODULE_IDS).find(([, ids]) => ids.includes(identifier(entry)))?.[0]
-      const moduleKind = candidateKind === 'parallel' && /DREAM_PARALLEL|dream_parallel_event/.test(entry.content) ? 'parallel'
-        : candidateKind === 'review' && /DREAM_BAGUCHAOSHA|# 检查范围[\s\S]*# 修复格式/.test(entry.content) ? 'review' : null
-      if (deferred) followupEntries.push({ ...structuredClone(entry), sourcePhase: phase })
-      if (moduleKind) draftEntries.push({ ...structuredClone(entry), sourcePhase: phase, moduleKind })
+      if (deferred) followupEntries.push({ ...structuredClone(entry), sourcePhase: phase,
+        ...(identifier(entry) === IDS.parallel ? { moduleKind: 'parallel', derivedOnly: true } : {}) })
       const adapted = deferred ? { content: '', action: 'deferred-followup' }
-        : moduleKind ? { content: '', action: 'draft-module-' + moduleKind } : adapt(entry)
+        : adapt(entry)
       evidence.push({ id: str(entry.id || entry.entryKey), identifier: identifier(entry), name: str(entry.name || entry.source?.name), phase,
         action: adapted.action, characters: entry.content.length, sourceHash: createHash('sha256').update(entry.content).digest('hex') })
       if (adapted.content.trim()) entries.push({ ...entry, content: adapted.content })
@@ -175,8 +172,7 @@ export function compileDreamSikeContract(snapshot) {
   // When multiple overrides are enabled, their source order determines the last mode.
   const outputMode = evidence.reduce((mode, entry) => OUTPUT_MODES.get(entry.identifier) || mode, 'plot')
   const instruction = outputModeInstruction(outputMode) + (outputMode === 'plot' && followupEntries.length
-    ? '\n【后续互动顺序】本局选定的行动选项与思客大调查、说书共创及小摘要由正文提交、变量和记忆结算完成后的独立后台调用生成。当前草稿不输出 dream_option、dream_big_discuss、dream_discuss 或 dream_summary，不把后续互动塞入 dream_after_format，也不提前生成这些内容；后台沿用其作者原文与本轮最终状态，另行显示互动面板。' : '')
-    + (outputMode === 'plot' && draftEntries.length ? '\n【独立草稿模块】主线正文先用 sike_put_draft 建立唯一草稿。启用平行事件时，调用 sike_run_module(kind="parallel", expectedVersion) 按作者原文独立生成场外事件并合入草稿。启用八股超杀或自检修复时，review 会先更新缺失或过期的平行事件，再独立审阅完整草稿。使用返回的当前版本和执行阶段，按实际缺陷批量局部修改；局部修订次数不设上限。自动审稿不要求不断重写直到所有文风建议消失，保留剩余建议作为备注后进入检查；协议和审阅结构问题仍须处理。sike_check_draft 通过后 sike_ready_draft，整体提交一次，变量结算依据完整最终正文。' : '')
+    ? '\n【后续互动顺序】本局选定的平行事件、行动选项与思客大调查、说书共创及小摘要由正文提交、变量和记忆结算完成后的一次独立后台调用生成。当前草稿不输出 dream_parallel_event、dream_option、dream_big_discuss、dream_discuss 或 dream_summary，不把后续内容塞入 dream_after_format，也不提前生成；后台沿用其完整作者原文与本轮最终状态，另行显示面板。平行事件是派生展示，不回写本轮变量、记忆或权威世界事实；不得倒流触发正式消息或 MVU 结算。' : '')
   const deferredFollowup = { entries: outputMode === 'plot' ? followupEntries : [],
     digest: createHash('sha256').update(JSON.stringify(followupEntries)).digest('hex') }
   const deferredDraft = { entries: outputMode === 'plot' ? draftEntries : [],
@@ -184,7 +180,8 @@ export function compileDreamSikeContract(snapshot) {
   const digest = createHash('sha256').update(JSON.stringify({ version: VERSION, presetPath: snapshot.presetPath, phases, evidence, instruction, deferredFollowup, deferredDraft, sourceMacroOverrides: snapshot.sourceMacroOverrides || {}, regexScripts: snapshot.regexScripts || [] })).digest('hex')
   const agentContract = { version: VERSION, digest, presetPath: str(snapshot.presetPath), presetName: str(snapshot.presetName),
     sourceCharacters: evidence.reduce((sum, entry) => sum + entry.characters, 0), entries: evidence,
-    outputMode, followupModules: deferredFollowup.entries.map(entry => ({ id: identifier(entry), name: entry.name || entry.source?.name || '' })),
+    outputMode, followupModules: deferredFollowup.entries.map(entry => ({ id: identifier(entry), name: entry.name || entry.source?.name || '',
+      ...(entry.derivedOnly ? { derivedOnly: true } : {}) })),
     draftModules: deferredDraft.entries.map(entry => ({ id: identifier(entry), kind: entry.moduleKind, name: entry.name || entry.source?.name || '' })),
     reviewAxes: outputMode === 'plot' ? [...DREAM_SIKE_REVIEW_AXES] : [], instruction }
   return { ...snapshot, ...phases, deferredFollowup, deferredDraft, text: ['front', 'middle', 'back'].map(phase => phases[phase].text).filter(Boolean).join('\n\n'), digest, agentContract }
@@ -209,8 +206,8 @@ export function inspectDreamSikeContractDraft(chat, text) {
   const add = (code, message) => issues.push({ code, message })
   const elements = tag => [...str(text).matchAll(new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + tag + '\\s*>', 'gi'))]
   const visibleText = str(text).replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '').replace(/<!--[\s\S]*?-->/g, '')
-  if (contract.followupModules?.length && /<\/?(?:dream_option|dream_big_discuss|dream_discuss|dream_summary)\b/i.test(visibleText)) {
-    add('preset-deferred-followup', '行动选项、剧情共创与小摘要属于结算后的独立调用，请从正文草稿移除；原作者规则将由后台执行，不要在当前回合提前输出。')
+  if (contract.followupModules?.length && /<\/?(?:dream_parallel_event|dream_option|dream_big_discuss|dream_discuss|dream_summary)\b/i.test(visibleText)) {
+    add('preset-deferred-followup', '平行事件、行动选项、剧情共创与小摘要属于结算后的独立调用，请从正文草稿移除；原作者规则将由后台执行，不要在当前回合提前输出。')
   }
   if (enabled.has(IDS.envelope)) {
     for (const tag of ['dream_plot', 'dream_body', 'dream_after_format']) {
@@ -222,16 +219,6 @@ export function inspectDreamSikeContractDraft(chat, text) {
     if (scenes.length !== 1) add('preset-scene', '本局已启用场景栏：正文开始前需一个 dream_scene，包含日期、时间和地点')
     else for (const tag of ['date', 'time', 'location']) {
       if (!new RegExp('<' + tag + '>[\\s\\S]*?\\S[\\s\\S]*?<\\/' + tag + '>').test(scenes[0][1])) add('preset-scene-' + tag, '场景栏缺少非空 ' + tag)
-    }
-  }
-  if (enabled.has(IDS.parallel)) {
-    const parallels = elements('dream_parallel_event')
-    if (parallels.length !== 1) add('preset-parallel', '本局已启用平行事件：文末需一个 dream_parallel_event 区块')
-    else {
-      const rows = parallels[0][1].trim().split(/\r?\n/).filter(line => line.trim())
-      if (rows.length < 1 || rows.length > 3 || rows.some(line => !line.includes('|') || !/<br\s*\/?\s*>/i.test(line))) {
-        add('preset-parallel-rows', '平行事件需 1–3 个物理行，每行采用 地点|描述，并含至少一个 <br>')
-      }
     }
   }
   const body = elements('dream_body')[0]?.[1] || str(text)

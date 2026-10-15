@@ -169,6 +169,9 @@ export function createStoryTimeline(options = {}) {
       operationId: operation.id,
       role: operation.role,
       basedOn: clone(operation.basedOn),
+      executionRootOperationId: str(operation.executionRootOperationId) || operation.id,
+      executionRootTurn: Math.max(0, Number(operation.executionRootTurn ?? operation.turn) || 0),
+      resumeFromOperationId: str(operation.resumeFromOperationId) || null,
       participant: participant === undefined ? null : clone(participant)
     }
   }
@@ -242,10 +245,26 @@ export function createStoryTimeline(options = {}) {
       }
       return operationValue(existing)
     }
+    const resumeFromTurn = Number.isSafeInteger(intent.resumeFromTurn) ? intent.resumeFromTurn : null
+    const suppressedTurns = new Set((Array.isArray(chat.suppressedDshTurns) ? chat.suppressedDshTurns : [])
+      .map(value => Number(value)).filter(Number.isSafeInteger))
+    const resumable = Object.values(chat.timeline.operations).filter(function (operation) {
+      if (operation.kind !== 'body' || !sameBasedOn(operation.basedOn, basedOn(chat))
+        || str(operation.userText).trim() !== userText) return false
+      if (['failed', 'interrupted'].includes(operation.status)) return true
+      return operation.status === 'running'
+        && (Number(operation.turn) === resumeFromTurn || suppressedTurns.has(Number(operation.turn)))
+    }).sort(function (left, right) { return Number(right.createdAt) - Number(left.createdAt) })[0]
+    const rootOperationId = str(resumable?.executionRootOperationId) || str(resumable?.id)
+    const rootOperation = rootOperationId ? chat.timeline.operations[rootOperationId] : null
     const operation = {
       id: makeId('operation'), kind: 'body', role: 'body', status: 'running', turn, userText,
-      basedOn: basedOn(chat), beforeRevision: storageRevision(chat), beforeParticipants: clone(chat.timeline.participants), createdAt: now()
+      basedOn: basedOn(chat), beforeRevision: storageRevision(chat), beforeParticipants: clone(chat.timeline.participants), createdAt: now(),
+      executionRootOperationId: rootOperationId || undefined,
+      executionRootTurn: rootOperation ? Math.max(0, Number(rootOperation.turn) || 0) : (resumable ? Math.max(0, Number(resumable.executionRootTurn ?? resumable.turn) || 0) : turn),
+      resumeFromOperationId: resumable ? resumable.id : undefined
     }
+    if (!operation.executionRootOperationId) operation.executionRootOperationId = operation.id
     chat.timeline.operations[operation.id] = operation
     trimOperations(chat.timeline)
     return operationValue(operation)
