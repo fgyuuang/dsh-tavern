@@ -1,3 +1,4 @@
+import { compatibleReasoningConfig } from '../domain/model-reasoning-compatibility.js'
 import { createImportContextPreparation, needsImportContextPreparation } from '../domain/import-context-preparation.js'
 import { createStoryCompactionRequest, nativelyRetainedRounds, retainRecentStoryRounds, usesStoryCompaction } from '../domain/story-compaction.js'
 import { installCompactionRequestProjection } from '../domain/compaction-request.js'
@@ -98,6 +99,12 @@ export function registerModelStreamHooks({
         const projected = await fullTemplateRuntime.forSession(ownerSessionId).projectRequestProjection({ messages: options.messages, system: options.system, model: options.model })
         yield * ctx.llm.stream(markRequestAttempt(markRequestHandled({ ...options, ...projected }, 'full-template'), attempt))
         return
+      }
+      // ST sampling options are merged by projectRequest AFTER agent/request.
+      // Validate the final projected envelope, before logging/counting/dispatch.
+      if (chat || backgroundContext) {
+        const compatible = await compatibleReasoningConfig(ctx.llm, options, options.signal)
+        if (compatible !== options) { yield * ctx.llm.stream(markRequestAttempt(compatible, attempt)); return }
       }
       const coordinates = requestCoordinates.get(sessionId) || {}
       const purpose = str(options.purpose)

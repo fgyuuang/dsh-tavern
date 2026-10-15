@@ -231,6 +231,8 @@ export function createCompatibilityOrchestrationStrategy(options) {
     if (requestHandledBy(optionsValue, PROJECTED) || !isCompatibilityConversationRequest(optionsValue, staged, coordinates)) return null
     if (staged.singleReply) {
       const request = { ...optionsValue, ...staged.generationOptions, tools: [] }
+      // An explicit native model/effort selection wins over the imported preset.
+      if (optionsValue.reasoningEffort !== undefined) request.reasoningEffort = optionsValue.reasoningEffort
       delete request.system
       delete request.toolChoice
       return markRequestHandled(createEphemeralCompatibilityRequest(request, staged.messages), PROJECTED)
