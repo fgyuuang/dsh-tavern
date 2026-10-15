@@ -282,6 +282,7 @@
 		function createTavernAssistantRendererFeatureModule() {
 			function TavernInterruptedReplyTranscript(props) {
 				const [draft, setDraft] = React.useState(null);
+				const [agentDraft, setAgentDraft] = React.useState(null);
 				const [loading, setLoading] = React.useState(false);
 				const [busy, setBusy] = React.useState(false);
 				const [error, setError] = React.useState("");
@@ -289,36 +290,47 @@
 				const view = props.view || {};
 				const turn = Number(props.turn) || 0;
 				const current = view.canReplayFailedTurn === true && Number(view.replayFailedTurn) === turn;
-				const canResume = current && view.generationMode === "sillytavern-once";
+				const singleReply = current && view.generationMode === "sillytavern-once";
+				const agentReply = current && isWritingAgentView(view);
+				const canResume = singleReply || agentReply;
 				const branchId = view.timeline?.branchId;
 				const archived = (Array.isArray(view.interruptedReplyArchive) ? view.interruptedReplyArchive : [])
 					.filter(row => Number(row.turn) === turn && (!branchId || row.branchId === branchId));
 				React.useEffect(function () {
 					let active = true;
-					setDraft(null); setLoading(false); setError("");
+					setDraft(null); setAgentDraft(null); setLoading(false); setError("");
 					if (!canResume) return function () { active = false; };
 					setLoading(true);
-					rpc("getInterruptedReply", { sessionId: props.sessionId, turn }, props.sessionId)
+					const read = singleReply
+						? rpc("getInterruptedReply", { sessionId: props.sessionId, turn }, props.sessionId)
+						: rpc("getDraftView", { sessionId: props.sessionId }, props.sessionId);
+					read
 						.then(function (result) {
 							if (!active) return;
-							setDraft(result?.draft || null);
+						if (singleReply) setDraft(result?.draft || null);
+						else setAgentDraft(result?.draft || null);
 							liveTavernView.invalidate(props.sessionId);
 						})
 						.catch(function (failure) { if (active) setError(String(failure?.message || failure)); })
 						.finally(function () { if (active) setLoading(false); });
 					return function () { active = false; };
-				}, [props.sessionId, turn, canResume]);
+				}, [props.sessionId, turn, canResume, singleReply]);
 
 				const entries = archived.map(function (row) { return { key: String(row.branchId) + ":" + String(row.seq), row: row, active: false }; });
 				let activeIndex = -1;
-				if (draft) {
+				const activeDraft = singleReply ? draft : agentDraft;
+				const activeText = singleReply ? draft?.preview : agentDraft?.text;
+				const activeCharacters = singleReply ? draft?.characters : String(activeText || "").length;
+				const hasActiveDraft = singleReply ? Boolean(draft?.digest)
+					: agentDraft?.turn === turn && ["draft", "ready"].includes(agentDraft.status);
+				if (activeText) {
 					for (let index = entries.length - 1; index >= 0; index--) {
-						if (entries[index].row.preview === draft.preview && Number(entries[index].row.characters) === Number(draft.characters)) { activeIndex = index; break; }
+						if (entries[index].row.preview === activeText && Number(entries[index].row.characters) === Number(activeCharacters)) { activeIndex = index; break; }
 					}
 					if (activeIndex >= 0) entries[activeIndex].active = true;
-					else { activeIndex = entries.length; entries.push({ key: "active:" + turn + ":" + draft.digest, row: { preview: draft.preview, characters: draft.characters, status: "interrupted" }, active: true }); }
+					else { activeIndex = entries.length; entries.push({ key: "active:" + turn + ":" + (draft?.digest || agentDraft?.version || "draft"), row: { preview: activeText, characters: activeCharacters, status: "interrupted" }, active: true }); }
 				}
-				if (!entries.length && !current) return null;
+				if (!entries.length && !canResume) return null;
 				const h = React.createElement;
 				function updateAfterReplay(result) {
 					if (result?.view) liveTavernView.setView(props.sessionId, result.view);
@@ -329,13 +341,20 @@
 					if (pending.current) return;
 					pending.current = true; setBusy(true); setError("");
 					try {
-						let continueReply;
-						if (continueSavedText) {
+						let result;
+						if (continueSavedText && agentReply) {
+							const latest = await rpc("getDraftView", { sessionId: props.sessionId }, props.sessionId);
+							const latestDraft = latest?.draft;
+							if (latestDraft?.turn !== turn || !["draft", "ready"].includes(latestDraft.status)) throw new Error("没有找到可继续的草稿。已保留进度仍在本回合中；请刷新后重试。");
+							if (!latestDraft.resumable) throw new Error("保留草稿暂时不能继续，请确认前后台任务已停止后再试。");
+							result = await rpc("resumeDreamSikeDraft", { sessionId: props.sessionId, expectedOperationId: latestDraft.operationId, expectedVersion: latestDraft.version }, props.sessionId);
+						} else if (continueSavedText && singleReply) {
 							const latest = await rpc("getInterruptedReply", { sessionId: props.sessionId, turn }, props.sessionId);
 							if (!latest?.draft?.digest) throw new Error("没有找到可校验的续写正文。已保存的正文仍留在本回合中；请刷新后重试，或选择从头重新生成。");
-							continueReply = { turn, digest: latest.draft.digest };
+							result = await rpc("replayTurn", { continueReply: { turn, digest: latest.draft.digest } }, props.sessionId);
+						} else {
+							result = await rpc("replayTurn", {}, props.sessionId);
 						}
-						const result = await rpc("replayTurn", continueReply ? { continueReply } : {}, props.sessionId);
 						updateAfterReplay(result);
 					} catch (failure) {
 						setError(String(failure?.message || failure));
@@ -345,20 +364,20 @@
 				}
 				return h("section", { className: "dsh-tavern-interrupted-transcript", "aria-label": "本回合保留的中断正文" },
 					h("div", { className: "dsh-tavern-interrupted-transcript-head" },
-						h("strong", null, "本回合保留的正文"),
-						current ? h("span", { role: "status" }, loading ? "正在读取续写点…" : draft ? "尚未提交" : "等待恢复") : null),
+						h("strong", null, canResume ? "⏸ 本回合已暂停" : "本回合保留的正文"),
+						canResume ? h("span", { role: "status" }, loading ? "正在读取续写点…" : hasActiveDraft ? "尚未提交" : "等待恢复") : null),
 					...entries.map(function (entry, index) {
 						const row = entry.row;
-						const label = "版本 " + (index + 1) + " · " + (Number(row.characters) || String(row.preview || "").length) + " 字 · " + (row.status === "completed" ? "续写已完成" : entry.active && canResume ? "可接着续写" : "未提交");
+						const label = "版本 " + (index + 1) + " · " + (Number(row.characters) || String(row.preview || "").length) + " 字 · " + (row.status === "completed" ? "续写已完成" : entry.active && canResume ? (agentReply ? "可继续草稿" : "可接着续写") : "未提交");
 						return h("details", { key: entry.key, className: "dsh-tavern-interrupted-transcript-entry", open: entry.active || (index === entries.length - 1 && row.status === "interrupted") },
 							h("summary", null, label),
 							h("pre", null, row.preview || "暂无可展示的正文"),
-							entry.active && canResume ? h("div", { className: "dsh-tavern-interrupted-transcript-actions" },
-								h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || loading, onClick: function () { replay(true); } }, busy ? "正在续写…" : "接着补完")) : null);
+							entry.active && canResume && hasActiveDraft ? h("div", { className: "dsh-tavern-interrupted-transcript-actions" },
+								h("button", { type: "button", className: "dsh-tavern-btn", "aria-label": agentReply ? "继续处理保留草稿" : "接着补完保留正文", disabled: busy || loading, onClick: function () { replay(true); } }, busy ? "正在继续…" : agentReply ? "⏸ 继续本回合" : "⏸ 接着补完")) : null);
 					}),
-					current && !draft && !loading ? h("div", { className: "dsh-tavern-interrupted-transcript-recovery" },
-						h("p", null, archived.length ? "这段正文已保存在对话中，但当前原生会话没有可验证的续写点。" : "本轮没有收到可保留的正文。"),
-						h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: function () { replay(false); } }, busy ? "正在重新生成…" : "从头重新生成本轮")) : null,
+					canResume && !hasActiveDraft && !loading ? h("div", { className: "dsh-tavern-interrupted-transcript-recovery" },
+						h("p", null, archived.length ? "正文已保存在对话中，但当前会话没有可校验的续写点。" : "本轮没有可续写的正文草稿。"),
+						h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: function () { replay(false); } }, busy ? "正在恢复…" : "从头重新生成本轮")) : null,
 					error ? h("p", { role: "alert", className: "dsh-tavern-interrupted-transcript-error" }, error) : null);
 			}
 
@@ -367,7 +386,7 @@
 				const location = props.node.location;
 				const turnRef = location && (location.kind === "turn" || location.kind === "step") ? location.turn : null;
 				const turn = turnRef ? Number(turnRef.turn) : 0;
-				const liveState = useScopedLiveTavernView(props.sessionId, String(data.time || ""), [["inputSources", String(turn)], ["inputTemplateDisplays", String(turn)], ["interruptedReplyArchive"], ["canReplayFailedTurn"], ["replayFailedTurn"], ["generationMode"], ["timeline", "branchId"]]);
+				const liveState = useScopedLiveTavernView(props.sessionId, String(data.time || ""), [["inputSources", String(turn)], ["inputTemplateDisplays", String(turn)], ["interruptedReplyArchive"], ["canReplayFailedTurn"], ["replayFailedTurn"], ["generationMode"], ["playPresetId"], ["dreamSikeDraftState"], ["timeline", "branchId"]]);
 				const parts = userContentParts(data.content);
 				const text = tavernUserTextForTurn(liveState.view, turn, data.content);
 				const [copied, setCopied] = React.useState(false);

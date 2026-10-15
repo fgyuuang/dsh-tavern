@@ -549,11 +549,10 @@
 			setCandidatePanel(null);
 		}
 
-		// A failed turn never committed a story round, so recovering it is not a
-		// rollback: remove the interrupted reply and resend the same input, which
-		// lets the provider reuse the cached prompt prefix.
-		async function submitFailedTurnReplay(sessionId, continueReply) {
-			const res = await rpc("replayTurn", continueReply ? { continueReply } : {}, sessionId);
+		// An explicit retry action discards the failed response and replays input
+		// from scratch. Continuation is offered on the paused turn in the transcript.
+		async function submitFailedTurnReplay(sessionId) {
+			const res = await rpc("replayTurn", {}, sessionId);
 			applyBodyRegenerationResult({ liveTavernView: liveTavernView, historyProjection: historyProjection, sessionId: sessionId, view: res.view, tail: null });
 			setRegenPanel(null);
 			setCandidatePanel(null);
@@ -562,64 +561,6 @@
 			tavernCoordination.invalidate(sessionId);
 			return res;
 		}
-
-        async function continueInterruptedTavernTurn(sessionId, turn) {
-            function current() {
-                const view = liveTavernView.getSnapshot(sessionId).view;
-                if (!view?.canReplayFailedTurn || Number(view.replayFailedTurn) !== turn) throw new Error("中断回合已变化，请刷新后继续");
-                return view;
-            }
-            const view = current();
-            if (view.generationMode === "sillytavern-once") {
-                const response = await rpc("getInterruptedReply", { sessionId, turn }, sessionId);
-                current();
-                if (!response?.draft?.digest) throw new Error("没有找到可验证的续写正文。已保存内容仍留在本回合；请刷新后重试，或明确选择从头重新生成。");
-                return submitFailedTurnReplay(sessionId, { turn, digest: response.draft.digest });
-            }
-            if (isWritingAgentView(view)) {
-                const response = await rpc("getDraftView", { sessionId }, sessionId);
-                current();
-                const draft = response.draft;
-                if (draft?.turn === turn && ["draft", "ready"].includes(draft.status)) {
-                    if (!draft.resumable) throw new Error("保留草稿暂时不可继续，请等待正在执行的任务完成");
-                    const result = await rpc("resumeDreamSikeDraft", { sessionId, expectedOperationId: draft.operationId, expectedVersion: draft.version }, sessionId);
-                    applyBodyRegenerationResult({ liveTavernView, historyProjection, sessionId, view: result.view, tail: null });
-                    setRegenPanel(null); setCandidatePanel(null); setCandidateGuidePanel(null);
-                    notifyTavernDataChanged(["sessions"], "play-controls");
-                    tavernCoordination.invalidate(sessionId);
-                    return result;
-                }
-            }
-            return submitFailedTurnReplay(sessionId);
-        }
-
-        function TavernInterruptedContinuation(props) {
-            const [busy, setBusy] = React.useState(false);
-            const [error, setError] = React.useState("");
-            const pending = React.useRef(false);
-            const view = props.view;
-            const turn = Number(view?.replayFailedTurn) || 0;
-            const singleReply = view?.generationMode === "sillytavern-once";
-            const h = React.createElement;
-            // Single-reply recovery belongs to the failed user turn in the
-            // transcript. Keeping it in the composer dock detached the saved
-            // prose and put retry errors above the input box.
-            if (singleReply || props.running || !view?.canReplayFailedTurn || turn < 1) return null;
-            const draft = view.dreamSikeDraftState;
-            const hasDraft = isWritingAgentView(view) && draft?.turn === turn && ["draft", "ready"].includes(draft.status);
-            async function resume() {
-                if (pending.current) return;
-                pending.current = true; setBusy(true); setError("");
-                try { await continueInterruptedTavernTurn(props.sessionId, turn); }
-                catch (failure) { setError(String(failure.message || failure)); }
-                finally { pending.current = false; setBusy(false); liveTavernView.invalidate(props.sessionId); }
-            }
-            return h("section", { className: "dsh-tavern-interrupted-continuation", "aria-label": "继续中断的回合" },
-                h("div", null, h("strong", null, "本回合已中断"),
-                    h("p", null, hasDraft ? "从保留的草稿继续检查、修订与确认。" : "本轮尚未提交，继续时重新执行原输入。")),
-                h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: resume }, busy ? "正在继续…" : "继续本回合"),
-                error ? h("p", { role: "alert", className: "dsh-tavern-choice-error" }, error) : null);
-        }
 
 		function CandidateAction(props) {
 			const [busy, setBusy] = React.useState(false);
@@ -1481,9 +1422,7 @@
 				const observer = observeTurnErrorProjection(root, apply);
 				return function () { observer.disconnect(); controls.dispose(); projection.dispose(); };
 			}, [props.sessionId, revision]);
-			return React.createElement(React.Fragment, null,
-                React.createElement("span", { ref: marker, hidden: true, "data-tavern-error-projection": props.sessionId }),
-                React.createElement(TavernInterruptedContinuation, { sessionId: props.sessionId, view: state.view, running }));
+			return React.createElement("span", { ref: marker, hidden: true, "data-tavern-error-projection": props.sessionId });
 		}
 		// @include background-suppression.js
 		const pollBackgroundSuppression = createBackgroundSuppressionPoller(rpc);
