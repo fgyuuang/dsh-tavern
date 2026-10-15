@@ -280,6 +280,44 @@
 		}
 
 		function createTavernAssistantRendererFeatureModule() {
+			function TavernPausedReplyFrame(props) {
+				const frame = React.useRef(null), observer = React.useRef(null);
+				const [height, setHeight] = React.useState(260);
+				React.useEffect(() => () => observer.current?.disconnect(), []);
+				const document = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; script-src &#39;none&#39;; style-src &#39;unsafe-inline&#39; https: http:; img-src https: http: data: blob:; font-src https: http: data:; form-action &#39;none&#39;">'
+					+ '<style>html,body{margin:0}body{padding:8px;font-family:system-ui,sans-serif;overflow-wrap:anywhere}</style>' + String(props.html || '');
+				return React.createElement('iframe', { ref: frame, title: '暂停正文前端预览', sandbox: 'allow-same-origin', srcDoc: document,
+					style: { width: '100%', height: height + 'px', border: 0 }, onLoad: function () {
+						observer.current?.disconnect();
+						const body = frame.current?.contentDocument?.body;
+						if (!body) return;
+						// Snapshot HTML has no helper bridge, scripts, forms or state events.
+						body.querySelectorAll('a,button,input,select,textarea,form').forEach(node => { if ('disabled' in node) node.disabled = true; node.addEventListener('click', event => event.preventDefault()); });
+						const measure = () => setHeight(Math.min(1200, Math.max(64, body.scrollHeight)));
+						measure(); if (typeof ResizeObserver === 'function') { observer.current = new ResizeObserver(measure); observer.current.observe(body); }
+					} });
+			}
+			function TavernInterruptedReplyEntry(props) {
+				const [expanded, setExpanded] = React.useState(props.open);
+				const [projection, setProjection] = React.useState(null), [error, setError] = React.useState('');
+				const row = props.row;
+				React.useEffect(function () {
+					if (!expanded) return;
+					let active = true;
+					rpc('getInterruptedReplyDisplay', { turn: props.turn, seq: row.seq, digest: row.digest, draftVersion: row.draftVersion }, props.sessionId)
+						.then(result => { if (active) setProjection(result?.projection || null); })
+						.catch(failure => { if (active) setError(String(failure?.message || failure)); });
+					return () => { active = false; };
+				}, [expanded, props.sessionId, props.turn, row.seq, row.digest, row.draftVersion]);
+				return React.createElement('details', { className: 'dsh-tavern-interrupted-transcript-entry', open: expanded, onToggle: event => setExpanded(event.currentTarget.open) },
+					React.createElement('summary', null, props.label), expanded ? React.createElement(React.Fragment, null,
+						projection ? React.createElement('div', { className: 'dsh-tavern-paused-preview' },
+							React.createElement('small', null, '暂停预览 · 使用当前显示规则，状态尚未结算'),
+							...(projection.parts || []).map((part, index) => part.kind === 'html' ? React.createElement(TavernPausedReplyFrame, { key: index, html: part.content })
+								: React.createElement(TavernColoredMarkdown, { key: index, text: part.text || '', streaming: false }))) : React.createElement('pre', null, row.preview || '暂无可展示的正文'),
+						error ? React.createElement('small', { role: 'status' }, '前端预览暂不可用，保留原文仍可续写。') : null,
+						props.children) : null);
+			}
 			function TavernInterruptedReplyTranscript(props) {
 				const [draft, setDraft] = React.useState(null);
 				const [agentDraft, setAgentDraft] = React.useState(null);
@@ -328,7 +366,7 @@
 						if (entries[index].row.preview === activeText && Number(entries[index].row.characters) === Number(activeCharacters)) { activeIndex = index; break; }
 					}
 					if (activeIndex >= 0) entries[activeIndex].active = true;
-					else { activeIndex = entries.length; entries.push({ key: "active:" + turn + ":" + (draft?.digest || agentDraft?.version || "draft"), row: { preview: activeText, characters: activeCharacters, status: "interrupted" }, active: true }); }
+					else { activeIndex = entries.length; entries.push({ key: "active:" + turn + ":" + (draft?.digest || agentDraft?.version || "draft"), row: { preview: activeText, characters: activeCharacters, status: "interrupted", digest: draft?.digest, draftVersion: agentDraft?.version }, active: true }); }
 				}
 				if (!entries.length && !canResume) return null;
 				const h = React.createElement;
@@ -369,9 +407,7 @@
 					...entries.map(function (entry, index) {
 						const row = entry.row;
 						const label = "版本 " + (index + 1) + " · " + (Number(row.characters) || String(row.preview || "").length) + " 字 · " + (row.status === "completed" ? "续写已完成" : entry.active && canResume ? (agentReply ? "可继续草稿" : "可接着续写") : "未提交");
-						return h("details", { key: entry.key, className: "dsh-tavern-interrupted-transcript-entry", open: entry.active || (index === entries.length - 1 && row.status === "interrupted") },
-							h("summary", null, label),
-							h("pre", null, row.preview || "暂无可展示的正文"),
+						return h(TavernInterruptedReplyEntry, { key: entry.key, row, label, turn, sessionId: props.sessionId, open: entry.active || (index === entries.length - 1 && row.status === "interrupted") },
 							entry.active && canResume && hasActiveDraft ? h("div", { className: "dsh-tavern-interrupted-transcript-actions" },
 								h("button", { type: "button", className: "dsh-tavern-btn", "aria-label": agentReply ? "继续处理保留草稿" : "接着补完保留正文", disabled: busy || loading, onClick: function () { replay(true); } }, busy ? "正在继续…" : agentReply ? "⏸ 继续本回合" : "⏸ 接着补完")) : null);
 					}),

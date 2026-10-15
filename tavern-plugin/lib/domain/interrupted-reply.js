@@ -62,7 +62,7 @@ export function singleReplyText(chat, turn, suffix) {
     : String(chat.compatibilityTraces?.[String(turn)]?.assistantPrefill || '') + suffix
 }
 
-function publicPreview(text) {
+export function interruptedReplyPreview(text) {
   // Unclosed private blocks are hidden through end of stream. A partial HTML
   // page is returned as plain text and must never run card scripts or MVU.
   return text.replace(/<(think_fox~|think|simple_thinking|dream_self_check|redemption_chain|thought_of_chain|thinking_step)(?=[\s>])[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
@@ -81,7 +81,7 @@ export function readInterruptedReply(chat, session, turn) {
   if (!text.trim()) return null
   const digest = createHash('sha256').update(JSON.stringify([chat.sessionId, turn, operation.id, chat.timeline.branchId,
     chat.timeline.revision, contract(chat), text])).digest('hex')
-  return { turn: Number(turn), operationId: operation.id, digest, text, preview: publicPreview(text),
+  return { turn: Number(turn), operationId: operation.id, digest, text, preview: interruptedReplyPreview(text),
     characters: text.length, branchId: chat.timeline.branchId, storyRevision: chat.timeline.revision }
 }
 
@@ -104,7 +104,7 @@ export function collectInterruptedReplies(chat, session, turn) {
     if (!attempt || archive.some(row => row.branchId === latest.branchId && row.seq === event.seq)) continue
     const text = singleReplyText(chat, turn, attempt.text)
     archive.push({ turn: Number(turn), seq: event.seq, branchId: latest.branchId, operationId: latest.operationId,
-      preview: publicPreview(text), characters: text.length, status: 'interrupted', savedAt: Date.now() })
+      preview: interruptedReplyPreview(text), characters: text.length, status: 'interrupted', savedAt: Date.now() })
     changed = true
   }
   return changed ? { ...chat, interruptedReplyArchive: archive } : undefined

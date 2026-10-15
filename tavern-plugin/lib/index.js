@@ -203,7 +203,7 @@ import { OFFICIAL_MVU_VERSION, inspectOfficialMvuAsset } from './domain/official
 import { createTavernStaticResourceCache } from './domain/tavern-static-resource-cache.js'
 import { SILLYTAVERN_CSS_COMPAT_URLS } from './domain/sillytavern-css-compatibility.js'
 import { createRoundHistory } from './domain/round-history.js'
-import { collectInterruptedReplies, readInterruptedReply } from './domain/interrupted-reply.js'
+import { collectInterruptedReplies, readInterruptedReply, interruptedReplyPreview } from './domain/interrupted-reply.js'
 import { createResourceWorkspaceProjection } from './domain/resource-workspace-projection.js'
 import { projectAgentContent, projectAgentMessageText, projectRuntimeReply } from './domain/runtime-content-projection.js'
 import { createScriptContinuity } from './domain/script-continuity.js'
@@ -5005,6 +5005,25 @@ export async function apply(ctx) {
         const view = await regenBody(args && args.chatId, args && args.guidance, args && args.sessionId)
         notifyPluginTimeline(args && args.sessionId, 'regenerate')
         return { view }
+      }
+      case 'getInterruptedReplyDisplay': {
+        const sessionId = str(args?.sessionId), turn = Number(args?.turn)
+        const chat = await chatForSession(sessionId)
+        if (!chat || !['story', 'script'].includes(chat.mode) || !Number.isSafeInteger(turn) || turn < 1) throw new Error('无效的正文预览来源')
+        let source
+        if (Number.isSafeInteger(args.seq)) source = chat.interruptedReplyArchive?.find(row => row.seq === args.seq && row.turn === turn && row.branchId === chat.timeline?.branchId)?.preview
+        else if (typeof args.digest === 'string') {
+          const draft = readInterruptedReply(chat, agentRegistry.get(sessionId)?.session, turn)
+          if (draft?.digest === args.digest) source = draft.preview
+        } else if (Number.isSafeInteger(args.draftVersion)) {
+          const draft = chat.dreamSikeDraft
+          if (draft?.turn === turn && draft.version === args.draftVersion && draft.branchId === chat.timeline?.branchId && ['draft', 'ready'].includes(draft.status)) source = draft.text
+        }
+        if (typeof source !== 'string') throw new Error('保留正文已变化，请刷新本回合')
+        const extensions = await readCardExtensions(chat.cardPath, chat)
+        const display = projectRuntimeReply(interruptedReplyPreview(source), { charName: chat.cardName, macroState: chat.macroState,
+          regexScripts: composeTavernRegexScripts(extensions, chat.runtimePresetSnapshot?.regexScripts), placement: 2, isEdit: false, depth: 0 })
+        return { projection: { parts: display.displayParts }, readOnly: true }
       }
       case 'getInterruptedReply': {
         const sessionId = str(args?.sessionId)
