@@ -42,12 +42,13 @@ export function createGameplayApi(deps) {
       const sessionId = 'test-' + randomUUID()
       if (args.playPresetId !== undefined && !['tavern', 'dream-sike-dsh'].includes(args.playPresetId)) throw new Error('未知的酒馆 Agent 预设')
       const playPresetId = args.mode === 'card' ? 'tavern' : args.playPresetId === undefined ? undefined : normalizePlayPresetId(args.playPresetId)
+      if (args.generationMode !== undefined && !['agent', 'sillytavern-once'].includes(args.generationMode)) throw new Error('未知的回复方式')
       await store.writeJson('automation/' + sessionId + '.json', { sessionId, createdAt: Date.now(), model: selected })
       try {
         await host.create({ sessionId, cwd: path.join(deps.dataRoot, 'resources'), agentPreset: playPresetId || 'tavern' })
         host.agents.selectForNextRequest(registry.get(sessionId), selected)
         await dispatch('preparePlayStart', {})
-        await dispatch('startChat', { path: cardPath, sessionId, mode: args.mode || 'story', playPresetId, userName: args.userName || '你', requestMode: 'dsh', cardTask: args.mode === 'card' ? (cardPath ? 'edit' : 'create') : undefined })
+        await dispatch('startChat', { path: cardPath, sessionId, mode: args.mode || 'story', playPresetId, generationMode: args.generationMode, userName: args.userName || '你', requestMode: 'dsh', cardTask: args.mode === 'card' ? (cardPath ? 'edit' : 'create') : undefined })
         const chat = await chatForSession(sessionId)
         return { sessionId, chat, model: selected, requiresBrowser: chat.mode !== 'card' && await deps.requiresBrowser(chat) }
       } catch (error) {

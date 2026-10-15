@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { dreamSikeToolPhase } from './dream-sike-tool-phase.js'
 import { sessionEvents } from './session-events.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value
@@ -56,7 +57,7 @@ export function createDreamSikeLoopGuard() {
   const observations = new WeakMap()
   return (payload, chat) => {
     const agent = payload.agent, step = Number(payload.step) - 1, turn = Number(payload.turn)
-    if (!agent || chat?.playPresetId !== 'dream-sike-dsh' || step < 1) { if (agent) observations.delete(agent); return }
+    if (!agent || !isDreamSikeAgentExecution(chat) || step < 1) { if (agent) observations.delete(agent); return }
     const phase = dreamSikeToolPhase(chat, agent.session?.id, turn)
     if (!phase || phase.name === 'ready') { observations.delete(agent); return }
     const state = stableState(chat, phase), signature = stepSignature(recentEvents(agent.session), turn, step, state)

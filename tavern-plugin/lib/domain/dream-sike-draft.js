@@ -3,8 +3,8 @@ import { assertDreamSikePreparation, dreamSikePreparationView, prepareDreamSikeW
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
 import { draftModuleBase } from './dream-sike-draft-modules.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
-const MODE = 'dream-sike-dsh'
 const MAX_DRAFT_CHARS = 100_000
 const MAX_FIND_CHARS = 4_000
 const MAX_REPLACEMENT_CHARS = 8_000
@@ -39,7 +39,7 @@ function currentBodyOperation(chat, turn) {
 
 /** Resolve the only turn a foreground tool is allowed to affect. */
 export function dreamSikeTurnIdentity(chat, sessionId, turn) {
-  if (!chat || chat.playPresetId !== MODE || !['story', 'script'].includes(chat.mode || 'story')) throw new Error('梦境思客DSH工具仅用于已启用的游玩对话')
+  if (!isDreamSikeAgentExecution(chat)) throw new Error('梦境思客DSH工具仅用于已启用的游玩对话')
   if (!str(sessionId) || !Number.isSafeInteger(turn) || turn < 1) throw new Error('梦境思客DSH工具需要正在运行的前台回合')
   const foregroundSession = str(chat.timeline?.participants?.foreground?.sessionId)
   if (str(chat.sessionId) !== sessionId && foregroundSession !== sessionId) throw new Error('草稿会话与当前对话不一致')
@@ -90,7 +90,7 @@ export function dreamSikeDraftStatus(chat) {
 export function planDreamSikeDraftResume(chat, { failedTurn, expectedOperationId, expectedVersion }) {
   const draft = readDreamSikeDraft(chat)
   const timeline = object(chat?.timeline)
-  if (chat?.playPresetId !== MODE || !['story', 'script'].includes(chat?.mode || 'story')) throw new Error('当前游戏未启用梦境思客DSH')
+  if (!isDreamSikeAgentExecution(chat)) throw new Error('当前游戏未启用梦境思客DSH')
   if (!draft || !['draft', 'ready'].includes(draft.status)) throw new Error('没有可继续处理的正文草稿')
   if (!Number.isSafeInteger(failedTurn) || failedTurn < 1 || draft.turn !== failedTurn
     || draft.operationId !== expectedOperationId || draft.version !== expectedVersion) throw new Error('草稿版本或失败回合已变化，请重新读取工作窗')

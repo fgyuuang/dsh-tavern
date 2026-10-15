@@ -1,4 +1,5 @@
 import { inputAttachments } from './player-input-content.js'
+import { applySillyTavernStrictTools } from './sillytavern-strict-tools.js'
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
 }
@@ -57,9 +58,10 @@ function exampleMessages(value, options = {}) {
 function markerMessages(identifier, input) {
   const card = input.card
   const settings = input.settings
+  const worldInfo = content => str(settings.wi_format).trim() ? str(settings.wi_format).replaceAll('{0}', content) : content
   switch (identifier) {
-    case 'worldInfoBefore': return input.worldInfoBefore ? [{ role: 'system', content: input.worldInfoBefore }] : []
-    case 'worldInfoAfter': return input.worldInfoAfter ? [{ role: 'system', content: input.worldInfoAfter }] : []
+    case 'worldInfoBefore': return input.worldInfoBefore ? [{ role: input.role, content: worldInfo(input.worldInfoBefore) }] : []
+    case 'worldInfoAfter': return input.worldInfoAfter ? [{ role: input.role, content: worldInfo(input.worldInfoAfter) }] : []
     case 'charDescription': return str(card.description).trim() ? [{ role: 'system', content: card.description }] : []
     case 'charPersonality': {
       const value = str(card.personality).trim()
@@ -82,6 +84,95 @@ function markerMessages(identifier, input) {
     case 'chatHistory': return input.history
     default: return null
   }
+}
+
+/** ST 1.18 inserts grouped depth prompts into reverse history, then reverses it. */
+function insertDepthPrompts(history, injections) {
+  const reversed = history.slice().reverse()
+  const depths = [...new Set(injections.map(entry => Math.max(0, Math.trunc(Number(entry.depth) || 0))))].sort((a, b) => a - b)
+  let inserted = 0
+  for (const depth of depths) {
+    const selected = injections.filter(entry => Math.max(0, Math.trunc(Number(entry.depth) || 0)) === depth)
+    const orderOf = entry => Number.isFinite(Number(entry.order)) ? Number(entry.order) : 100
+    const orders = [...new Set(selected.map(orderOf))].sort((a, b) => b - a)
+    const groups = []
+    for (const order of orders) for (const entryRole of ['system', 'user', 'assistant']) {
+      const entries = selected.filter(entry => orderOf(entry) === order && role(entry.role) === entryRole)
+      if (!entries.length) continue
+      groups.push({ role: entryRole, content: entries.map(entry => entry.content.trim()).filter(Boolean).join('\n'),
+        source: { kind: 'preset-depth', depth, order, entries: entries.map(entry => entry.source) } })
+    }
+    reversed.splice(Math.min(reversed.length, depth + inserted), 0, ...groups)
+    inserted += groups.length
+  }
+  return reversed.reverse()
+}
+
+/** Provider-independent fields supported by the installed DSH llm adapter. */
+export function sillyTavernGenerationOptions(settings = {}) {
+  const generationOptions = {}, sourceGenerationOptions = {}, diagnostics = []
+  const fields = ['temperature', 'top_p', 'top_k', 'top_a', 'min_p', 'frequency_penalty', 'presence_penalty', 'repetition_penalty', 'seed', 'reasoning_effort', 'verbosity']
+  for (const key of fields) if (settings[key] !== undefined) sourceGenerationOptions[key] = settings[key]
+  const maxTokens = settings.openai_max_tokens ?? settings.max_completion_tokens ?? settings.max_tokens
+  if (maxTokens !== undefined) sourceGenerationOptions.max_tokens = maxTokens
+  if (typeof settings.temperature === 'number' && Number.isFinite(settings.temperature) && settings.temperature >= 0 && settings.temperature <= 2) generationOptions.temperature = settings.temperature
+  else if (settings.temperature !== undefined) diagnostics.push({ kind: 'preset-generation', code: 'invalid-temperature' })
+  if (Number.isSafeInteger(maxTokens) && maxTokens > 0) generationOptions.maxTokens = maxTokens
+  else if (maxTokens !== undefined) diagnostics.push({ kind: 'preset-generation', code: 'invalid-max-tokens' })
+  if (['off', 'low', 'medium', 'high', 'xhigh'].includes(settings.reasoning_effort)) generationOptions.reasoningEffort = settings.reasoning_effort
+  const unsupported = Object.keys(sourceGenerationOptions).filter(key => !['temperature', 'max_tokens'].includes(key)
+    && !(key === 'reasoning_effort' && generationOptions.reasoningEffort !== undefined))
+  if (unsupported.length) diagnostics.push({ kind: 'preset-generation', code: 'unsupported-adapter-options', fields: unsupported })
+  return { generationOptions, sourceGenerationOptions, diagnostics }
+}
+
+/** Respect source post-processing rather than forcing strict role conversion. */
+export function postProcessSillyTavernMessages(messages, settings = {}, names = {}) {
+  let output = messages.map(message => ({ ...message, ...(message.inputAttachments?.length ? { inputAttachments: inputAttachments(message.inputAttachments) } : {}) }))
+  if (settings.squash_system_messages === true) {
+    const squashed = []
+    const squashable = message => message?.role === 'system' && !message.name && !['newMainChat', 'newChat', 'groupNudge'].includes(message.source?.identifier)
+    for (const message of output) {
+      if (message.role === 'system' && !message.content) continue
+      const previous = squashed.at(-1)
+      if (squashable(message) && squashable(previous)) previous.content += '\n' + message.content
+      else squashed.push(message)
+    }
+    output = squashed
+  }
+  const processing = str(settings.custom_prompt_post_processing)
+  if (!processing || processing === 'none') return output
+  if (processing === 'strict_tools') return applySillyTavernStrictTools(output, names)
+  const supported = ['claude', 'merge', 'merge_tools', 'semi', 'semi_tools', 'strict', 'single']
+  if (!supported.includes(processing)) throw new Error('尚不支持原预设的提示词后处理：' + processing)
+  const keepTools = processing.endsWith('_tools'), strict = ['semi', 'semi_tools', 'strict'].includes(processing)
+  const merged = []
+  const append = (message, target = merged) => {
+    const previous = target.at(-1)
+    if (previous && previous.role === message.role && message.role !== 'tool' && (message.content || message.inputAttachments?.length)) {
+      if (message.content) previous.content += (previous.content ? '\n\n' : '') + message.content
+      if (message.inputAttachments?.length) previous.inputAttachments = [...(previous.inputAttachments || []), ...message.inputAttachments]
+    } else target.push(message)
+  }
+  for (const message of output) {
+    const prefix = message.name === 'example_user' ? names.userName : message.name === 'example_assistant' ? names.charName : message.role !== 'system' ? message.name : ''
+    if (prefix && !message.content.startsWith(prefix + ': ')) message.content = prefix + ': ' + message.content
+    delete message.name
+    if (!keepTools) { if (message.role === 'tool') message.role = 'user'; delete message.tool_calls; delete message.tool_call_id }
+    if (processing === 'single') {
+      const speaker = message.role === 'assistant' ? names.charName : message.role === 'user' ? names.userName : ''
+      if (speaker && !message.content.startsWith(speaker + ': ')) message.content = speaker + ': ' + message.content
+      message.role = 'user'
+    }
+    append(message)
+  }
+  if (!merged.length) merged.push({ role: 'user', content: '[Start a new chat]' })
+  if (strict) for (const [index, message] of merged.entries()) if (index > 0 && message.role === 'system') message.role = 'user'
+  if (processing === 'strict' && !['system', 'user'].includes(merged[0].role)) merged.unshift({ role: 'user', content: '[Start a new chat]' })
+  else if (processing === 'strict' && merged[0].role === 'system' && merged[1]?.role !== 'user') merged.splice(1, 0, { role: 'user', content: '[Start a new chat]' })
+  const coalesced = []
+  for (const message of merged) append(message, coalesced)
+  return coalesced
 }
 
 function overrideContent(entry, card) {
@@ -137,9 +228,10 @@ export function compileSillyTavernRequest(options = {}) {
   const card = options.card && typeof options.card === 'object' ? options.card : {}
   const preset = options.preset && typeof options.preset === 'object' ? options.preset : {}
   const settings = options.presetDocument && typeof options.presetDocument === 'object' ? options.presetDocument : {}
-  const resolveMacros = typeof options.resolveMacros === 'function'
+  const macroResolver = typeof options.resolveMacros === 'function'
     ? options.resolveMacros
     : function (text, context) { return { text: str(text), diagnostics: [], macroState: context.macroState } }
+  const resolveMacros = (text, context) => macroResolver(text, { ...context, lastUserMessage: str(options.input) })
   const projectPromptText = typeof options.projectPromptText === 'function'
     ? options.projectPromptText
     : function (text) { return { text: str(text), warnings: [], applied: [] } }
@@ -149,7 +241,7 @@ export function compileSillyTavernRequest(options = {}) {
     global: Object.assign({}, options.macroState && options.macroState.global || {})
   }
   const diagnostics = []
-  const history = (Array.isArray(options.history) ? options.history : []).map(function (item) {
+  let history = (Array.isArray(options.history) ? options.history : []).map(function (item) {
     const sourceText = str(item.sourceText || item.text || item.content)
     return { role: role(item.role), content: sourceText, ...(item.inputAttachments?.length ? { inputAttachments: inputAttachments(item.inputAttachments) } : {}), source: { kind: 'chat-history' } }
   })
@@ -170,40 +262,55 @@ export function compileSillyTavernRequest(options = {}) {
     item.source.depth = depth
   }
 
+  if (history.at(-1)?.role === 'assistant' && str(settings.send_if_empty)) history.push({ role: 'user', content: str(settings.send_if_empty), source: { kind: 'empty-input-replacement' } })
   const selected = (Array.isArray(preset.entries) ? preset.entries : []).filter(function (entry) {
     return entry && entry.ordered === true && entry.enabled === true
   })
   const regular = []
   const absolute = []
   for (const entry of selected) {
-    if (Number(entry.injectionPosition) === 1 && entry.marker !== true) absolute.push(entry)
+    if (Number(entry.injectionPosition) === 1 && !['chatHistory', 'dialogueExamples'].includes(entry.identifier)) absolute.push(entry)
     else regular.push(entry)
   }
-  absolute.sort(function (left, right) {
-    return (Number(right.injectionDepth) || 0) - (Number(left.injectionDepth) || 0) || (Number(left.injectionOrder) || 0) - (Number(right.injectionOrder) || 0)
-  })
+  const injections = (Array.isArray(options.depthInjections) ? options.depthInjections : []).map(entry => ({ ...entry }))
   for (const entry of absolute) {
-    const rendered = macro(overrideContent(entry, card), resolveMacros, state, card)
-    diagnostics.push(...rendered.diagnostics)
-    if (rendered.text.trim() === '') continue
-    history.splice(Math.max(0, history.length - (Number(entry.injectionDepth) || 0)), 0, {
-      role: role(entry.role), content: rendered.text,
-      source: { kind: 'preset-depth', entryKey: entry.entryKey, identifier: entry.identifier, depth: Number(entry.injectionDepth) || 0 }
-    })
+    const marker = markerMessages(str(entry.identifier), { card, settings, history, role: role(entry.role), persona: str(options.persona),
+      userName: state.userName, worldInfoBefore: str(options.worldInfoBefore), worldInfoAfter: str(options.worldInfoAfter) })
+    for (const value of marker === null ? [{ content: overrideContent(entry, card) }] : marker) {
+      const rendered = macro(value.content, resolveMacros, state, card)
+      diagnostics.push(...rendered.diagnostics)
+      if (!rendered.text.trim()) continue
+      injections.push({ role: role(entry.role), content: rendered.text, depth: Number(entry.injectionDepth) || 0,
+        order: entry.injectionOrder ?? 100, source: { entryKey: entry.entryKey, identifier: entry.identifier } })
+    }
   }
+  for (const injection of injections) {
+    if (injection.source?.entryKey) continue
+    const rendered = macro(injection.content, resolveMacros, state, card)
+    injection.content = rendered.text
+    diagnostics.push(...rendered.diagnostics)
+  }
+  history = insertDepthPrompts(history, injections.filter(entry => str(entry.content).trim()))
+  const newChat = macro(settings.new_chat_prompt, resolveMacros, state, card)
+  diagnostics.push(...newChat.diagnostics)
+  if (newChat.text) history.unshift({ role: 'system', content: newChat.text, source: { kind: 'new-chat', identifier: 'newMainChat' } })
 
   const messages = []
   for (const entry of regular) {
     const marker = markerMessages(str(entry.identifier), {
       card, settings, history,
+      role: role(entry.role),
       userName: state.userName,
       persona: str(options.persona),
       worldInfoBefore: str(options.worldInfoBefore),
       worldInfoAfter: str(options.worldInfoAfter)
     })
-    const values = marker === null ? [{ role: entry.role, content: overrideContent(entry, card) }] : marker
+    let values = marker === null ? [{ role: entry.role, content: overrideContent(entry, card) }] : marker
+    if (marker !== null && !['chatHistory', 'dialogueExamples'].includes(entry.identifier)) values = values.map(value => ({ ...value, role: role(entry.role) }))
+    if (entry.identifier === 'dialogueExamples') values = [...(options.exampleBefore || []).map(content => ({ role: 'system', content })), ...values,
+      ...(options.exampleAfter || []).map(content => ({ role: 'system', content }))]
     for (const value of values) {
-      const alreadyProjected = value.source && (value.source.kind === 'chat-history' || value.source.kind === 'current-input' || value.source.kind === 'preset-depth')
+      const alreadyProjected = value.source && ['chat-history', 'current-input', 'preset-depth', 'new-chat'].includes(value.source.kind)
       const rendered = alreadyProjected ? { text: value.content, diagnostics: [] } : macro(value.content, resolveMacros, state, card)
       diagnostics.push(...rendered.diagnostics)
       if (rendered.text.trim() === '' && !value.inputAttachments?.length) continue
@@ -211,13 +318,20 @@ export function compileSillyTavernRequest(options = {}) {
         role: role(value.role), content: rendered.text,
         ...(value.inputAttachments?.length ? { inputAttachments: inputAttachments(value.inputAttachments) } : {}),
         ...(value.name ? { name: value.name } : {}),
-        source: { kind: entry.marker ? 'marker' : 'preset', entryKey: entry.entryKey, identifier: entry.identifier, name: entry.name }
+        source: value.source || { kind: entry.marker ? 'marker' : 'preset', entryKey: entry.entryKey, identifier: entry.identifier, name: entry.name }
       })
     }
   }
 
+  const prefill = macro(settings.assistant_prefill, resolveMacros, state, card)
+  diagnostics.push(...prefill.diagnostics)
+  if (prefill.text) messages.push({ role: 'assistant', content: prefill.text, source: { kind: 'assistant-prefill' } })
+  const sampling = sillyTavernGenerationOptions(settings)
+  diagnostics.push(...sampling.diagnostics)
   return {
     messages,
+    generationOptions: sampling.generationOptions,
+    sourceGenerationOptions: sampling.sourceGenerationOptions,
     macroState: state,
     diagnostics,
     trace: {

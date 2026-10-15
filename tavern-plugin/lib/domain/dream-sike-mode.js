@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { compileDreamSikeContract, DREAM_SIKE_CONTRACT_INSTRUCTION } from './dream-sike-contract.js'
+import { normalizeGenerationMode, SINGLE_REPLY_GENERATION_MODE } from './generation-mode.js'
 
 export const BASE_PLAY_PRESET = 'tavern'
 export const DREAM_SIKE_AGENT_PRESET = 'dream-sike-dsh'
@@ -27,7 +28,12 @@ export function normalizePlayPresetId(value) {
 }
 
 /** Native gameplay identity is independent of imported prompt resources. */
-export function playPresetInteractionProfile(presetId) {
+export function playPresetInteractionProfile(presetId, generationMode) {
+  if (normalizeGenerationMode(generationMode) === SINGLE_REPLY_GENERATION_MODE) return {
+    id: SINGLE_REPLY_GENERATION_MODE, title: '原版酒馆 · 单次回复',
+    workflow: 'source-prompt-reply-local-effects', candidateMode: 'manual',
+    draftWorkspace: false, authorSettings: true, backgroundSettlement: false
+  }
   return normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET ? {
     id: 'dream-sike-workbench', title: '梦境思客创作台',
     workflow: 'read-plan-draft-review-commit', candidateMode: 'optional',
@@ -128,14 +134,15 @@ export function setDefaultPlayPreset(settings, presetId) {
 }
 
 /** Preserve selected writing rules and migrate only known execution protocols. */
-export function projectPlayPresetSnapshot(snapshot, presetId) {
+export function projectPlayPresetSnapshot(snapshot, presetId, generationMode) {
+  if (normalizeGenerationMode(generationMode) === SINGLE_REPLY_GENERATION_MODE) return snapshot
   if (normalizePlayPresetId(presetId) !== DREAM_SIKE_AGENT_PRESET || !snapshot || typeof snapshot !== 'object') return snapshot
   return compileDreamSikeContract(snapshot)
 }
 
 /** Preset-owned Tavern Helper scripts run only in the original mode. */
-export function resolvePresetHelperScripts(snapshot, presetId) {
-  if (normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET) return []
+export function resolvePresetHelperScripts(snapshot, presetId, generationMode) {
+  if (normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET && normalizeGenerationMode(generationMode) !== SINGLE_REPLY_GENERATION_MODE) return []
   const document = object(snapshot?.compatibilityPresetDocument)
   const extensions = object(document.extensions)
   const helper = object(extensions.tavern_helper)
@@ -165,10 +172,11 @@ export function resolvePlayPresetRuntime(chat) {
   return {
     presetId,
     nativeAgentPreset: presetId,
-    interactionProfile: playPresetInteractionProfile(presetId),
-    runtimePresetSnapshot: projectPlayPresetSnapshot(source.runtimePresetSnapshot, presetId),
-    helperScriptPolicy: presetId === DREAM_SIKE_AGENT_PRESET ? 'card-and-agent' : 'card-and-legacy-preset',
-    presetHelperScripts: resolvePresetHelperScripts(source.runtimePresetSnapshot, presetId),
+    generationMode: normalizeGenerationMode(source.generationMode),
+    interactionProfile: playPresetInteractionProfile(presetId, source.generationMode),
+    runtimePresetSnapshot: projectPlayPresetSnapshot(source.runtimePresetSnapshot, presetId, source.generationMode),
+    helperScriptPolicy: presetId === DREAM_SIKE_AGENT_PRESET && normalizeGenerationMode(source.generationMode) !== SINGLE_REPLY_GENERATION_MODE ? 'card-and-agent' : 'card-and-legacy-preset',
+    presetHelperScripts: resolvePresetHelperScripts(source.runtimePresetSnapshot, presetId, source.generationMode),
     legacyPresetPath: typeof source.runtimePresetPath === 'string' ? source.runtimePresetPath : ''
   }
 }

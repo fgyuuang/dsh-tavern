@@ -1,4 +1,5 @@
 import { createDurableTaskMailbox } from './durable-task-mailbox.js'
+import { isSingleReplyMode } from './generation-mode.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -127,6 +128,7 @@ export function createCandidateTasks({ chats, generator, backgroundTasks, sessio
     const sessionId = str(args.sessionId)
     const chat = await (chats.stateForSession || chatForSession)(sessionId)
     if (chat === undefined) throw new Error('当前会话没有绑定人物卡')
+    if (isSingleReplyMode(chat)) throw new Error('原版酒馆模式使用原预设回复中的选项，不另行调用 DSH 候选 Agent')
     const task = await taskMailbox.submit(chat.id, {
       requestId: args.requestId,
       kind: 'candidate',
@@ -145,6 +147,7 @@ export function createCandidateTasks({ chats, generator, backgroundTasks, sessio
   async function startLegacy(args = {}) {
     const choiceChat = await chatForSession(args && args.sessionId)
     if (choiceChat === undefined) throw new Error('当前会话没有绑定人物卡')
+    if (isSingleReplyMode(choiceChat)) throw new Error('原版酒馆模式使用原预设回复中的选项，不另行调用 DSH 候选 Agent')
     if (!await prepareLegacy(args && args.sessionId)) return { preparing: true }
     const prepared = await candidateGenerator.prepare({
       sessionId: args && args.sessionId,

@@ -41,8 +41,8 @@
 				const h = React.createElement;
 				const sessionId = props.sessionId;
 				const mode = useTavernSessionMode(sessionId);
-				const modeView = useLiveTavernView(sessionId, "dream-sike-window-mode", [["playPresetId"]]);
-				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh";
+				const modeView = useLiveTavernView(sessionId, "dream-sike-window-mode", [["playPresetId"], ["generationMode"]]);
+				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
 				const [draft, setDraft] = React.useState(null);
 				const [executionTrace, setExecutionTrace] = React.useState([]);
 				const [execution, setExecution] = React.useState(null);
@@ -257,8 +257,8 @@
 			function DreamSikeDraftAction(props) {
 				const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
 				const mode = useTavernSessionMode(owner);
-				const modeView = useLiveTavernView(owner, "dream-sike-action-mode", [["playPresetId"]]);
-				const dreamMode = isPlayMode(mode) && modeView.view?.playPresetId === "dream-sike-dsh";
+				const modeView = useLiveTavernView(owner, "dream-sike-action-mode", [["playPresetId"], ["generationMode"]]);
+				const dreamMode = isPlayMode(mode) && modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
 				React.useEffect(function () {
 					if (!dreamMode || !wantsDraftWindow(owner)) return;
 					let active = true;

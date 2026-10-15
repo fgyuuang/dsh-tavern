@@ -5,6 +5,7 @@ import { createEphemeralCompatibilityRequest, isCompatibilityConversationRequest
 import { projectRuntimePresetRequest } from './runtime-preset-lifecycle.js'
 import { markRequestHandled, requestHandledBy } from './request-lineage.js'
 import { DREAM_SIKE_AGENT_PRESET, dreamSikeAgentInstruction } from './dream-sike-mode.js'
+import { isSingleReplyMode } from './generation-mode.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 
@@ -199,6 +200,11 @@ export function createCompatibilityOrchestrationStrategy(options) {
     const sessionId = input.sessionId
     const payload = input.payload
     let chat = input.chat
+    const staged = stagedRequests.get(sessionId)
+    if (isSingleReplyMode(chat) && staged?.singleReply && staged.turn === Number(payload.turn) && staged.step === Number(payload.step)) {
+      return { kind: 'enter', messages: payload.messages }
+    }
+    if (isSingleReplyMode(chat) && Number(payload.step) > 1) throw new Error('原版酒馆模式只进行一次正文生成，不继续工具调用；已生成内容保留在执行记录中。')
     const userText = userTextOf(payload.messages)
     if (Number(payload.step) === 1) {
       await options.beforeTurn({ sessionId, chat, userText })
@@ -211,7 +217,9 @@ export function createCompatibilityOrchestrationStrategy(options) {
     stagedRequests.set(sessionId, {
       turn: Number(payload.turn) || 0,
       step: Number(payload.step) || 0,
-      messages: options.projectMessages(compiled)
+      messages: options.projectMessages(compiled),
+      singleReply: isSingleReplyMode(chat),
+      generationOptions: compiled.generationOptions || {}
     })
     return { kind: 'enter', messages: payload.messages }
   }
@@ -220,6 +228,12 @@ export function createCompatibilityOrchestrationStrategy(options) {
     const sessionId = str(optionsValue && optionsValue.sessionId)
     const staged = stagedRequests.get(sessionId)
     if (requestHandledBy(optionsValue, PROJECTED) || !isCompatibilityConversationRequest(optionsValue, staged, coordinates)) return null
+    if (staged.singleReply) {
+      const request = { ...optionsValue, ...staged.generationOptions, tools: [] }
+      delete request.system
+      delete request.toolChoice
+      return markRequestHandled(createEphemeralCompatibilityRequest(request, staged.messages), PROJECTED)
+    }
     return markRequestHandled(createEphemeralCompatibilityRequest(optionsValue, staged.messages), PROJECTED)
   }
 
@@ -236,7 +250,7 @@ export function createCompatibilityOrchestrationStrategy(options) {
   async function assembleSystemPrompt(assembly, input) {
     assembly.sections = []
     assembly.contexts = []
-    assembly.tools = input && input.chat && input.chat.webSearchEnabled === true
+    assembly.tools = !isSingleReplyMode(input?.chat) && input && input.chat && input.chat.webSearchEnabled === true
       ? assembly.tools.filter(function (tool) { return tool && tool.name === 'web_search' })
       : []
     return assembly
@@ -426,7 +440,7 @@ export function createForegroundOrchestrationStrategies(options) {
   const compatibility = createCompatibilityOrchestrationStrategy(options.compatibility)
 
   function select(chat) {
-    return chat && chat.requestMode === 'sillytavern' ? compatibility : nativePlay
+    return chat && (chat.requestMode === 'sillytavern' || isSingleReplyMode(chat)) ? compatibility : nativePlay
   }
 
   async function prepareStep(input) {
@@ -453,6 +467,7 @@ export function createForegroundOrchestrationStrategies(options) {
 
   function clearRequestState(sessionId) {
     nativePlay.clearRequestState(sessionId)
+    compatibility.endTurn(sessionId)
   }
 
   function endTurn(sessionId) {

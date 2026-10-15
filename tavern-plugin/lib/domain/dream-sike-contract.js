@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 export const DREAM_SIKE_REVIEW_AXES = Object.freeze(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'])
 const VERSION = 13
@@ -192,7 +193,7 @@ export function dreamSikeContractView(snapshot) {
 }
 
 export function needsDreamSikeEditorialReview(chat) {
-  if (chat?.playPresetId !== 'dream-sike-dsh') return false
+  if (!isDreamSikeAgentExecution(chat)) return false
   const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
   return contract?.outputMode === 'plot' && Boolean(contract.entries.length)
 }

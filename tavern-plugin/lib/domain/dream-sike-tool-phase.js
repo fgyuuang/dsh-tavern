@@ -2,6 +2,7 @@ import { dreamSikeTurnIdentity } from './dream-sike-draft.js'
 import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 import { dreamSikeExecutionCounts } from './dream-sike-execution-usage.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 const names = new Set(['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft'])
 const queryTools = new Set(['tavern_memory', 'tavern_read_variables', 'tavern_recall_history', 'worldbook_search',
@@ -11,7 +12,7 @@ const queryTools = new Set(['tavern_memory', 'tavern_read_variables', 'tavern_re
 export function dreamSikeToolPhase(chat, sessionId, turn, executionUsage, {
   inFlightAttemptId, inFlightStep, inFlightRootOperationId, inFlightBranchId
 } = {}) {
-  if (chat?.playPresetId !== 'dream-sike-dsh') return null
+  if (!isDreamSikeAgentExecution(chat)) return null
   let identity
   try { identity = dreamSikeTurnIdentity(chat, sessionId, turn) } catch { return null }
   const operation = chat.timeline?.operations?.[identity.operationId]

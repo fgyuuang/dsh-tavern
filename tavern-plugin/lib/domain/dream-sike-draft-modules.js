@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { compileDreamSikeContract, DREAM_SIKE_REVIEW_AXES } from './dream-sike-contract.js'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const PARALLEL = /<dream_parallel_event\b[^>]*>[\s\S]*?<\/dream_parallel_event\s*>\n?/gi
@@ -18,7 +19,7 @@ export function draftModuleBase(text, kind) {
   return result
 }
 export function dreamSikeDraftModulePlan(chat, kind) {
-  if (chat?.playPresetId !== 'dream-sike-dsh' || !['parallel', 'review'].includes(kind)) return null
+  if (!isDreamSikeAgentExecution(chat) || !['parallel', 'review'].includes(kind)) return null
   const compiled = compileDreamSikeContract(chat.runtimePresetSnapshot)
   const entries = compiled?.deferredDraft?.entries.filter(entry => entry.moduleKind === kind) || []
   if (!entries.length || compiled.agentContract.outputMode !== 'plot') return null

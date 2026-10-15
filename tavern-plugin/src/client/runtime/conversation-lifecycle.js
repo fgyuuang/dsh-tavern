@@ -164,7 +164,8 @@
                 // Preview tokens are ephemeral; retries after re-opening the picker
                 // must still find the Session belonging to the same user choice.
                 const identity = [request.kind, request.targetMode, request.card && request.card.path,
-                    request.openingId, request.userName, request.requestMode, request.task, request.pending];
+                    request.openingId, request.userName, request.requestMode, request.task, request.pending,
+                    request.generationMode === "sillytavern-once" ? "sillytavern-once" : "agent"];
                 // Changing the launch model is a new choice, not a retry of an already initialized game.
                 if (request.models) identity.push(request.models);
                 const key = JSON.stringify(identity);
@@ -181,6 +182,7 @@
                 let successful = false;
                 try {
                     if (request.kind === "play") {
+                        request.generationMode = (attempt?.generationMode || request.generationMode) === "sillytavern-once" ? "sillytavern-once" : "agent";
                         phase = "确定本局 Agent 预设";
                         // An incomplete older attempt already selected Tavern's native
                         // preset. Retrying it must not adopt a changed global default.
@@ -188,13 +190,13 @@
                             : (request.playPresetId || await step("resolvePlayPreset", () =>
                                 typeof options.resolvePlayPreset === "function" ? options.resolvePlayPreset(request) : "tavern"));
                         if (attempt && !attempt.playPresetId) {
-                            attempt = Object.assign({}, attempt, { playPresetId: request.playPresetId });
+                            attempt = Object.assign({}, attempt, { playPresetId: request.playPresetId, generationMode: request.generationMode });
                             attempts.set(key, attempt);
                         }
                         if (!attempt) {
                             // Persist the chosen preset before any workspace or Session
                             // operation, so even an early failure has a stable retry.
-                            attempt = { sessionId: "", initialized: false, playPresetId: request.playPresetId };
+                            attempt = { sessionId: "", initialized: false, playPresetId: request.playPresetId, generationMode: request.generationMode };
                             attempts.set(key, attempt);
                         }
                     }
@@ -208,7 +210,7 @@
                             phase = "创建 DSH Session";
                             sessionId = await step("connectWorkspace", () => options.connectWorkspace(workspaceId));
                         }
-                        attempt = { sessionId, initialized: false, ...(request.kind === "play" ? { playPresetId: request.playPresetId } : {}) };
+                        attempt = { sessionId, initialized: false, ...(request.kind === "play" ? { playPresetId: request.playPresetId, generationMode: request.generationMode } : {}) };
                         attempts.set(key, attempt);
                     }
                     const sessionId = attempt.sessionId;
@@ -219,7 +221,7 @@
                         await step("ensurePreset", () => options.ensurePreset(sessionId, request));
                         phase = request.kind === "card" ? "创建卡片工作台对话" : "写入人物卡开场白";
                         await step("createChat", () => options.createChat(request, sessionId));
-                        attempt = { sessionId, initialized: true, ...(request.kind === "play" ? { playPresetId: request.playPresetId } : {}) };
+                        attempt = { sessionId, initialized: true, ...(request.kind === "play" ? { playPresetId: request.playPresetId, generationMode: request.generationMode } : {}) };
                         attempts.set(key, attempt);
                     }
                     phase = "同步并打开 DSH Session";

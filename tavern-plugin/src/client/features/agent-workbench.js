@@ -20,8 +20,8 @@ function createAgentWorkbenchFeatureModule() {
         const h = React.createElement;
         useTavernUiExtensions();
         const mode = useTavernSessionMode(props.sessionId);
-        const modeView = useLiveTavernView(props.sessionId, "agent-workbench-mode", [["playPresetId"]]);
-        const enabled = isPlayMode(mode) && modeView.view?.playPresetId === "dream-sike-dsh";
+        const modeView = useLiveTavernView(props.sessionId, "agent-workbench-mode", [["playPresetId"], ["generationMode"]]);
+        const enabled = isPlayMode(mode) && modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
         const coordination = useTavernCoordination(props.sessionId);
         const activity = describeTavernActivity(coordination.view?.activity);
         const binding = React.useSyncExternalStore(
@@ -38,7 +38,7 @@ function createAgentWorkbenchFeatureModule() {
         const tabRefs = React.useRef(new Map());
         const managementTrigger = React.useRef(null), managementBox = React.useRef(null);
         const identity = React.useId();
-        const context = { gameId: props.sessionId, sessionId: props.sessionId, visible: props.visible, mode, playPresetId: modeView.view?.playPresetId, ctx: props.ctx, tabId: props.tabId };
+        const context = { gameId: props.sessionId, sessionId: props.sessionId, visible: props.visible, mode, playPresetId: modeView.view?.playPresetId, generationMode: modeView.view?.generationMode || "agent", ctx: props.ctx, tabId: props.tabId };
         const panels = enabled ? tavernUiExtensions.workbenchPanels().filter(panel => {
             try { return !panel.when || panel.when(context); }
             catch (error) { try { tavernErrorHub.report("工作台模块 " + panel.owner, error); } catch (_) {} return false; }
@@ -85,7 +85,7 @@ function createAgentWorkbenchFeatureModule() {
             h("header", { className: "dsh-agent-workbench-head" },
                 h("div", { className: "dsh-agent-workbench-identity" }, h("span", { className: "dsh-agent-workbench-kicker" }, "梦境思客 · 创作空间"), h("h2", null, "Agent 工作台")),
                 h("button", { ref: managementTrigger, type: "button", className: "dsh-agent-workbench-manage", disabled: !enabled, "aria-expanded": managing, "aria-controls": identity + "-modules", onClick: () => setManaging(value => !value) }, "管理模块")),
-            !enabled ? h("div", { className: "dsh-agent-workbench-empty", role: "status" }, modeView.loading ? "正在读取本局模式…" : "在本局设置选择梦境思客DSH，即可打开创作工作台。DSH 原版使用原有交互界面。") : h(React.Fragment, null,
+            !enabled ? h("div", { className: "dsh-agent-workbench-empty", role: "status" }, modeView.loading ? "正在读取本局模式…" : modeView.view?.generationMode === "sillytavern-once" ? "当前使用原版酒馆 · 单次回复。作者选项可在本局设置中调整；切回 DSH Agent 后可继续使用工作台。" : "在本局设置选择梦境思客DSH，即可打开创作工作台。DSH 原版使用原有交互界面。") : h(React.Fragment, null,
                 h("div", { className: "dsh-agent-workbench-status" }, h("span", { className: "dsh-agent-workbench-dot", "data-busy": String(activity.busy || running), "aria-hidden": true }), running && props.visible ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { role: "status" }, activity.busy ? activity.label || "正在处理本回合" : "等待你的行动"), h("span", { className: "dsh-agent-workbench-status-note" }, "当前游戏")),
                 managing ? h("section", { ref: managementBox, id: identity + "-modules", className: "dsh-agent-workbench-modules", "aria-label": "工作台模块管理" },
                     h("div", { className: "dsh-agent-workbench-module-heading" }, h("strong", null, "按你的习惯布置"), h("button", { type: "button", onClick: () => { update(current => ({ ...current, hidden: [] })); } }, "显示全部")),
@@ -112,8 +112,8 @@ function createAgentWorkbenchFeatureModule() {
     function Action(props) {
         const owner = ownerOf(props.ctx, props.sessionId);
         const mode = useTavernSessionMode(owner);
-        const view = useLiveTavernView(owner, "agent-workbench-action", [["playPresetId"]]);
-        if (!isPlayMode(mode) || view.view?.playPresetId !== "dream-sike-dsh") return null;
+        const view = useLiveTavernView(owner, "agent-workbench-action", [["playPresetId"], ["generationMode"]]);
+        if (!isPlayMode(mode) || view.view?.playPresetId !== "dream-sike-dsh" || view.view?.generationMode === "sillytavern-once") return null;
         return React.createElement("button", { type: "button", className: "dsh-tavern-btn", "aria-label": "打开 Agent 工作台", onClick: () => { void open(props.ctx, owner); } }, icon("workbench"), React.createElement("span", { className: "dsh-tavern-header-action-label" }, "Agent 工作台"));
     }
     function register(input) {

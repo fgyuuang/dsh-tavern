@@ -2,6 +2,7 @@ import { scriptForState } from './script-layout.js'
 import { projectAgentContent, projectAgentMessageText } from './runtime-content-projection.js'
 import { createBackgroundTaskCoordinator } from './background-task-coordinator.js'
 import { CHARACTER_DESIGN_READ_TOOL, CHARACTER_DESIGN_SAVE_TOOL } from './character-design-document.js'
+import { isSingleReplyMode } from './generation-mode.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -244,6 +245,7 @@ export function createCandidateGenerator(options) {
     }
     let chat = await store.chatForSession(input.sessionId)
     if (chat === undefined || chat === null) throw new Error('当前会话没有绑定人物卡')
+    if (isSingleReplyMode(chat)) throw new Error('原版酒馆模式使用原预设回复中的选项，不另行调用 DSH 候选 Agent')
     const mode = chat.mode || 'story'
     if (mode === 'card') throw new Error('卡片模式不生成剧情候选项')
     const requestId = str(input.requestId).trim().slice(0, 160)

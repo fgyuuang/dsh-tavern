@@ -5,6 +5,7 @@ import { installWorkspaceInstructionPresentation } from '../domain/workspace-ins
 import { presentModelError } from '../domain/model-error-presentation.js'
 import { markRequestAttempt, markRequestHandled, requestAttemptOf, requestHandledBy } from '../domain/request-lineage.js'
 import { randomUUID } from 'node:crypto'
+import { isSingleReplyMode, isDreamSikeAgentExecution } from '../domain/generation-mode.js'
 
 const DREAM_SIKE_AGENT_PRESET = 'dream-sike-dsh'
 
@@ -92,9 +93,9 @@ export function registerModelStreamHooks({
       if (prepared !== options) { yield * ctx.llm.stream(markRequestAttempt(prepared, attempt)); return }
       const chat = ownerSessionId === '' ? undefined : await chatHeaderForSession(ownerSessionId, [
         'requestMode', 'compatibilityTraces', 'bypassPlanId', 'runtimePresetSnapshot', 'foregroundFrames',
-        'playPresetId', 'dreamSikeExecutionPolicy'
+        'playPresetId', 'dreamSikeExecutionPolicy', 'generationMode'
       ])
-      if (chat && ['story', 'script'].includes(chat.mode) && options.purpose === undefined && chat.requestMode !== 'sillytavern' && !requestHandledBy(options, 'full-template')) {
+      if (chat && !isSingleReplyMode(chat) && ['story', 'script'].includes(chat.mode) && options.purpose === undefined && chat.requestMode !== 'sillytavern' && !requestHandledBy(options, 'full-template')) {
         const projected = await fullTemplateRuntime.forSession(ownerSessionId).projectRequestProjection({ messages: options.messages, system: options.system, model: options.model })
         yield * ctx.llm.stream(markRequestAttempt(markRequestHandled({ ...options, ...projected }, 'full-template'), attempt))
         return
@@ -107,7 +108,7 @@ export function registerModelStreamHooks({
       const branchId = str(backgroundContext?.branchId || attempt.branchId || coordinates.branchId)
       const rootTurn = Number(backgroundContext?.rootTurn ?? attempt.rootTurn ?? coordinates.rootTurn ?? coordinates.turn) || 0
       let executionReservation = null
-      if (chat?.playPresetId === DREAM_SIKE_AGENT_PRESET && rootOperationId && stage) {
+      if (isDreamSikeAgentExecution(chat) && rootOperationId && stage) {
         executionReservation = await modelRequestLog.reserveExecutionAttempt({
           chatId: chat.id, attemptId: attempt.id, rootOperationId, branchId, rootTurn,
           turn: Number(coordinates.turn ?? attempt.turn) || 0, step: Number(coordinates.step ?? attempt.step) || 0,

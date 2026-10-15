@@ -1,3 +1,5 @@
+import { isDreamSikeAgentExecution } from './generation-mode.js'
+
 export const GAME_MEMORY_READ_TOOL = Object.freeze({
   name: 'tavern_memory',
   description: '按需列出、读取或搜索本局当前分支的持久记忆文档。Markdown 保存场景、人物所知和未完成线索；JSON/CSV 保存辅助表格。文档是剧情记忆，变量仍以变量工具的当前状态为准。长文按 nextOffset 续读。',
@@ -25,7 +27,7 @@ export const GAME_MEMORY_SUBMIT_TOOL = Object.freeze({
 })
 
 export function gameMemoryEnabled(chat) {
-  return chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')
+  return isDreamSikeAgentExecution(chat)
 }
 
 export async function readGameMemory(workspace, chat, args = {}) {

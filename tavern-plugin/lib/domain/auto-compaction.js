@@ -2,6 +2,7 @@ import { compactionFailureMessage } from './compaction-failure.js'
 import { RETAINED_STORY_ROUNDS } from './story-compaction.js'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
+import { isSingleReplyMode } from './generation-mode.js'
 
 const CAPACITY_WARNING = '无法取得当前模型上下文容量，自动压缩暂停；请配置模型窗口或改用轮数模式。'
 
@@ -42,6 +43,9 @@ export function createAutoCompaction(deps) {
     // history only after deciding to perform compression under the exclusive lock.
     const chat = await (deps.readState || deps.readChat)(sessionId)
     if (!chat || !['story', 'script'].includes(chat.mode)) return null
+    if (isSingleReplyMode(chat)) return options.manual
+      ? { status: 'skipped', foreground: { status: 'skipped', message: '原版酒馆模式按源预设装配原始历史；切回 Agent 模式后可使用 DSH 压缩。' }, background: { status: 'skipped' } }
+      : null
     if (jobs.has(chat.id)) {
       const active = jobs.get(chat.id)
       let result

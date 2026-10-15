@@ -376,7 +376,7 @@
 				);
 			}
 			function tavernAssistantViewPaths(turn, eager = true) {
-				return ["mode", "playPresetId", eager ? "tavernHelper" : "$helperAvailable",
+				return ["mode", "playPresetId", "generationMode", eager ? "tavernHelper" : "$helperAvailable",
 					"tavernRuntimePolicy", "tavernMvuRuntime", "releaseCapabilities", "statusBarPlacement"].map(field => [field]).concat([["$projectionTurn", String(turn)], ["$projectionLatestTurn", String(turn)]]);
 			}
 			function tavernAssistantOwnsFinalProjection(turnRef, data, tail) {
@@ -476,7 +476,7 @@
 				const sessionTransitioning = React.useSyncExternalStore(tavernSessionTransition.subscribe, tavernSessionTransition.getSnapshot, tavernSessionTransition.getSnapshot);
 				const tail = props.useTurnData("turn-tail");
 				const finalAssistantStep = tavernAssistantOwnsFinalProjection(turnRef, data, tail);
-				const dreamSikeMode = liveState.view?.playPresetId === "dream-sike-dsh" && storyTurn > 0;
+				const dreamSikeMode = liveState.view?.playPresetId === "dream-sike-dsh" && liveState.view?.generationMode !== "sillytavern-once" && storyTurn > 0;
 				const contentMode = tavernAssistantContentMode(dreamSikeMode, data.status, finalAssistantStep);
 				const projection = settled && finalAssistantStep ? tavernProjectionForTurn(liveState.view, storyTurn) : null;
 					const latestProjectionTurn = tavernLatestProjectionTurn(liveState.view);

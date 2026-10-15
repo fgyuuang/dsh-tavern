@@ -763,7 +763,11 @@ export function createTavernScriptHostAdapter(options = {}) {
       return { updated: false, stale: true, context: await fullContext(current) }
     }
     const command = str(input.command).trim()
-    if (command === '') throw new Error('MVU 变量结算命令为空')
+    // A single-reply turn still owns one MESSAGE_RECEIVED dispatch when its
+    // author omitted MVU commands. Other card scripts must observe that reply.
+    const emptyReplyEvent = input.allowEmptyCommand === true && input.preserveForeground === true
+      && current.generationMode === 'sillytavern-once'
+    if (command === '' && !emptyReplyEvent) throw new Error('MVU 变量结算命令为空')
     // resolveChat awaited above: another attempt may have reserved this session
     // in the meantime. Never overwrite its draft or release its ownership.
     if (settlementTransactions.has(sessionId)) throw new Error('当前对话已有 MVU 变量结算正在执行')
@@ -796,7 +800,7 @@ export function createTavernScriptHostAdapter(options = {}) {
     }
     settlementTransactions.set(sessionId, transaction)
     try {
-      const internalText = str(input.storyText).trim() + '\n\n' + command
+      const internalText = command === '' ? str(input.storyText) : str(input.storyText).trim() + '\n\n' + command
       const hasMvuSnapshot = value => value && value.stat_data !== undefined && value.schema !== undefined
       const indexedBase = settlementReaders.get(current)
       let priorId = indexedBase ? await indexedBase.previousMvu(messageId) : -1

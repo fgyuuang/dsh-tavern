@@ -1,5 +1,6 @@
 import { dreamSikeContractView, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 const FIELDS = ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt']
 const str = value => typeof value === 'string' ? value : ''
@@ -11,7 +12,7 @@ function same(receipt, identity) {
 }
 
 export function needsDreamSikePreparation(chat) {
-  return chat?.playPresetId === 'dream-sike-dsh'
+  return isDreamSikeAgentExecution(chat)
     && needsDreamSikeEditorialReview(chat)
     && dreamSikeContractView(chat.runtimePresetSnapshot)?.entries.some(entry => entry.action === 'agent-planning') === true
 }

@@ -6,6 +6,7 @@ import {
 import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
 import { dreamSikePreparationView, needsDreamSikePreparation, prepareDreamSikeTurn, recordDreamSikeTurnRead } from '../domain/dream-sike-preparation.js'
 import { readDreamSikeAgentRules } from '../domain/dream-sike-agent-profile.js'
+import { isDreamSikeAgentExecution } from '../domain/generation-mode.js'
 import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from '../domain/dream-sike-draft-modules.js'
 import { dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { exhaustedModelQuota } from '../domain/model-error-presentation.js'
@@ -205,6 +206,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     const sessionId = str(exec?.agent?.session?.id)
     const turn = activeTurnOf(exec)
     const chat = await chatForSession(sessionId)
+    if (!isDreamSikeAgentExecution(chat)) throw new Error('当前回复方式未启用梦境思客 Agent 工具')
     return { chat, identity: dreamSikeTurnIdentity(chat, sessionId, turn) }
   }
 

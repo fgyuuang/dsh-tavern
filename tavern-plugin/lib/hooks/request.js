@@ -4,6 +4,7 @@ import { lastRoundVariableChanges } from '../domain/foreground-variable-changes.
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
 import { gameMemoryEnabled } from '../domain/game-memory-task.js'
 import { createDreamSikeLoopGuard } from '../domain/dream-sike-loop-guard.js'
+import { isSingleReplyMode } from '../domain/generation-mode.js'
 
 // Appended once at the start of a reply, so it joins the history after the cached prefix.
 export function appendVariableChanges({ chat, payload, decision }) {
@@ -84,6 +85,7 @@ export function registerRequestHooks({
       chat,
       requestId: requestIdForMessages(payload.messages)
     })
+    if (isSingleReplyMode(chat)) return prepared
     const withVariables = appendVariableChanges({ chat, payload, decision: prepared })
     const withChanges = await appendGameMemory({ chat, payload, decision: withVariables, workspace: gameMemory })
     try { return await cardMemory.appendRecall({ chat, payload, decision: withChanges }) }

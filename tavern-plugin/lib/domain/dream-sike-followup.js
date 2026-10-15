@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { compileDreamSikeContract } from './dream-sike-contract.js'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
+import { isDreamSikeAgentExecution } from './generation-mode.js'
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const idOf = entry => entry.source?.identifier || entry.identifier || String(entry.id || entry.entryKey || '').replace(/#\d+$/, '')
@@ -18,7 +19,7 @@ export const DREAM_SIKE_FOLLOWUP_TOOL = Object.freeze({
 })
 
 export function dreamSikeFollowupPlan(chat) {
-  if (chat?.playPresetId !== 'dream-sike-dsh' || !['story', 'script'].includes(chat.mode || 'story')) return null
+  if (!isDreamSikeAgentExecution(chat)) return null
   const snapshot = compileDreamSikeContract(chat.runtimePresetSnapshot)
   const entries = snapshot?.deferredFollowup?.entries || []
   if (!entries.length || snapshot.agentContract.outputMode !== 'plot') return null
@@ -82,7 +83,7 @@ export function inspectDreamSikeFollowup(text, plan) {
 
 export function dreamSikeFollowupView(chat) {
   const value = chat?.dreamSikeFollowup
-  if (!value || chat.playPresetId !== 'dream-sike-dsh' || value.branchId !== chat.timeline?.branchId) return null
+  if (!value || !isDreamSikeAgentExecution(chat) || value.branchId !== chat.timeline?.branchId) return null
   const latest = (chat.messages || []).findLast(row => row.role === 'assistant')
   if (latest && Number(latest.turn) !== value.turn) return null
   const text = latest?.projectionText ?? latest?.sourceText ?? latest?.text

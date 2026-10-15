@@ -8,6 +8,7 @@ import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '
 import { randomUUID } from 'node:crypto'
 import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { dreamSikeExecutionStageForPhase } from '../domain/dream-sike-execution-usage.js'
+import { isSingleReplyMode, isDreamSikeAgentExecution } from '../domain/generation-mode.js'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
@@ -50,7 +51,7 @@ export function registerTurnLifecycleHooks({
     const requestId = requestIdForTurn(session, payload.turn)
     const assistant = assistantResultForTurn(session, payload.turn)
     const chat = await chatForSession(sessionId)
-    const dreamMode = chat?.playPresetId === 'dream-sike-dsh' && ['story', 'script'].includes(chat.mode || 'story')
+    const dreamMode = isDreamSikeAgentExecution(chat) && ['story', 'script'].includes(chat.mode || 'story')
     const draft = dreamMode ? readDreamSikeDraft(chat) : null
     if (dreamMode && draft?.status === 'committed' && draft.turn === payload.turn
       && draft.sessionId === sessionId && draft.branchId === chat.timeline?.branchId && chat.nativeCommits?.[String(payload.turn)]) return
@@ -109,7 +110,9 @@ export function registerTurnLifecycleHooks({
       requestId,
       userText,
       userContent,
-      assistantText: dreamMode ? draft.text : (assistant === null ? '' : assistant.text)
+      assistantText: dreamMode ? draft.text : (isSingleReplyMode(chat)
+        ? String(chat.compatibilityTraces?.[String(payload.turn)]?.assistantPrefill || '') + (assistant?.text || '')
+        : (assistant === null ? '' : assistant.text))
     })
     if (saved.reply) replaceAssistantReply(session, assistant, saved.reply.sessionText)
   })
@@ -132,6 +135,9 @@ export function registerTurnLifecycleHooks({
     if (agent === undefined || agent.session === undefined) return assembly
     if (backgroundAgentRunner.owns(agent.session.id)) return assembly
     const chat = await hookChatForSession(agent.session.id)
+    if (isSingleReplyMode(chat)) {
+      return foregroundStrategies.assembleSystemPrompt(assembly, { sessionId: agent.session.id, chat })
+    }
     if (chat) await synchronizeTemplateHistory(agent.session, chat, session => sessionStore.flush(session))
     if (chat) await synchronizeBodyEdits(agent.session, chat, session => sessionStore.flush(session), persistClearedBodyEdits)
     if (chat && chat.requestMode !== 'sillytavern' && ['story', 'script', 'card'].includes(await turnOrchestrator.modeFor(agent.session.id))) {

@@ -9,6 +9,7 @@ import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
 import { normalizeBackgroundTasks, normalizePlayDefaults } from './tavern-settings.js'
 import { normalizePlayPresetId } from './dream-sike-mode.js'
+import { normalizeGenerationMode } from './generation-mode.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 import { ensureSessionSeedTrajectory } from './session-seed-trajectory.js'
 import { defaultUserPreferenceProfile } from './user-preference-profile.js'
@@ -54,6 +55,8 @@ export function createConversationInitialization(options) {
       bypassPlanId: '',
       runtimePresetSnapshot: null,
       playPresetId: 'tavern',
+      generationMode: 'agent',
+      generationModeRevision: 0,
       playPresetRevision: 0,
       cardContextSnapshot: '',
       cardContextSnapshotVersion: 0,
@@ -87,7 +90,7 @@ export function createConversationInitialization(options) {
     return prepared === undefined ? await presets.fullSnapshot() : prepared
   }
 
-  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, models, importDraft = false }) {
+  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, generationMode, models, importDraft = false }) {
     if (requestMode === 'sillytavern') throw new Error('silly 模式已停用')
     const currentSettings = await settings()
     const selectedModels = {}
@@ -166,6 +169,7 @@ export function createConversationInitialization(options) {
     const openingTarget = typeof sessionId === 'string' && sessionId !== '' ? await native.wait(sessionId) : undefined
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
     chat.playPresetId = selectedPlayPresetId
+    chat.generationMode = groupOfMode(chatMode) === 'play' ? normalizeGenerationMode(generationMode) : 'agent'
     if (selectedPlayPresetId === 'dream-sike-dsh') {
       chat.dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy(defaults.dreamSikeExecutionPolicy)
     }

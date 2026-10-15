@@ -481,6 +481,7 @@
 						userName: request.userName || "你",
 						requestMode: compatibilityAvailable && request.requestMode === "sillytavern" ? "sillytavern" : "dsh",
 						playPresetId: request.playPresetId || "tavern",
+                        generationMode: request.generationMode === "sillytavern-once" ? "sillytavern-once" : "agent",
                         models: request.models
 					});
 				},
@@ -594,6 +595,7 @@
 					try { preparedWorkspaceId = await timing.measure("claimPrewarm", () => playPrewarmRef.current.claim(card && card.path)); }
 					catch (prewarmError) { console.warn("dsh-tavern: 工作区预热不可用，改为正常创建", prewarmError); }
 					created = await conversationLifecycle.start({ kind: "play", targetMode: targetMode, card: card, preparationId: previousOpeningPicker && previousOpeningPicker.preparationId || "", openingId: openingId || "", userName: resolvedUserName, playPresetId: previousOpeningPicker && previousOpeningPicker.playPresetId || "", requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh", preparedWorkspaceId: preparedWorkspaceId,
+                        generationMode: previousOpeningPicker?.generationMode === "sillytavern-once" ? "sillytavern-once" : "agent",
                         models: previousOpeningPicker?.foregroundModel ? { foregroundModel: previousOpeningPicker.foregroundModel, backgroundModel: previousOpeningPicker.backgroundModel || null } : undefined });
 					if (initialMessage) await timing.measure("submitInitialMessage", () => props.executeSlash("/send " + substituteTavernIdentityMacros(initialMessage, { playerName: resolvedUserName, characterName: card && card.name }) + "|/trigger", created.sessionId));
 					if (targetMode !== "card") window.localStorage.setItem("dsh-tavern-player-name", resolvedUserName);
@@ -615,7 +617,7 @@
 					const preparedKey = JSON.stringify([userName, compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh"]);
                     const modelOptions = { modelCatalog: globalSettings.modelCatalog || [], foregroundModel: globalSettings.settings?.defaultForegroundModel || globalSettings.defaultModel || null,
                         backgroundModel: globalSettings.settings?.defaultBackgroundModel || null };
-					setOpeningPicker({ ...modelOptions, card: card, requestMode: requestMode, openings: [], index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, preparing: true });
+					setOpeningPicker({ ...modelOptions, card: card, requestMode: requestMode, generationMode: "agent", openings: [], index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, preparing: true });
 					const response = await initializeFullOpeningTemplate(await call("getCardOpenings", { previewTransport: "deferred-v1", path: card.path, userName: userName, requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh" }));
 					const openings = response.openings || [];
 					setOpeningPicker(current => ({ ...modelOptions, ...current, card: card, requestMode: requestMode, preparing: false, preparedKey: preparedKey, preparationId: response.preparationId || "", openings: openings, index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, trustedCardMode: response.trustedCardMode }));
@@ -977,6 +979,9 @@
                     onError: () => setOpeningPicker(value => value ? { ...value, worldbookReady: false } : value) }),
 				h("label", { className: "dsh-tavern-player-name" }, h("span", null, "本局 Agent 模式"), h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏 Agent 模式", value: openingPicker.playPresetId || "tavern", disabled: busy || openingPicker.preparing, onChange: function (event) { const playPresetId = event.target.value; setOpeningPicker(function (current) { return current ? Object.assign({}, current, { playPresetId: playPresetId }) : current; }); } }, (openingPicker.playPresets || []).map(function (preset) { return h("option", { key: preset.id, value: preset.id }, preset.name); }))),
 				h("div", { className: "dsh-tavern-player-name-help" }, ((openingPicker.playPresets || []).find(function (preset) { return preset.id === (openingPicker.playPresetId || "tavern"); }) || {}).description || "选择本局使用的独立 Agent 预设。", " 仅用于这次新游戏，不更改新游戏默认值。"),
+                h("label", { className: "dsh-tavern-player-name" }, h("span", null, "回复方式"), h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏回复方式", value: openingPicker.generationMode || "agent", disabled: busy || openingPicker.preparing, onChange: event => setOpeningPicker(current => current ? { ...current, generationMode: event.target.value } : current) },
+                    h("option", { value: "agent" }, "DSH Agent"), h("option", { value: "sillytavern-once" }, "原版酒馆 · 单次回复"))),
+                h("div", { className: "dsh-tavern-player-name-help" }, openingPicker.generationMode === "sillytavern-once" ? "沿用所选预设的原始提示词顺序、启用设置和兼容脚本，一次生成完整回复。" : "按所选 Agent 预设执行检索、写作及后续流程。"),
                     selectedOpening ? h(TavernOpeningInput, { picker: openingPicker, openingId: selectedOpening.id, busy: busy,
                         onChange: text => setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text)) }) : null,
 					selectedOpening ? h("div", { hidden: openingSettingsCollapsed },

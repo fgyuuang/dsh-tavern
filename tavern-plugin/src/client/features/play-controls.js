@@ -553,7 +553,7 @@
                 return view;
             }
             const view = current();
-            if (view.playPresetId === "dream-sike-dsh") {
+            if (view.playPresetId === "dream-sike-dsh" && view.generationMode !== "sillytavern-once") {
                 const response = await rpc("getDraftView", { sessionId }, sessionId);
                 current();
                 const draft = response.draft;
@@ -578,7 +578,7 @@
             const turn = Number(view?.replayFailedTurn) || 0;
             if (props.running || !view?.canReplayFailedTurn || turn < 1) return null;
             const draft = view.dreamSikeDraftState;
-            const hasDraft = view.playPresetId === "dream-sike-dsh" && draft?.turn === turn && ["draft", "ready"].includes(draft.status);
+            const hasDraft = view.playPresetId === "dream-sike-dsh" && view.generationMode !== "sillytavern-once" && draft?.turn === turn && ["draft", "ready"].includes(draft.status);
             async function resume() {
                 if (pending.current) return;
                 pending.current = true; setBusy(true); setError("");
@@ -842,15 +842,17 @@
             const [busy, setBusy] = React.useState(false);
             const [notice, setNotice] = React.useState("");
             async function refresh() {
-                const [catalog, session, agent] = await Promise.all([
+                const [catalog, session, agent, execution] = await Promise.all([
                     rpc("listPresets", {}, props.sessionId),
                     rpc("getSession", {}, props.sessionId),
-                    rpc("listPlayPresets", { sessionId: props.sessionId }, props.sessionId)
+                    rpc("listPlayPresets", { sessionId: props.sessionId }, props.sessionId),
+                    rpc("getGenerationMode", { sessionId: props.sessionId }, props.sessionId)
                 ]);
                 const playPresets = Array.isArray(agent.presets) ? agent.presets : [];
                 setData({
                     presets: catalog.presets || [], current: session.view?.runtimePreset,
                     playPresets: playPresets,
+                    generationMode: (execution.generationMode || execution.view?.generationMode || session.view?.generationMode) === "sillytavern-once" ? "sillytavern-once" : "agent",
                     currentPlayPresetId: agent.currentPlayPresetId || playPresets.find(p => p.selected)?.id || "tavern",
                     defaultPlayPresetId: agent.defaultPlayPresetId || playPresets.find(p => p.isDefault)?.id || "tavern"
                 });
@@ -883,25 +885,43 @@
                 } catch (err) { setError(String(err.message || err)); }
                 finally { setBusy(false); }
             }
+            async function changeGenerationMode(generationMode) {
+                if (!data || busy || generationMode === data.generationMode) return;
+                setBusy(true); setError(""); setNotice("");
+                try {
+                    await rpc("setGenerationMode", { sessionId: props.sessionId, generationMode }, props.sessionId);
+                    setCandidatePanel(null); setCandidateGuidePanel(null);
+                    await refresh();
+                    setNotice("回复方式已切换，从下一回合生效");
+                    liveTavernView.invalidate(props.sessionId);
+                    tavernCoordination.invalidate(props.sessionId);
+                    notifyTavernDataChanged(["sessions"], "play-controls");
+                } catch (err) { setError(String(err.message || err)); }
+                finally { setBusy(false); }
+            }
             const playPresets = data?.playPresets || [];
             const selectedPlayPreset = playPresets.find(p => p.id === data?.currentPlayPresetId);
             const defaultPlayPreset = playPresets.find(p => p.id === data?.defaultPlayPresetId);
             const dreamPreset = data?.currentPlayPresetId === "dream-sike-dsh";
+            const singleReply = data?.generationMode === "sillytavern-once";
             return h("div", { className: "dsh-local-field" },
+                h("label", null, "回复方式（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局回复方式", value: data?.generationMode || "agent", disabled: busy || !data, onChange: event => changeGenerationMode(event.target.value) },
+                    h("option", { value: "agent" }, "DSH Agent"), h("option", { value: "sillytavern-once" }, "原版酒馆 · 单次回复"))),
+                h("p", { className: "dsh-tavern-settings-desc" }, singleReply ? "使用当前预设的原始注入顺序，一次生成完整回复，保留原选项与兼容脚本。脚本自带的额外生成按其开关执行。" : "按所选 Agent 预设执行检索、写作及后续流程。"),
                 h("label", null, "Agent 预设（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局 Agent 预设", value: data?.currentPlayPresetId || "tavern", disabled: busy || !data, onChange: event => changeAgent(event.target.value) },
                     playPresets.map(p => h("option", { key: p.id, value: p.id }, p.name)))),
                 h("p", { className: "dsh-tavern-settings-desc" }, selectedPlayPreset?.description || "切换后从下一回合生效，已有历史和变量保留。"),
                 h("p", { className: "dsh-tavern-settings-desc" }, "新游戏默认：" + (defaultPlayPreset?.name || "DSH 原版")),
                 h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !data || data.currentPlayPresetId === data.defaultPlayPresetId, onClick: setNewGameDefault },
                     data?.currentPlayPresetId === data?.defaultPlayPresetId ? "已用于新游戏" : "用于新游戏"),
-                h(dreamPreset ? "details" : "div", { className: dreamPreset ? "dsh-sike-rule-source" : undefined },
-                dreamPreset ? h("summary", null, "写作规则来源（高级）") : null,
+                h(dreamPreset && !singleReply ? "details" : "div", { className: dreamPreset && !singleReply ? "dsh-sike-rule-source" : undefined },
+                dreamPreset && !singleReply ? h("summary", null, "写作规则来源（高级）") : null,
                 h("label", null, dreamPreset ? "作者规则来源" : "酒馆预设（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": dreamPreset ? "本局写作规则来源" : "本局酒馆预设", value: data?.current?.id || "", disabled: busy || !data, onChange: event => change(event.target.value) },
                     h("option", { value: "" }, "不使用外部预设"),
                     data?.current?.id && !data.presets.some(p => p.path === data.current.id) ? h("option", { value: data.current.id }, data.current.name + "（源文件已移除）") : null,
                     (data?.presets || []).filter(p => p.valid && p.recognized).map(p => h("option", { key: p.path, value: p.path }, p.title)))),
-                h("p", { className: "dsh-tavern-settings-desc" }, dreamPreset ? "为独立 Agent 提供作者写作规则与兼容正则；功能选项在创作设置中配置。修改从下一回合生效。" : "本局引用的酒馆预设。切换从下一回合生效。")),
-                props.includeAuthorSettings !== false ? h(TavernPresetSettings, { key: props.sessionId + ":" + (data?.currentPlayPresetId || "tavern"), sessionId: props.sessionId, revision: (data?.current?.id || "") + ":" + (data?.currentPlayPresetId || "tavern") }) : null,
+                h("p", { className: "dsh-tavern-settings-desc" }, dreamPreset && !singleReply ? "为独立 Agent 提供作者写作规则与兼容正则；功能选项在创作设置中配置。修改从下一回合生效。" : "本局引用的酒馆预设。切换从下一回合生效。")),
+                props.includeAuthorSettings !== false ? h(TavernPresetSettings, { key: props.sessionId + ":" + (data?.currentPlayPresetId || "tavern") + ":" + (data?.generationMode || "agent"), sessionId: props.sessionId, revision: (data?.current?.id || "") + ":" + (data?.currentPlayPresetId || "tavern") + ":" + (data?.generationMode || "agent") }) : null,
                 error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
         }
 
@@ -944,6 +964,8 @@
             const h = React.createElement;
             const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
             const mode = useTavernSessionMode(owner);
+            const execution = useLiveTavernView(owner, "conversation-settings-mode", [["generationMode"]]);
+            const singleReply = execution.view?.generationMode === "sillytavern-once";
             return h("aside", { className: "dsh-tavern-status dsh-local-settings", "aria-label": "本局设置" },
                 h("div", { className: "dsh-tavern-status-head" }, h("strong", null, "本局设置")),
                 h("div", { className: "dsh-tavern-status-body" }, isPlayMode(mode) ? h(React.Fragment, null,
@@ -956,7 +978,8 @@
                         h("p", { className: "dsh-local-warning" }, "切换预设或长期偏好会使提示词缓存失效，首次请求会增加耗时和费用。")),
                     h(TavernConversationModels, { key: owner + ":models", sessionId: owner, sessions: props.sessions }),
                     h(TavernConversationExecutionPolicy, { key: owner + ":execution-policy", sessionId: owner }),
-                    h(TavernConversationBackgroundModel, { key: owner, sessionId: owner }), h(TavernConversationWritingSkills, { key: owner + ":skills", sessionId: owner })) : h("p", null, "请选择一个游玩对话。")));
+                    singleReply ? h("p", { className: "dsh-local-help", role: "status" }, "单次回复使用原预设和人物卡约定的格式更新变量，后续内容随同一次回复生成。") : h(React.Fragment, null,
+                        h(TavernConversationBackgroundModel, { key: owner, sessionId: owner }), h(TavernConversationWritingSkills, { key: owner + ":skills", sessionId: owner }))) : h("p", null, "请选择一个游玩对话。")));
         }
 
         function DreamSikeSettingsTab(props) {
@@ -1024,7 +1047,7 @@
                     [["webSearchEnabled", "联网搜索", "本局前台和后台可按需搜索；从后续请求生效。切换会使缓存失效，首次请求会增加耗时和费用。"], ...(features.sceneImagesAvailable ? [["sceneImagesEnabled", "开启场景生图", "本局可手动为剧情配图；关闭保留已有图片。API 在全局设置中统一配置。"]] : [])].map(([name, title, description]) => h("label", { key: name, className: "dsh-tavern-background-task" },
                         h("span", null, title, h("span", { className: "dsh-tavern-settings-desc" }, description)),
                         h("input", { type: "checkbox", role: "switch", "aria-label": title, checked: features[name], disabled: !loaded || busy, onChange: event => { return save({ [name]: event.target.checked }); } }))),
-                    ), error || key && reasoning.key === key && reasoning.error ? h("p", { role: "alert", className: "dsh-tavern-prompt-error" }, error || reasoning.error) : null,
+                    ), error ? h("p", { role: "alert", className: "dsh-tavern-prompt-error" }, error) : null,
                     notice ? h("p", { role: "status" }, notice) : null,
                     !loaded && error ? h("button", { className: "dsh-tavern-btn", onClick: load }, "重试") : null,
                     h("div", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : ""));
@@ -1032,8 +1055,8 @@
 
         function TavernConversationExecutionPolicy(props) {
             const h = React.createElement;
-            const modeView = useLiveTavernView(props.sessionId, "dream-execution-policy-mode", [["playPresetId"]]);
-            const dreamPreset = modeView.view?.playPresetId === "dream-sike-dsh";
+            const modeView = useLiveTavernView(props.sessionId, "dream-execution-policy-mode", [["playPresetId"], ["generationMode"]]);
+            const dreamPreset = modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
             const [record, setRecord] = React.useState(null), [saving, setSaving] = React.useState(false);
             const [error, setError] = React.useState(""), [notice, setNotice] = React.useState("");
             React.useEffect(function () {
@@ -1180,7 +1203,7 @@
 			const h = React.createElement;
 			if (!sessionMode) return null;
 			if (address) return isPlayMode(sessionMode) ? h("div", { className: "dsh-tavern-dock-actions" }, h(TavernStopBackgroundAction, { sessionId: ownerSessionId })) : null;
-            if (isPlayMode(sessionMode) && live.view?.playPresetId === "dream-sike-dsh") {
+            if (isPlayMode(sessionMode) && live.view?.playPresetId === "dream-sike-dsh" && live.view?.generationMode !== "sillytavern-once") {
                 return h(DreamSikeInteractionDock, { ...props, key: props.sessionId, messageId: latestMessageId, running },
                     h("div", { className: "dsh-sike-interaction-extensions" },
                         !running && !live.view.canClearIncompleteReply && live.view.releaseCapabilities?.sceneImages ? h(SceneImageAction, { key: props.sessionId + ":" + imageTurn, sessionId: props.sessionId, turn: imageTurn, running }) : null,
@@ -1188,7 +1211,7 @@
                         live.view.contextCompaction?.warning || live.view.contextCompaction?.operation?.status === "running" ? h("span", { role: "status", className: "dsh-tavern-settings-desc" }, live.view.contextCompaction.warning || "正在压缩前后台上下文…") : null));
             }
 			return h("div", { className: "dsh-tavern-dock-actions" },
-				isPlayMode(sessionMode) && latestMessageId ? React.createElement(CandidateAction, Object.assign({}, props, { messageId: latestMessageId })) : null,
+				isPlayMode(sessionMode) && live.view?.generationMode !== "sillytavern-once" && latestMessageId ? React.createElement(CandidateAction, Object.assign({}, props, { messageId: latestMessageId })) : null,
 				isPlayMode(sessionMode) && !running && live.view && !live.view.canClearIncompleteReply && live.view.releaseCapabilities && live.view.releaseCapabilities.sceneImages ? React.createElement(SceneImageAction, { key: props.sessionId + ":" + imageTurn, sessionId: props.sessionId, turn: imageTurn, running: running }) : null,
 				isPlayMode(sessionMode) && live.view && !live.view.canClearIncompleteReply ? React.createElement(TavernPluginComposerActions, { sessionId: props.sessionId, turn: imageTurn, running: running }) : null,
 				isPlayMode(sessionMode) ? React.createElement(TavernMoreActions, props) : React.createElement(TavernCompactionAction, props),
