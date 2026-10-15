@@ -4330,6 +4330,7 @@ export async function apply(ctx) {
         return { playPresetId: saved.playPresetId, changed: true, nextTurn: true }
       }
       case 'setDefaultPlayPreset': {
+        writingPresetCatalog.assertAvailable(args?.presetId)
         const settings = await updateTavernSettings({ defaultPlayPresetId: args?.presetId })
         return { defaultPlayPresetId: settings.defaultPlayPresetId }
       }

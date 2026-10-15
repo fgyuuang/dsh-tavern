@@ -274,7 +274,7 @@
 			const retention = options.retention || (options.window ? createTavernSessionRetention({ window: hostWindow, now: options.now, durationMs: options.retentionMs }) : tavernSessionRetention);
 			const listeners = new Set(), records = new Map();
 			let snapshot = { sessionId: "", loadState: null };
-			let current = null, stopSessions = null, stopTransition = null;
+			let current = null, stopSessions = null, stopTransition = null, stopModes = null;
 			let started = false, observing = false;
 			function publish() {
 				snapshot = { sessionId: current ? current.sessionId : "", loadState: current ? current.loadState : null };
@@ -287,7 +287,7 @@
 					if (seen.has(id) || seen.size >= 32) return "";
 					seen.add(id);
 					const address = sessions.subagentAddress(id);
-					if (!address) return id;
+					if (!address) return options.isNativeSession?.(id) ? '' : id;
 					if (address.childSessionId !== id) return "";
 					id = String(address.parentSessionId || "");
 				}
@@ -396,6 +396,7 @@
 				if (!started || observing) return;
 				observing = true;
 				stopSessions = sessions.list.subscribe(select);
+				stopModes = options.modeChanges?.subscribe(select);
 				stopTransition = transition.subscribe(function () { records.forEach(syncView); });
 				select();
 			}
@@ -403,7 +404,8 @@
 				observing = false;
 				if (stopSessions) stopSessions();
 				if (stopTransition) stopTransition();
-				stopSessions = stopTransition = null;
+				if (stopModes) stopModes();
+				stopSessions = stopTransition = stopModes = null;
 				current = null;
 				retention.select("");
 				hostWindow.__dshTavernSelectedSessionId = "";

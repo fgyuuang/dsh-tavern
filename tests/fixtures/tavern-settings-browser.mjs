@@ -23,6 +23,8 @@ export async function openTavernSettings(t, { settings, respond, sceneImages = t
     if (result === undefined) {
       if (method === 'getTavernSettings') result = { settings: { defaultPlaySettings: { playerName: "你", backgroundTasks: { variables: true, posture: true } } }, releaseCapabilities: { sceneImages } }
       else if (method === 'listPresets') result = { presets: [], activePresetPath: '' }
+      else if (method === 'listSessions') result = { sessions: [] }
+      else if (method === 'listPlayPresets') result = { presets: [{ id: 'tavern', name: 'DSH 原版', available: true, provider: { kind: 'builtin' } }], defaultPlayPresetId: 'tavern' }
       else if (method === 'getUserPreferenceProfile') result = { userProfile: { profiles: [], defaultProfileId: '' } }
       else if (method === 'getSceneImageSettings') result = { settings }
       else if (method === 'getCandidatePreferences') result = { candidateDismissMode: 'after-fill' }

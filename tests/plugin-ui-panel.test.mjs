@@ -15,6 +15,17 @@ function load() {
   return vm.runInNewContext(factory + '; createTavernUiExtensions()', context)
 }
 
+test('独立工作区注册订阅原生 Session，卸载释放订阅与入口', () => {
+  const ui = load(), watchers = new Set()
+  const plugin = Object.create(ui.service); plugin.ctx = { fiber: { name: 'project-plugin' } }
+  const stop = plugin.registerSidebarWorkspace({ id: 'agent', label: 'Agent', component() {},
+    sessions: { getSnapshot: () => ['native'], subscribe: fn => { watchers.add(fn); return () => watchers.delete(fn) } } })
+  assert.equal(ui.sidebarWorkspaces()[0].id, 'agent')
+  assert.equal(watchers.size, 1)
+  assert.throws(() => plugin.registerSidebarWorkspace({ id: 'play' }), /独立 ID/)
+  stop(); assert.equal(watchers.size, 0); assert.equal(ui.sidebarWorkspaces().length, 0)
+})
+
 test('插件面板：注册为当前游戏的侧栏页，卸载时移除；没有打开游戏时给出提示', () => {
   const ui = load()
   const tabs = new Map()

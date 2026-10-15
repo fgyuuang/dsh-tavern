@@ -9500,7 +9500,7 @@ function bindTavernFontZoom(node, win) {
 			const retention = options.retention || (options.window ? createTavernSessionRetention({ window: hostWindow, now: options.now, durationMs: options.retentionMs }) : tavernSessionRetention);
 			const listeners = new Set(), records = new Map();
 			let snapshot = { sessionId: "", loadState: null };
-			let current = null, stopSessions = null, stopTransition = null;
+			let current = null, stopSessions = null, stopTransition = null, stopModes = null;
 			let started = false, observing = false;
 			function publish() {
 				snapshot = { sessionId: current ? current.sessionId : "", loadState: current ? current.loadState : null };
@@ -9513,7 +9513,7 @@ function bindTavernFontZoom(node, win) {
 					if (seen.has(id) || seen.size >= 32) return "";
 					seen.add(id);
 					const address = sessions.subagentAddress(id);
-					if (!address) return id;
+					if (!address) return options.isNativeSession?.(id) ? '' : id;
 					if (address.childSessionId !== id) return "";
 					id = String(address.parentSessionId || "");
 				}
@@ -9622,6 +9622,7 @@ function bindTavernFontZoom(node, win) {
 				if (!started || observing) return;
 				observing = true;
 				stopSessions = sessions.list.subscribe(select);
+				stopModes = options.modeChanges?.subscribe(select);
 				stopTransition = transition.subscribe(function () { records.forEach(syncView); });
 				select();
 			}
@@ -9629,7 +9630,8 @@ function bindTavernFontZoom(node, win) {
 				observing = false;
 				if (stopSessions) stopSessions();
 				if (stopTransition) stopTransition();
-				stopSessions = stopTransition = null;
+				if (stopModes) stopModes();
+				stopSessions = stopTransition = stopModes = null;
 				current = null;
 				retention.select("");
 				hostWindow.__dshTavernSelectedSessionId = "";
@@ -13079,7 +13081,9 @@ function DreamSikeLiveTextPreview(props) {
 				return shown ? React.createElement(SceneImageAction, { key: props.sessionId + ":" + turn, sessionId: props.sessionId, turn: turn }) : null;
 			}
 			function register(input) {
-				const scriptOwner = createTavernScriptSessionOwner({ sessions: input.ctx.sessions, executeSlash: createTavernFrameSlashExecutor(input.ctx) });
+				const scriptOwner = createTavernScriptSessionOwner({ sessions: input.ctx.sessions, executeSlash: createTavernFrameSlashExecutor(input.ctx),
+                    isNativeSession: id => tavernSessionModes.values[id] === 'agent',
+                    modeChanges: { subscribe: listener => { tavernSessionModes.listeners.add(listener); return () => tavernSessionModes.listeners.delete(listener); } } });
 				const executeSlash = createTavernFrameSlashExecutor(input.ctx);
 				input.ctx.effect(function () {
 					scriptOwner.start();

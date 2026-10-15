@@ -12,6 +12,18 @@ function store(value) {
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
     set(next) { value = next; for (const fn of listeners) fn() } }
 }
+
+test('native project Session never mounts card scripts and releases mode subscriptions', async () => {
+  const h = harness(), modes = store(false)
+  const owner = h.client.createTavernScriptSessionOwner({ ...h.options, isNativeSession: () => modes.getSnapshot(), modeChanges: modes })
+  modes.set(true)
+  owner.start()
+  assert.equal(h.subscriptions.length, 0)
+  assert.equal(h.runtimes.length, 0)
+  assert.equal(owner.getSnapshot().sessionId, '')
+  owner.dispose()
+  assert.equal(modes.listeners.size, 0)
+})
 const view = revision => ({ tavernHelperScripts: [{ id: 'companion', content: 'void 0' }], tavernHelper: { stateRevision: revision } })
 function harness({ holdReleases = false, dropSignals = false, claimTimeoutMs, receiptBarrier, retentionMs = 0 } = {}) {
   const timers = new Map(), events = new Map(), runtimes = [], calls = []

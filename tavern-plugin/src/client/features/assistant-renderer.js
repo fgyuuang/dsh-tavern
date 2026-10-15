@@ -880,7 +880,9 @@
 				return shown ? React.createElement(SceneImageAction, { key: props.sessionId + ":" + turn, sessionId: props.sessionId, turn: turn }) : null;
 			}
 			function register(input) {
-				const scriptOwner = createTavernScriptSessionOwner({ sessions: input.ctx.sessions, executeSlash: createTavernFrameSlashExecutor(input.ctx) });
+				const scriptOwner = createTavernScriptSessionOwner({ sessions: input.ctx.sessions, executeSlash: createTavernFrameSlashExecutor(input.ctx),
+                    isNativeSession: id => tavernSessionModes.values[id] === 'agent',
+                    modeChanges: { subscribe: listener => { tavernSessionModes.listeners.add(listener); return () => tavernSessionModes.listeners.delete(listener); } } });
 				const executeSlash = createTavernFrameSlashExecutor(input.ctx);
 				input.ctx.effect(function () {
 					scriptOwner.start();
