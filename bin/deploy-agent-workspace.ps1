@@ -74,7 +74,10 @@ $dirty = @(Invoke-RepoGit @('status', '--porcelain', '--untracked-files=all', '-
 if ($dirty.Count) { throw '运行文件有未提交变更；请先完成构建与提交。' }
 $sourceVersion = (Get-Content -LiteralPath (Get-Contained $repoRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 $appVersion = (Get-Content -LiteralPath (Get-Contained $appRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
-if ($sourceVersion -ne '2.5.0' -or $appVersion -ne '2.5.0') { throw "版本要求均为 2.5.0，当前为源码 $sourceVersion / 安装 $appVersion。" }
+$supportedVersions = @('2.5.0', '2.7.0')
+if ($sourceVersion -notin $supportedVersions -or $appVersion -notin $supportedVersions -or $sourceVersion -ne $appVersion) {
+    throw "源码与安装必须使用相同的受支持版本（$($supportedVersions -join ' / ')），当前为源码 $sourceVersion / 安装 $appVersion。"
+}
 $inventoryPath = Get-Contained $appRoot '.dsh-tavern-files.txt'
 if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw '缺少安装文件清单。' }
 $inventoryText = [System.IO.File]::ReadAllText($inventoryPath, [System.Text.Encoding]::UTF8)
@@ -116,13 +119,14 @@ $nextInventory = (@($installed + @($files | Where-Object operation -EQ 'create' 
 $nextInventory += "`n"
 $inventorySha = Get-Sha $inventoryPath
 $nextInventorySha = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($utf8.GetBytes($nextInventory))).ToLowerInvariant()
+$deploymentVersion = [string]$appVersion
 $deploymentId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N')
 $backupRoot = Get-Contained $tempRoot ('agent-workspace-deploy-' + $deploymentId)
 if (Test-Path -LiteralPath $backupRoot) { throw "备份目录已存在：$backupRoot" }
 $manifest = [ordered]@{ schemaVersion = 1; kind = 'agent-workspace'; status = 'prepared'; createdAt = (Get-Date).ToString('o');
-    installationRoot = $installRoot; appRoot = $appRoot; backupRoot = $backupRoot; baseCommit = $base; targetCommit = $head; version = '2.5.0';
+    installationRoot = $installRoot; appRoot = $appRoot; backupRoot = $backupRoot; baseCommit = $base; targetCommit = $head; version = $deploymentVersion;
     inventory = [ordered]@{ originalSha256 = $inventorySha; deployedSha256 = $nextInventorySha; backupRelativePath = 'originals/.dsh-tavern-files.txt' }; files = $files }
-Write-Output "分支 $branch；基线 $base；目标 $head；运行文件 $($files.Count)；版本 2.5.0"
+Write-Output "分支 $branch；基线 $base；目标 $head；运行文件 $($files.Count)；版本 $deploymentVersion"
 Write-Output "备份与回滚位置：$backupRoot"
 if (-not $PSCmdlet.ShouldProcess($appRoot, "备份并原子部署 $($files.Count) 个 Agent 工作区运行文件和安装清单")) { return }
 Assert-Stopped
@@ -160,7 +164,7 @@ function Parent([string]$path) { $directory = Ordinary ([System.IO.Path]::GetDir
 $backup = (Ordinary $PSScriptRoot).TrimEnd('\')
 $manifestPath = Contained $backup 'deployment.json'
 $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($m.schemaVersion -ne 1 -or $m.kind -ne 'agent-workspace' -or $m.version -ne '2.5.0' -or $m.backupRoot -ine $backup) { throw '部署清单格式或备份位置无效。' }
+if ($m.schemaVersion -ne 1 -or $m.kind -ne 'agent-workspace' -or $m.version -notin @('2.5.0', '2.7.0') -or $m.backupRoot -ine $backup) { throw '部署清单格式或备份位置无效。' }
 $install = (Ordinary $m.installationRoot).TrimEnd('\')
 $app = Contained $install 'data/harness/apps/dsh-tavern'
 if ($m.appRoot -ine $app -or -not (Test-Path -LiteralPath $app -PathType Container)) { throw '运行目录不符合部署清单。' }
