@@ -37,7 +37,10 @@
       name: '@deepseek-ai/dsh-command-compact'
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      # 与梦境思客同一问题：sike_read_turn 的作者规则页会被 8192/4096/1024 的
+      # 编程助手默认值裁掉中段（狐神抚规则页约 9,640 字符，同样超阈值）。
+      # 抬到刚高于最大规则页，保证一次读取完整送达，同时仍裁剪异常巨大的回执。
       config:
-        thresholdChars: 8192
-        headChars: 4096
-        tailChars: 1024
+        thresholdChars: 34000
+        headChars: 31000
+        tailChars: 2500

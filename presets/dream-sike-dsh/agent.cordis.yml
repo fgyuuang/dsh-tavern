@@ -54,7 +54,11 @@
 
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      # sike_read_turn 的作者规则页实测最大约 29,600 字符。原先 8192/4096/1024 的
+      # 编程助手默认值会把规则页中段（presetRules 所在位置）静默删除，既违背
+      # “摘要不是规则原文”，又让模型倾向重读整页（每次约 17 万 token）。
+      # 抬到刚高于最大规则页：一次读取可完整送达，异常巨大的回执仍会被裁剪。
       config:
-        thresholdChars: 8192
-        headChars: 4096
-        tailChars: 1024
+        thresholdChars: 34000
+        headChars: 31000
+        tailChars: 2500
