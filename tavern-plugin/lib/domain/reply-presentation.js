@@ -27,6 +27,65 @@ function targetOptions(options, isMarkdown) {
   }
 }
 
+function hasVariableProtocolDisplayRule(scripts, options) {
+  const placement = Number(options.placement === undefined ? 2 : options.placement)
+  const currentDepth = Number(options.depth) || 0
+  return scripts.some(script => {
+    if (!script || script.enabled === false || script.disabled === true) return false
+    if (!Array.isArray(script.placement) || !script.placement.map(Number).includes(placement)) return false
+    if (script.promptOnly === true && script.markdownOnly !== true) return false
+    const minimum = script.minDepth === null || script.minDepth === undefined || script.minDepth === ''
+      ? null : Number(script.minDepth)
+    const maximum = script.maxDepth === null || script.maxDepth === undefined || script.maxDepth === ''
+      ? null : Number(script.maxDepth)
+    if (minimum !== null && Number.isFinite(minimum) && currentDepth < minimum) return false
+    if (maximum !== null && Number.isFinite(maximum) && currentDepth > maximum) return false
+    return /<(?:update(?:variable)?|initvar)\b/i.test(str(script.findRegex))
+  })
+}
+
+/**
+ * A complete variable block can be removed by an earlier display regex. If a
+ * reply also mentions its opening tag as prose before that block, a later
+ * "unfinished block" regex can mistake the prose for a live block and consume
+ * the rest of the rendered reply. Escape only that earlier unmatched mention
+ * in the display projection; authoritative source and Session text stay intact.
+ */
+function protectEarlierUnclosedVariableMentions(value, scripts, options) {
+  const source = str(value)
+  if (!hasVariableProtocolDisplayRule(scripts, options)) return { text: source, count: 0 }
+
+  const stacks = new Map()
+  const complete = []
+  const tokenPattern = /<(\/)?(update(?:variable)?|initvar)\b([^>]*)>/gi
+  for (const match of source.matchAll(tokenPattern)) {
+    const name = match[2].toLowerCase()
+    const stack = stacks.get(name) || []
+    const start = match.index
+    if (match[1]) {
+      const opening = stack.pop()
+      if (opening) complete.push({ name, start: opening.start })
+    } else if (!/\/\s*$/.test(match[3])) {
+      stack.push({ name, start, end: start + match[0].length })
+    }
+    stacks.set(name, stack)
+  }
+
+  const unmatched = Array.from(stacks.values()).flat()
+    .filter(opening => complete.some(block => block.name === opening.name && block.start > opening.start))
+    .sort((left, right) => left.start - right.start)
+  if (unmatched.length === 0) return { text: source, count: 0 }
+
+  let text = ''
+  let cursor = 0
+  for (const opening of unmatched) {
+    text += source.slice(cursor, opening.start) + '&lt;'
+      + source.slice(opening.start + 1, opening.end - 1) + '&gt;'
+    cursor = opening.end
+  }
+  return { text: text + source.slice(cursor), count: unmatched.length }
+}
+
 /**
  * Project one authoritative model reply independently for Session and display.
  * Regex execution only transforms strings; it never extracts HTML or changes
@@ -40,7 +99,8 @@ export function projectReplyLayers(value, options = {}) {
   const scripts = Array.isArray(options.regexScripts) ? options.regexScripts : []
   const session = applyTavernRegexText(projectionText, scripts, targetOptions(options, false))
   const displayOptions = targetOptions(options, true)
-  let display = applyTavernRegexText(projectionText, scripts, displayOptions)
+  const guardedDisplay = protectEarlierUnclosedVariableMentions(projectionText, scripts, displayOptions)
+  let display = applyTavernRegexText(guardedDisplay.text, scripts, displayOptions)
   // Some cards encode dialogue inside now_plot. Recover an omitted wrapper
   // only when that card's own active renderer recognizes the repaired text.
   // Never persist this display repair into model context or editable source.
@@ -49,12 +109,15 @@ export function projectReplyLayers(value, options = {}) {
       str(script.findRegex).includes('<now_plot>') &&
       str(script.replaceString).includes('@bubble')
     )
-    const wrapped = '<now_plot>\n' + projectionText + '\n</now_plot>'
+    const wrapped = '<now_plot>\n' + guardedDisplay.text + '\n</now_plot>'
     const probe = applyTavernRegexText(wrapped, candidates, displayOptions)
     if (probe.applied.length > 0) {
       display = applyTavernRegexText(wrapped, scripts, displayOptions)
       display.warnings.push('气泡显示：已为卡片渲染规则补齐缺失的 now_plot 标签（仅显示）')
     }
+  }
+  if (guardedDisplay.count > 0) {
+    display.warnings.push('已保护 ' + guardedDisplay.count + ' 处变量标签说明，避免未闭合变量规则吞掉后续正文')
   }
   display.text = resolveDisplayIdentityMacros(display.text, options)
   if (options.hushenAgent === true) display.text = projectHushenSupplementDisplay(projectionText, display.text)
