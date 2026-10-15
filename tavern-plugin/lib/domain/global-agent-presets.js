@@ -1,9 +1,9 @@
-import { assertPlayPresetId } from './dream-sike-mode.js'
+import { normalizePlayPresetId } from './dream-sike-mode.js'
 import { normalizeGenerationMode } from './generation-mode.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 
 export function globalAgentPresetDefaults(document, presetId) {
-  assertPlayPresetId(presetId)
+  if (normalizePlayPresetId(presetId) !== presetId) throw new Error('未知的酒馆 Agent 预设')
   const value = document?.globalAgentPresets?.[presetId]
   return value ? structuredClone(value) : { revision: 0, generationMode: 'agent', snapshot: null }
 }
