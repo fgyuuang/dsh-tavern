@@ -236,6 +236,7 @@
         // @include modules/global-settings.js
         const { TavernSettingsSection } = createGlobalSettingsModule({
             React, rpc, notifySettingsChanged: () => window.dispatchEvent(new CustomEvent("dsh-tavern-settings-changed")),
+            PresetConfigurationSettings: props => React.createElement(playControlsFeature.PresetConfigurationSettings, props),
             TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings,
             CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings
         });

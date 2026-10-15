@@ -1,5 +1,5 @@
 // Settings owns its initial snapshot; each editor saves only its own resource.
-function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings, CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings }) {
+function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetConfigurationSettings, TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings, CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings }) {
     function GlobalPlayDefaults({ settings }) {
         const h = React.createElement;
         const [data, setData] = React.useState(null), [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState("");
@@ -82,6 +82,8 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, TavernD
                 ...children);
         }
         return h("div", { className: "dsh-tavern-settings-section dsh-tavern-global-settings" },
+            group("预设配置", "在这里选择游戏，调整梦境思客、狐神抚及原版酒馆的预设设置。",
+                h(PresetConfigurationSettings)),
             group("默认模型", "用于新游戏和新的卡片工作台对话，已有对话保持当前配置。建议使用 High 推理强度；Max 容易过度思考、增加等待。",
             h("div", { className: "dsh-tavern-gs-card" },
             React.createElement(TavernDefaultModelSetting, { label: "默认前台模型", title: "前台模型", description: "写正文、扮演角色，直接决定剧情质量", fallback: "使用 DSH 默认模型", selection: state.defaultForegroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultForegroundModel", selection) }),

@@ -14970,7 +14970,7 @@ function TavernOpeningInput(props) {
         }
 
         // Settings owns its initial snapshot; each editor saves only its own resource.
-        function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings, CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings }) {
+        function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetConfigurationSettings, TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings, CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings }) {
             function GlobalPlayDefaults({ settings }) {
                 const h = React.createElement;
                 const [data, setData] = React.useState(null), [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState("");
@@ -15053,6 +15053,8 @@ function TavernOpeningInput(props) {
                         ...children);
                 }
                 return h("div", { className: "dsh-tavern-settings-section dsh-tavern-global-settings" },
+                    group("预设配置", "在这里选择游戏，调整梦境思客、狐神抚及原版酒馆的预设设置。",
+                        h(PresetConfigurationSettings)),
                     group("默认模型", "用于新游戏和新的卡片工作台对话，已有对话保持当前配置。建议使用 High 推理强度；Max 容易过度思考、增加等待。",
                     h("div", { className: "dsh-tavern-gs-card" },
                     React.createElement(TavernDefaultModelSetting, { label: "默认前台模型", title: "前台模型", description: "写正文、扮演角色，直接决定剧情质量", fallback: "使用 DSH 默认模型", selection: state.defaultForegroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultForegroundModel", selection) }),
@@ -15077,6 +15079,7 @@ function TavernOpeningInput(props) {
         }
         const { TavernSettingsSection } = createGlobalSettingsModule({
             React, rpc, notifySettingsChanged: () => window.dispatchEvent(new CustomEvent("dsh-tavern-settings-changed")),
+            PresetConfigurationSettings: props => React.createElement(playControlsFeature.PresetConfigurationSettings, props),
             TavernDefaultModelSetting, TavernConversationWritingSkills, DisplayPreferencesSettings,
             CandidatePreferencesSettings, PromptTemplateSettingsEntry, ContextCompactionSettings, SceneImageSettings
         });
@@ -19721,6 +19724,7 @@ const contextCacheFeature = createContextCacheFeatureModule();
                     await rpc("setDefaultPlayPreset", { presetId: data.currentPlayPresetId }, props.sessionId);
                     await refresh();
                     setNotice("已设为新游戏默认；当前游戏保持原设置");
+                    props.onDefaultChanged?.(data.currentPlayPresetId);
                 } catch (err) { setError(String(err.message || err)); }
                 finally { setBusy(false); }
             }
@@ -19762,6 +19766,53 @@ const contextCacheFeature = createContextCacheFeatureModule();
                 h("p", { className: "dsh-tavern-settings-desc" }, dreamPreset && !singleReply ? "为独立 Agent 提供作者写作规则与兼容正则；功能选项在创作设置中配置。修改从下一回合生效。" : "本局引用的酒馆预设。切换从下一回合生效。")),
                 props.includeAuthorSettings !== false ? h(TavernPresetSettings, { key: props.sessionId + ":" + (data?.currentPlayPresetId || "tavern") + ":" + (data?.generationMode || "agent"), sessionId: props.sessionId, revision: (data?.current?.id || "") + ":" + (data?.currentPlayPresetId || "tavern") + ":" + (data?.generationMode || "agent") }) : null,
                 error ? h("p", { role: "alert" }, "保存失败：" + error) : h("span", { role: "status", className: "dsh-local-feedback" }, busy ? "保存中…" : notice));
+        }
+
+        function PresetConfigurationSettings() {
+            const h = React.createElement;
+            const [catalog, setCatalog] = React.useState(null), [sessionId, setSessionId] = React.useState("");
+            const [busy, setBusy] = React.useState(false), [error, setError] = React.useState(""), [notice, setNotice] = React.useState("");
+            const [reload, setReload] = React.useState(0);
+            React.useEffect(() => {
+                let active = true;
+                setError("");
+                Promise.all([rpc("listSessions"), rpc("listPlayPresets")]).then(([history, presets]) => {
+                    if (!active) return;
+                    const sessions = [...new Map((history.sessions || []).filter(item => item.sessionId && isPlayMode(item.mode)).map(item => [item.sessionId, item])).values()];
+                    setCatalog({ sessions, presets: presets.presets || [], defaultPlayPresetId: presets.defaultPlayPresetId || "tavern" });
+                    setSessionId(current => sessions.some(item => item.sessionId === current) ? current : "");
+                }, failure => { if (active) setError(String(failure.message || failure)); });
+                return () => { active = false; };
+            }, [reload]);
+            async function setDefault(presetId) {
+                if (busy || !catalog || presetId === catalog.defaultPlayPresetId) return;
+                setBusy(true); setError(""); setNotice("");
+                try {
+                    const result = await rpc("setDefaultPlayPreset", { presetId });
+                    setCatalog(current => ({ ...current, defaultPlayPresetId: result.defaultPlayPresetId }));
+                    setNotice("已保存为新游戏默认，已有游戏保持当前配置。");
+                    window.dispatchEvent(new CustomEvent("dsh-tavern-settings-changed"));
+                } catch (failure) { setError(String(failure.message || failure)); }
+                finally { setBusy(false); }
+            }
+            return h("div", { className: "dsh-tavern-gs-card dsh-local-settings" },
+                h("label", { className: "dsh-local-field" }, "新游戏默认 Agent 预设",
+                    h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏默认 Agent 预设", disabled: !catalog || busy,
+                        value: catalog?.defaultPlayPresetId || "tavern", onChange: event => setDefault(event.target.value) },
+                        (catalog?.presets || []).map(item => h("option", { key: item.id, value: item.id }, item.name)))),
+                h("p", { className: "dsh-local-help" }, "预设功能选项保存在各局中。请选择要配置的游戏，可直接修改回复方式、Agent 预设、作者选项和调用预算。"),
+                h("label", { className: "dsh-local-field" }, "配置已有游戏",
+                    h("select", { className: "dsh-tavern-settings-select", "aria-label": "选择要配置预设的游戏", disabled: !catalog || busy,
+                        value: sessionId, onChange: event => { setSessionId(event.target.value); setNotice(""); } },
+                        h("option", { value: "" }, "请选择一个游戏"),
+                        (catalog?.sessions || []).map(item => h("option", { key: item.sessionId, value: item.sessionId }, item.title || item.cardName || "未命名游戏")))),
+                h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: () => setReload(value => value + 1) }, "刷新游戏与预设列表"),
+                catalog && !catalog.sessions.length ? h("p", { role: "status", className: "dsh-local-help" }, "暂无游玩记录，请先用人物卡创建游戏。") : null,
+                sessionId ? h("section", { key: sessionId, className: "dsh-local-section", "aria-label": "所选游戏预设配置" },
+                    h("h3", null, "所选游戏的预设配置"),
+                    h(TavernConversationPreset, { sessionId, onDefaultChanged: presetId => setCatalog(current => ({ ...current, defaultPlayPresetId: presetId })) }),
+                    h(TavernConversationExecutionPolicy, { sessionId })) : null,
+                error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, notice || (!catalog ? "正在读取预设与游戏…" : "")));
         }
 
         function TavernLocalPlayerName(props) {
@@ -20495,7 +20546,7 @@ const contextCacheFeature = createContextCacheFeatureModule();
 				function (props) { return React.createElement(React.Fragment, null, React.createElement(RegenPanel, props), React.createElement(BodyEditPanel, props)); }
 			)), "dsh-tavern: regen body panel");
 		}
-		return Object.freeze({ register: register });
+		return Object.freeze({ register: register, PresetConfigurationSettings });
 		}
 		const playControlsFeature = createPlayControlsFeatureModule();
 		const assistantRendererFeature = createTavernAssistantRendererFeatureModule();
