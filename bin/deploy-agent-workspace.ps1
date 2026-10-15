@@ -2,7 +2,8 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
     [string]$InstallationRoot = 'D:\pro\DSH-Tavern',
-    [string]$BaseCommit = '7e49f7072a406038e7f5a840e7638ceb1a8f935c'
+    [string]$BaseCommit = '7e49f7072a406038e7f5a840e7638ceb1a8f935c',
+    [switch]$IncludeWritingPlugins
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -59,6 +60,14 @@ function Assert-Stopped {
 $repoRoot = Get-Directory (Join-Path $PSScriptRoot '..')
 $installRoot = Get-Directory $InstallationRoot
 $appRoot = Get-Directory (Get-Contained $installRoot 'data/harness/apps/dsh-tavern')
+$pluginsRoot = Get-Contained $installRoot 'data/harness/profile-data/tavern/data/plugins'
+function Get-DeploymentTarget([string]$relative) {
+    if ($relative.StartsWith('plugins/', [StringComparison]::Ordinal)) { return Get-Contained $pluginsRoot $relative.Substring(8) }
+    return Get-Contained $appRoot $relative
+}
+$runtimePaths = @('presets/dream-sike-dsh', 'presets/hushen-dsh', 'tavern-plugin/lib')
+if ($IncludeWritingPlugins) { $runtimePaths += @('plugins/dsh-tavern-writing-presets', 'plugins/dsh-tavern-project-agent', 'plugins/dsh-tavern-dream-sike', 'plugins/dsh-tavern-hushen') }
+$allowedPaths = '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+|plugins/(dsh-tavern-writing-presets|dsh-tavern-project-agent|dsh-tavern-dream-sike|dsh-tavern-hushen)/.+)$'
 $tempRoot = Get-Contained $installRoot 'temp'
 if (Test-Path -LiteralPath $tempRoot) { $tempRoot = Get-Directory $tempRoot }
 if ([System.IO.Path]::GetPathRoot($appRoot) -ine [System.IO.Path]::GetPathRoot($tempRoot)) { throw '备份与运行目录必须位于同一卷。' }
@@ -70,7 +79,7 @@ $base = [string](@(Invoke-RepoGit @('rev-parse', '--verify', "$BaseCommit^{commi
 $head = [string](@(Invoke-RepoGit @('rev-parse', 'HEAD'))[0])
 & git -C $repoRoot merge-base --is-ancestor $base $head
 if ($LASTEXITCODE -ne 0 -or $base -eq $head) { throw 'HEAD 必须是指定基线之后的提交。' }
-$dirty = @(Invoke-RepoGit @('status', '--porcelain', '--untracked-files=all', '--', 'presets/dream-sike-dsh', 'presets/hushen-dsh', 'tavern-plugin/lib'))
+$dirty = @(Invoke-RepoGit (@('status', '--porcelain', '--untracked-files=all', '--') + $runtimePaths))
 if ($dirty.Count) { throw '运行文件有未提交变更；请先完成构建与提交。' }
 $sourceVersion = (Get-Content -LiteralPath (Get-Contained $repoRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 $appVersion = (Get-Content -LiteralPath (Get-Contained $appRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
@@ -87,16 +96,17 @@ foreach ($path in $installed) {
     $null = Get-Contained $appRoot $path
     if (-not $inventorySet.Add($path)) { throw "安装清单含重复路径：$path" }
 }
-$changes = @(Invoke-RepoGit @('-c', 'core.quotepath=false', 'diff', '--name-status', '--no-renames', $base, $head, '--', 'presets/dream-sike-dsh', 'presets/hushen-dsh', 'tavern-plugin/lib'))
+$changes = @(Invoke-RepoGit (@('-c', 'core.quotepath=false', 'diff', '--name-status', '--no-renames', $base, $head, '--') + $runtimePaths))
 if (-not $changes.Count) { throw '没有已提交的运行文件差异。' }
 $files = @()
 foreach ($line in $changes) {
     $parts = $line -split "`t"
     if ($parts.Count -ne 2 -or $parts[0] -notin @('A', 'M')) { throw "仅允许新增或修改普通文件，拒绝：$line" }
     $relative = $parts[1]
-    if ($relative -notmatch '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+)$') { throw "部署路径不受支持：$relative" }
+    if ($relative -notmatch $allowedPaths) { throw "部署路径不受支持：$relative" }
     $source = Get-Contained $repoRoot $relative
-    $target = Get-Contained $appRoot $relative
+    $target = Get-DeploymentTarget $relative
+    $isPlugin = $relative.StartsWith('plugins/', [StringComparison]::Ordinal)
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "源文件不存在：$relative" }
     $tree = [string](@(Invoke-RepoGit @('ls-tree', $head, '--', $relative))[0])
     if ($tree -notmatch '^100(644|755) blob ') { throw "提交中的目标不是普通文件：$relative" }
@@ -104,18 +114,18 @@ foreach ($line in $changes) {
     $baseBlob = $null
     $originalSha = $null
     if ($inBase) {
-        if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or -not $inventorySet.Contains($relative)) { throw "基线文件缺失或不在安装清单：$relative" }
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or (-not $isPlugin -and -not $inventorySet.Contains($relative))) { throw "基线文件缺失或不在安装清单：$relative" }
         $baseBlob = [string](@(Invoke-RepoGit @('rev-parse', "${base}:$relative"))[0])
         # Compare with repository text attributes; Windows installs can retain CRLF.
         # The original byte hash below still guards backup, replacement and rollback.
         $actualBlob = [string](@(Invoke-RepoGit @('hash-object', '--path', $relative, '--', $target))[0])
         if ($actualBlob -ne $baseBlob) { throw "安装文件已偏离指定基线：$relative" }
         $originalSha = Get-Sha $target
-    } elseif ((Test-Path -LiteralPath $target) -or $inventorySet.Contains($relative)) { throw "新增路径已经存在或列入安装清单：$relative" }
+    } elseif ((Test-Path -LiteralPath $target) -or (-not $isPlugin -and $inventorySet.Contains($relative))) { throw "新增路径已经存在或列入安装清单：$relative" }
     $files += [ordered]@{ relativePath = $relative; operation = if ($inBase) { 'replace' } else { 'create' }; baseBlob = $baseBlob;
         originalSha256 = $originalSha; deployedSha256 = Get-Sha $source; backupRelativePath = if ($inBase) { 'originals/' + $relative } else { $null } }
 }
-$nextInventory = (@($installed + @($files | Where-Object operation -EQ 'create' | ForEach-Object { $_.relativePath })) | Sort-Object -Unique) -join "`n"
+$nextInventory = (@($installed + @($files | Where-Object { $_.operation -eq 'create' -and -not $_.relativePath.StartsWith('plugins/') } | ForEach-Object { $_.relativePath })) | Sort-Object -Unique) -join "`n"
 $nextInventory += "`n"
 $inventorySha = Get-Sha $inventoryPath
 $nextInventorySha = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($utf8.GetBytes($nextInventory))).ToLowerInvariant()
@@ -123,7 +133,7 @@ $deploymentVersion = [string]$appVersion
 $deploymentId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N')
 $backupRoot = Get-Contained $tempRoot ('agent-workspace-deploy-' + $deploymentId)
 if (Test-Path -LiteralPath $backupRoot) { throw "备份目录已存在：$backupRoot" }
-$manifest = [ordered]@{ schemaVersion = 1; kind = 'agent-workspace'; status = 'prepared'; createdAt = (Get-Date).ToString('o');
+$manifest = [ordered]@{ schemaVersion = 2; kind = 'agent-workspace'; status = 'prepared'; createdAt = (Get-Date).ToString('o'); pluginsRoot = $pluginsRoot;
     installationRoot = $installRoot; appRoot = $appRoot; backupRoot = $backupRoot; baseCommit = $base; targetCommit = $head; version = $deploymentVersion;
     inventory = [ordered]@{ originalSha256 = $inventorySha; deployedSha256 = $nextInventorySha; backupRelativePath = 'originals/.dsh-tavern-files.txt' }; files = $files }
 Write-Output "分支 $branch；基线 $base；目标 $head；运行文件 $($files.Count)；版本 $deploymentVersion"
@@ -164,9 +174,15 @@ function Parent([string]$path) { $directory = Ordinary ([System.IO.Path]::GetDir
 $backup = (Ordinary $PSScriptRoot).TrimEnd('\')
 $manifestPath = Contained $backup 'deployment.json'
 $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($m.schemaVersion -ne 1 -or $m.kind -ne 'agent-workspace' -or $m.version -notin @('2.5.0', '2.7.0') -or $m.backupRoot -ine $backup) { throw '部署清单格式或备份位置无效。' }
+if ($m.schemaVersion -ne 2 -or $m.kind -ne 'agent-workspace' -or $m.version -notin @('2.5.0', '2.7.0') -or $m.backupRoot -ine $backup) { throw '部署清单格式或备份位置无效。' }
 $install = (Ordinary $m.installationRoot).TrimEnd('\')
 $app = Contained $install 'data/harness/apps/dsh-tavern'
+$plugins = Contained $install 'data/harness/profile-data/tavern/data/plugins'
+if ($m.pluginsRoot -ine $plugins) { throw '插件目录不符合部署清单。' }
+function Target([string]$relative) {
+    if ($relative.StartsWith('plugins/', [StringComparison]::Ordinal)) { return Contained $plugins $relative.Substring(8) }
+    return Contained $app $relative
+}
 if ($m.appRoot -ine $app -or -not (Test-Path -LiteralPath $app -PathType Container)) { throw '运行目录不符合部署清单。' }
 $expectedBackupParent = Contained $install 'temp'
 if ([System.IO.Path]::GetDirectoryName($backup) -ine $expectedBackupParent -or [System.IO.Path]::GetFileName($backup) -notmatch '^agent-workspace-deploy-[0-9]{8}-[0-9]{6}-[0-9a-f]{32}$') { throw '备份目录不属于此安装。' }
@@ -176,8 +192,8 @@ $entries = @($m.files)
 if (-not $entries.Count) { throw '部署清单没有文件。' }
 $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($entry in $entries) {
-    if ($entry.relativePath -notmatch '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+)$' -or -not $seen.Add($entry.relativePath) -or $entry.operation -notin @('replace', 'create') -or $entry.deployedSha256 -notmatch '^[0-9a-f]{64}$') { throw '部署文件记录无效。' }
-    $target = Contained $app $entry.relativePath
+    if ($entry.relativePath -notmatch '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+|plugins/(dsh-tavern-writing-presets|dsh-tavern-project-agent|dsh-tavern-dream-sike|dsh-tavern-hushen)/.+)$' -or -not $seen.Add($entry.relativePath) -or $entry.operation -notin @('replace', 'create') -or $entry.deployedSha256 -notmatch '^[0-9a-f]{64}$') { throw '部署文件记录无效。' }
+    $target = Target $entry.relativePath
     if ($entry.operation -eq 'replace') {
         if ($entry.originalSha256 -notmatch '^[0-9a-f]{64}$' -or $entry.backupRelativePath -ne ('originals/' + $entry.relativePath)) { throw '原文件备份记录无效。' }
         $original = Contained $backup $entry.backupRelativePath
@@ -195,7 +211,7 @@ if (-not (Test-Path -LiteralPath $inventory -PathType Leaf) -or (Sha $inventory)
 if (-not $PSCmdlet.ShouldProcess($app, '验证部署 SHA 并恢复原文件，移除此次新增普通文件')) { return }
 $attempt = 'rollback-' + [guid]::NewGuid().ToString('N')
 foreach ($entry in $entries) {
-    $target = Contained $app $entry.relativePath
+    $target = Target $entry.relativePath
     if ($entry.operation -eq 'replace') {
         if ((Sha $target) -eq $entry.originalSha256) { continue }
         if ((Sha $target) -ne $entry.deployedSha256) { throw '回滚期间目标发生变化。' }
@@ -212,7 +228,7 @@ foreach ($entry in $entries) {
         Parent $displaced
         Copy-Item -LiteralPath $target -Destination $displaced
         if ((Sha $displaced) -ne $entry.deployedSha256) { throw '新增文件证据备份失败。' }
-        $target = Contained $app $entry.relativePath
+        $target = Target $entry.relativePath
         if ((Sha $target) -ne $entry.deployedSha256) { throw '新增文件在移除前发生变化。' }
         Remove-Item -LiteralPath $target
     }
@@ -241,7 +257,7 @@ try {
     Copy-Item -LiteralPath $inventoryPath -Destination $backupInventory
     if ((Get-Sha $backupInventory) -ne $inventorySha) { throw '安装清单备份校验失败。' }
     foreach ($entry in $files) {
-        $target = Get-Contained $appRoot $entry.relativePath
+        $target = Get-DeploymentTarget $entry.relativePath
         if ($entry.operation -eq 'replace') {
             $backup = Get-Contained $backupRoot $entry.backupRelativePath
             New-Parent $backup
@@ -258,7 +274,7 @@ try {
     if ((Get-Sha $stagedInventory) -ne $nextInventorySha) { throw '安装清单暂存校验失败。' }
     Assert-Stopped
     foreach ($entry in $files) {
-        $target = Get-Contained $appRoot $entry.relativePath
+        $target = Get-DeploymentTarget $entry.relativePath
         $staged = Get-Contained $backupRoot ('staged/' + $entry.relativePath)
         New-Parent $target
         if ($entry.operation -eq 'replace') {
