@@ -25,6 +25,14 @@ function Stopped {
     if (@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime + '\', $cmp) -and $_.CommandLine -and $_.CommandLine.IndexOf($app, $cmp) -ge 0 }).Count) { throw '本安装的宿主仍在运行' }
 }
 function RunNode([string[]]$arguments) { & $node @arguments; if ($LASTEXITCODE -ne 0) { throw "Node 操作失败：$($arguments[0])" } }
+function Backup-Data([string]$from, [string]$to) {
+    if (Test-Path -LiteralPath $to) { throw '备份目标已经存在，未覆盖' }
+    # Copy only: /E includes empty directories; no purge or mirror operation.
+    # Parallel workers avoid serial PowerShell overhead on large block stores.
+    & robocopy.exe $from $to /E /COPY:DAT /DCOPY:DAT /MT:32 /R:1 /W:1 /XJ /NFL /NDL /NJH /NJS /NP
+    if ($LASTEXITCODE -ge 8) { throw "完整数据备份失败，robocopy 退出码 $LASTEXITCODE" }
+    $global:LASTEXITCODE = 0
+}
 $runtime = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\')
 if (-not $runtime.StartsWith($install + '\runtime-', $cmp)) { throw '宿主必须来自此安装的 runtime 目录' }
 $app = Contained 'data/harness/apps/dsh-tavern'
@@ -42,7 +50,7 @@ $installedVersion = (Get-Content -LiteralPath (Join-Path $app 'package.json') -R
 if ($sourceVersion -ne '2.7.0' -or $installedVersion -notin @('2.5.0', '2.7.0')) { throw '版本不在本次迁移范围内' }
 $branch = [string](& git -C $repo branch --show-current)
 $head = [string](& git -C $repo rev-parse HEAD)
-if ($branch -ne 'codex/upstream-v27-plugin-adaptation' -or $head -notmatch '^[a-f0-9]{40}$') { throw '请使用已审核的 2.7 适配分支' }
+if ($branch -notin @('codex/upstream-v27-plugin-adaptation', 'codex/dream-sike-dsh-agent') -or $head -notmatch '^[a-f0-9]{40}$') { throw '请使用已审核的维护分支' }
 if (@(& git -C $repo status --porcelain --untracked-files=all -- bin config patches presets plugins tavern-plugin package.json pnpm-lock.yaml pnpm-workspace.yaml plugin.patch.yml cordis.patch.yml).Count) { throw '部署源有未提交变更' }
 foreach ($path in @($staging, $previous)) { if (Test-Path -LiteralPath $path) { throw "发现待审查的旧部署目录，保留并停止：$path" } }
 Stopped
@@ -64,7 +72,8 @@ RunNode @($stager, 'prepare', '--app', $app, '--source', $source, '--commit', $h
 RunNode @($helper, 'prepare', $staging, $anchor, $pnpm)
 Stopped
 if (@(Get-ChildItem -LiteralPath $data -Recurse -Force -Attributes ReparsePoint).Count) { throw '数据目录存在重解析项，需要先审核备份范围' }
-Copy-Item -LiteralPath $data -Destination (Join-Path $backup 'tavern-data') -Recurse
+Backup-Data $data (Join-Path $backup 'tavern-data')
+Write-Output '完整 Tavern 数据备份已完成。'
 $profileBackup = Join-Path $backup 'tavern-profile'
 New-Item -ItemType Directory -Path $profileBackup | Out-Null
 foreach ($entry in Get-ChildItem -LiteralPath $profile -Force | Where-Object Name -NE 'node_modules') {
