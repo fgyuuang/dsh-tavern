@@ -86,9 +86,22 @@ export function createConversationInitialization(options) {
     return prepared === undefined ? await presets.fullSnapshot() : prepared
   }
 
-  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, importDraft = false }) {
+  async function initialize({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, models, importDraft = false }) {
     if (requestMode === 'sillytavern') throw new Error('silly 模式已停用')
     const currentSettings = await settings()
+    const selectedModels = {}
+    if (models !== undefined) {
+      if (!models || typeof models !== 'object' || Array.isArray(models) || Object.keys(models).some(key => !['foregroundModel', 'backgroundModel'].includes(key))) throw new Error('本局模型设置无效')
+      if (!normalizeBackgroundModel(models.foregroundModel)) throw new Error('请先选择本局前台模型')
+      for (const key of ['foregroundModel', 'backgroundModel']) {
+        if (!Object.hasOwn(models, key)) continue
+        if (key === 'backgroundModel' && models[key] === null) { selectedModels[key] = null; continue }
+        const route = normalizeBackgroundModel(models[key])
+        if (!route || typeof native.resolveModel !== 'function') throw new Error('本局模型设置无效')
+        selectedModels[key] = normalizeBackgroundModel(await native.resolveModel(route))
+        if (!selectedModels[key]) throw new Error('本局模型不可用')
+      }
+    }
     const defaults = normalizePlayDefaults(currentSettings.defaultPlaySettings)
     const effectiveRequestMode = requestMode === 'sillytavern' ? 'sillytavern' : 'dsh'
     const requestedMode = mode === 'card' || mode === 'revision' || mode === 'extract' ? 'card' : (mode === 'script' ? 'script' : (mode === 'story' ? 'story' : null))
@@ -173,7 +186,9 @@ export function createConversationInitialization(options) {
     chat.sceneImagesEnabled = groupOfMode(chat.mode) === 'play' && defaults.sceneImagesEnabled
     chat.statusBarPlacement = defaults.statusBarPlacement
     chat.conversationFeaturesVersion = 1
-    chat.backgroundModelSelection = groupOfMode(chat.mode) === 'play' ? normalizeBackgroundModel(currentSettings.defaultBackgroundModel) : null
+    chat.backgroundModelSelection = groupOfMode(chat.mode) === 'play'
+      ? (Object.hasOwn(selectedModels, 'backgroundModel') ? selectedModels.backgroundModel : normalizeBackgroundModel(currentSettings.defaultBackgroundModel)) : null
+    if (groupOfMode(chat.mode) === 'play' && models !== undefined) chat.backgroundModelRevision = currentSettings.backgroundModelRevision || 0
     chat.disabledWritingSkills = groupOfMode(chat.mode) === 'play' ? [...(currentSettings.defaultDisabledWritingSkills || [])] : []
     chat.backgroundConfigVersion = 1
     chat.backgroundTasks = normalizeBackgroundTasks(groupOfMode(chat.mode) === 'play' ? defaults.backgroundTasks : {})
@@ -242,7 +257,7 @@ export function createConversationInitialization(options) {
     }
     // The workbench default follows the foreground default unless set on its own.
     const group = groupOfMode(chat.mode)
-    const defaultModel = group === 'play' ? currentSettings.defaultForegroundModel
+    const defaultModel = group === 'play' ? selectedModels.foregroundModel || currentSettings.defaultForegroundModel
       : group === 'card' ? currentSettings.defaultWorkbenchModel || currentSettings.defaultForegroundModel : null
     if (openingTarget && defaultModel) await native.selectModel(openingTarget, defaultModel)
     await chats.publish(chat)

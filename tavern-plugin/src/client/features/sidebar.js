@@ -33,11 +33,11 @@
 			const [cardEntry, setCardEntry] = React.useState("");
 			const [openingPicker, setOpeningPicker] = React.useState(null);
 			const openingLayoutRef = React.useRef(null);
-			const [openingSettingsCollapsed, setOpeningSettingsCollapsed] = React.useState(false);
+			const [openingSettingsCollapsed, setOpeningSettingsCollapsed] = React.useState(() => window.matchMedia("(max-width: 640px)").matches);
 			const openingSettingsManual = React.useRef(false);
 			React.useEffect(function () {
 				openingSettingsManual.current = false;
-				setOpeningSettingsCollapsed(false);
+				setOpeningSettingsCollapsed(window.matchMedia("(max-width: 640px)").matches);
 			}, [openingPicker && openingPicker.card.path]);
 			React.useEffect(function () {
 				const dialog = openingLayoutRef.current;
@@ -441,12 +441,14 @@
 						pending.taskSupplement = "【已关联游玩记录】\n" + String(reference.label || "游玩记录") + "\nref: " + String(reference.path) + "\n使用 tavern_read_play_chat 读取，先查看 overview。";
 					}
 					if (typeof props.openCardLibraryTab === "function") props.openCardLibraryTab(pending.sessionId);
-					if (typeof props.openPresetLibraryTab === "function") props.openPresetLibraryTab(pending.sessionId);
-					if (typeof props.openWorldBookLibraryTab === "function") props.openWorldBookLibraryTab(pending.sessionId);
-					if (typeof props.openResourcesTab === "function") props.openResourcesTab(pending.sessionId);
+					if (!window.matchMedia("(max-width: 1023px)").matches) {
+						if (typeof props.openPresetLibraryTab === "function") props.openPresetLibraryTab(pending.sessionId);
+						if (typeof props.openWorldBookLibraryTab === "function") props.openWorldBookLibraryTab(pending.sessionId);
+						if (typeof props.openResourcesTab === "function") props.openResourcesTab(pending.sessionId);
+					}
 					if (pending.task) await props.injectTaskPrompt(pending.sessionId, pending.task, pending.label, pending.card, (pending.selectedResources || []).length > 0, pending.taskSupplement);
 					(pending.selectedResources || []).forEach(function (resource) { props.appendMention(pending.sessionId, resource.kind, resource.path, resource.title); });
-				} else if (typeof props.openConversationSettingsTab === "function") props.openConversationSettingsTab(pending.sessionId);
+				} else if (!window.matchMedia("(max-width: 1023px)").matches && typeof props.openConversationSettingsTab === "function") props.openConversationSettingsTab(pending.sessionId);
 				if (pending.targetMode !== "card") {
                     const id = openingPicker && openingPicker.preparationId;
                     setOpeningPicker(null);
@@ -478,7 +480,8 @@
 						preparationId: request.preparationId || "",
 						userName: request.userName || "你",
 						requestMode: compatibilityAvailable && request.requestMode === "sillytavern" ? "sillytavern" : "dsh",
-						playPresetId: request.playPresetId || "tavern"
+						playPresetId: request.playPresetId || "tavern",
+                        models: request.models
 					});
 				},
 				rememberPending: setPendingOpen,
@@ -565,6 +568,10 @@
 			}
 			async function newConversation(card, requestedMode, openingId, userName, initialMessage) {
 				const targetMode = requestedMode || (uiMode === "play" ? playModeOfCard(card) : "card");
+                if (targetMode !== "card" && openingPicker?.card.path === card?.path && !openingPicker.foregroundModel) {
+                    setError("请先选择本局前台模型，再确认开始。");
+                    return;
+                }
                 if (targetMode !== "card" && openingPicker?.card.path === card?.path && !openingPicker.worldbookReady) {
                     setError("请等待本局世界书读取或保存完成后再开始游戏");
                     if (initialMessage !== undefined) throw new Error("本局世界书尚未就绪");
@@ -586,7 +593,8 @@
 					let preparedWorkspaceId = "";
 					try { preparedWorkspaceId = await timing.measure("claimPrewarm", () => playPrewarmRef.current.claim(card && card.path)); }
 					catch (prewarmError) { console.warn("dsh-tavern: 工作区预热不可用，改为正常创建", prewarmError); }
-					created = await conversationLifecycle.start({ kind: "play", targetMode: targetMode, card: card, preparationId: previousOpeningPicker && previousOpeningPicker.preparationId || "", openingId: openingId || "", userName: resolvedUserName, playPresetId: previousOpeningPicker && previousOpeningPicker.playPresetId || "", requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh", preparedWorkspaceId: preparedWorkspaceId });
+					created = await conversationLifecycle.start({ kind: "play", targetMode: targetMode, card: card, preparationId: previousOpeningPicker && previousOpeningPicker.preparationId || "", openingId: openingId || "", userName: resolvedUserName, playPresetId: previousOpeningPicker && previousOpeningPicker.playPresetId || "", requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh", preparedWorkspaceId: preparedWorkspaceId,
+                        models: previousOpeningPicker?.foregroundModel ? { foregroundModel: previousOpeningPicker.foregroundModel, backgroundModel: previousOpeningPicker.backgroundModel || null } : undefined });
 					if (initialMessage) await timing.measure("submitInitialMessage", () => props.executeSlash("/send " + substituteTavernIdentityMacros(initialMessage, { playerName: resolvedUserName, characterName: card && card.name }) + "|/trigger", created.sessionId));
 					if (targetMode !== "card") window.localStorage.setItem("dsh-tavern-player-name", resolvedUserName);
 					successful = true;
@@ -605,10 +613,12 @@
 					const playPresetId = playPresets.some(function (preset) { return preset.id === presetCatalog.defaultPlayPresetId; }) ? presetCatalog.defaultPlayPresetId : (playPresets[0] && playPresets[0].id || "tavern");
                     const userName = globalSettings.settings?.defaultPlaySettings?.playerName || "你";
 					const preparedKey = JSON.stringify([userName, compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh"]);
-					setOpeningPicker({ card: card, requestMode: requestMode, openings: [], index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, preparing: true });
+                    const modelOptions = { modelCatalog: globalSettings.modelCatalog || [], foregroundModel: globalSettings.settings?.defaultForegroundModel || globalSettings.defaultModel || null,
+                        backgroundModel: globalSettings.settings?.defaultBackgroundModel || null };
+					setOpeningPicker({ ...modelOptions, card: card, requestMode: requestMode, openings: [], index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, preparing: true });
 					const response = await initializeFullOpeningTemplate(await call("getCardOpenings", { previewTransport: "deferred-v1", path: card.path, userName: userName, requestMode: compatibilityAvailable && requestMode === "sillytavern" ? "sillytavern" : "dsh" }));
 					const openings = response.openings || [];
-					setOpeningPicker({ card: card, requestMode: requestMode, preparing: false, preparedKey: preparedKey, preparationId: response.preparationId || "", openings: openings, index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, trustedCardMode: response.trustedCardMode });
+					setOpeningPicker(current => ({ ...modelOptions, ...current, card: card, requestMode: requestMode, preparing: false, preparedKey: preparedKey, preparationId: response.preparationId || "", openings: openings, index: 0, userName: userName, playPresets: playPresets, playPresetId: playPresetId, trustedCardMode: response.trustedCardMode }));
 				successful = true;
 				} catch (err) { setOpeningPicker(null); playPrewarmRef.current.cancel(); setError(String(err && err.message || err)); }
 				finally { if (timing) timing.finish(successful); setBusy(false); }
@@ -950,6 +960,16 @@
 			const openingChoice = openingPicker ? h(React.Fragment, null,
 				h("div", { className: "dsh-tavern-card-picker-head" }, h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: discardOpening }, "放弃开局"), h("span", null, openingPicker.card.name + " · 游戏准备"), h("button", { className: "dsh-tavern-btn", "aria-expanded": !openingSettingsCollapsed, onClick: function () { openingSettingsManual.current = true; setOpeningSettingsCollapsed(function (value) { return !value; }); } }, openingSettingsCollapsed ? "展开设置" : "折叠设置"), h("span", { className: "dsh-tavern-spacer" }), h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: closePicker }, "暂时收起")),
 				busy ? h("div", { className: "dsh-tavern-session-switching", role: "status", "aria-live": "polite" }, openingPicker.preparing ? "正在准备开场与脚本资源…" : "正在完成游戏初始化…", openingPicker.preparing ? h("div", { style: { marginTop: "8px", fontSize: "13px", opacity: .75 } }, "首次打开可能需要下载资源，请稍候；后续打开通常更快。") : null) : null,
+                h("section", { className: "dsh-opening-launch", "aria-label": "本局模型与启动确认" },
+                    h("div", { className: "dsh-opening-step" }, "01 · 本局模型"),
+                    h(TavernDefaultModelSetting, { label: "开局前台模型", title: "写作模型", fallback: "请选择模型", disableFallback: true,
+                        catalog: openingPicker.modelCatalog || [], selection: openingPicker.foregroundModel, disabled: busy,
+                        onChange: model => setOpeningPicker(current => ({ ...current, foregroundModel: model })) }),
+                    h("details", null, h("summary", null, "后台模型与推理强度"),
+                        h(TavernDefaultModelSetting, { label: "开局后台模型", title: "后台模型", fallback: "跟随本局写作模型",
+                            catalog: openingPicker.modelCatalog || [], selection: openingPicker.backgroundModel, disabled: busy,
+                            onChange: model => setOpeningPicker(current => ({ ...current, backgroundModel: model })) })),
+                    h("p", null, "仅用于这一局。确认开始前不会发送开局指令。")),
 				h(TavernOpeningWorldbook, { cardPath: openingPicker.card.path, preparationId: openingPicker.preparationId, userName: openingPicker.userName, visible: picking && uiMode === "play", busy: busy,
                     call: call, openLibrary: source => props.openWorldBookLibraryTab(current, source),
                     onReady: id => setOpeningPicker(value => value?.card.path === openingPicker.card.path && (!value.preparationId || value.preparationId === id) ? { ...value, preparationId: id, worldbookReady: true } : value),
@@ -983,7 +1003,7 @@
 					helperContext: selectedOpening.helperContext,
                     frameSizing: selectedOpening.frameSizing,
 					openingPreview: selectedOpening.openingPreview,
-                    onSubmitOpening: function (text) { if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续"); return newConversation(openingPicker.card, null, selectedOpening.id, openingPicker.userName || "你", text); },
+                    onSubmitOpening: async function (text) { if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续"); setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text)); },
                     onDraftOpening: function (text) {
                         if (busy || !picking || uiMode !== "play" || collapsed) throw new Error("请返回开局准备页后继续");
                         setOpeningPicker(current => updateOpeningPickerInput(current, selectedOpening.id, text));
@@ -996,7 +1016,7 @@
 					},
 					trustedCardMode: openingPicker.trustedCardMode
 				})) : null,
-				h("div", { className: "dsh-tavern-picker-foot", style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "24px", flexWrap: "wrap" } }, h("input", { ref: chatImportFile, type: "file", accept: ".jsonl", style: { display: "none" }, onChange: function (event) { previewChatImport(event.target.files && event.target.files[0]); event.target.value = ""; } }), h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "6px" } }, h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: function () { chatImportFile.current.click(); } }, "导入 SillyTavern 聊天记录"), h("small", { style: { opacity: .7 } }, "（必须和人物卡匹配）")), h("button", { className: "dsh-tavern-question-primary", disabled: busy || openingPicker.preparing || !openingPicker.worldbookReady || (openingPicker.openings.length > 0 && !selectedOpening), onClick: function () { newConversation(openingPicker.card, null, selectedOpening ? selectedOpening.id : "", openingPicker.userName || "你"); } }, "开始新游戏"))
+				h("div", { className: "dsh-tavern-picker-foot", style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "24px", flexWrap: "wrap" } }, h("input", { ref: chatImportFile, type: "file", accept: ".jsonl", style: { display: "none" }, onChange: function (event) { previewChatImport(event.target.files && event.target.files[0]); event.target.value = ""; } }), h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "6px" } }, h("button", { className: "dsh-tavern-btn", disabled: busy, onClick: function () { chatImportFile.current.click(); } }, "导入 SillyTavern 聊天记录"), h("small", { style: { opacity: .7 } }, "（必须和人物卡匹配）")), h("button", { className: "dsh-tavern-question-primary", disabled: busy || openingPicker.preparing || !openingPicker.foregroundModel || !openingPicker.worldbookReady || (openingPicker.openings.length > 0 && !selectedOpening), onClick: function () { newConversation(openingPicker.card, null, selectedOpening ? selectedOpening.id : "", openingPicker.userName || "你"); } }, "开始新游戏"))
 			) : null;
 			const playPicker = h("div", { ref: openingLayoutRef, className: "dsh-tavern-card-picker", role: "dialog", "aria-modal": "true", "aria-label": openingPicker ? "游戏准备" : "选择人物卡开始游玩" }, pickerError, openingPicker ? h(React.Fragment, null, importChoice, h("div", { style: { display: importChoice ? "none" : "contents" } }, openingChoice)) : h(React.Fragment, null,
 				h("div", { className: "dsh-tavern-card-picker-head" }, h("span", null, "选择人物卡 · 开始游玩"), h("span", { className: "dsh-tavern-spacer" }), h("button", { className: "dsh-tavern-btn", disabled: busy || (!cardBatch.managing && !cards.length), onClick: function () { if (cardBatch.managing) cardBatch.reset(); else cardBatch.begin(); } }, cardBatch.managing ? "取消" : "批量删除"), h(MobileCardImportButton, { inputRef: fileRef, disabled: busy, onImported: async function () { await refresh(); notifyDataChanged(["cards"]); } }),

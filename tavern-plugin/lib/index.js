@@ -2011,7 +2011,7 @@ export async function apply(ctx) {
     })
     return result.sort(function (left, right) { return Number(left.turn) - Number(right.turn) })
   }
-  async function startChat(cardPath, sessionId, mode, openingId, userName, requestMode, preparationId, cardTask, playPresetId) {
+  async function startChat(cardPath, sessionId, mode, openingId, userName, requestMode, preparationId, cardTask, playPresetId, models) {
     // Plain greetings have no interactive preview draft, but need the same
     // game-local worldbook snapshot as scripted openings.
     if (!preparationId && groupOfMode(mode || 'story') === 'play') {
@@ -2022,7 +2022,7 @@ export async function apply(ctx) {
       const source = await chatForSession(preparation.sourceSessionId)
       if (!source || !sessionOpeningDescriptor(source, await readChatCard(source)) || Number(source.tavernHelperLifecycleRevision || 0) !== preparation.sourceLifecycleRevision) throw new Error('原对话已变化，请重新选择开场')
     }
-    return await requestPerformance.stage('initializeConversation', () => conversationInitialization.start({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId }))
+    return await requestPerformance.stage('initializeConversation', () => conversationInitialization.start({ cardPath, sessionId, mode, openingId, userName, requestMode, preparation, cardTask, playPresetId, models }))
   }
 
   async function scriptPreviewOf(chat) {
@@ -2241,6 +2241,7 @@ export async function apply(ctx) {
       ensureCardWorkspace: ensureNativeCardWorkspace,
       flush: function (session) { return sessionStore.flush(session) },
       selection: modelSelection,
+      resolveModel: selection => llm.resolveCallConfig(selection),
       async selectModel(target, selection) {
         const controller = ctx.get('sessionController')
         if (!target.agent || typeof controller?.agents?.selectForNextRequest !== 'function') throw new Error('无法设置新游戏默认前台模型')
@@ -4034,7 +4035,7 @@ export async function apply(ctx) {
       case 'getBackgroundModelReasoning': return { reasoning: await readBackgroundModelReasoning(llm, args) }
       case 'getDisplayPreferences': return { hideContextAndReasoning: (await readTavernSettings()).hideContextAndReasoning }
       case 'getCandidatePreferences': return { candidateDismissMode: (await readTavernSettings()).candidateDismissMode }
-      case 'getTavernSettings': return { settings: await readTavernSettings(), modelCatalog: await tavernModelCatalog(), releaseCapabilities: TAVERN_RELEASE_CAPABILITIES }
+      case 'getTavernSettings': return { settings: await readTavernSettings(), defaultModel: modelSelection(), modelCatalog: await tavernModelCatalog(), releaseCapabilities: TAVERN_RELEASE_CAPABILITIES }
       case 'getSceneImageSettings': {
         const settings = await enabledSceneIllustrations().settings(args?.provider)
         if (args?.conversation === true) {
@@ -4236,7 +4237,7 @@ export async function apply(ctx) {
       case 'importChatHistory': return await chatHistoryImporter.import(args || {})
       case 'startChat': {
         try {
-          return { view: await startChat(args && args.path, args && args.sessionId, args && args.mode, args && args.openingId, args && args.userName, args && args.requestMode, args && args.preparationId, args && args.cardTask, args && args.playPresetId) }
+          return { view: await startChat(args && args.path, args && args.sessionId, args && args.mode, args && args.openingId, args && args.userName, args && args.requestMode, args && args.preparationId, args && args.cardTask, args && args.playPresetId, args && args.models) }
         } catch (error) {
           console.error('dsh-tavern: 创建对话失败', {
             cardPath: str(args && args.path),

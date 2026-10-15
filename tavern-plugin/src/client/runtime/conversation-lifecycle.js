@@ -163,8 +163,11 @@
             function start(request) {
                 // Preview tokens are ephemeral; retries after re-opening the picker
                 // must still find the Session belonging to the same user choice.
-                const key = JSON.stringify([request.kind, request.targetMode, request.card && request.card.path,
-                    request.openingId, request.userName, request.requestMode, request.task, request.pending]);
+                const identity = [request.kind, request.targetMode, request.card && request.card.path,
+                    request.openingId, request.userName, request.requestMode, request.task, request.pending];
+                // Changing the launch model is a new choice, not a retry of an already initialized game.
+                if (request.models) identity.push(request.models);
+                const key = JSON.stringify(identity);
                 if (running.has(key)) return running.get(key);
                 const work = run(request, key).finally(() => running.delete(key));
                 running.set(key, work);
