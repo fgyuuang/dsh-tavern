@@ -52,6 +52,24 @@ export function sessionSeedTrajectoryMessages(sessionId) {
   ])
 }
 
+/** Remove only plugin-owned v1 seeds from model input, keeping the audit history intact. */
+export function projectWithoutSessionSeedTrajectory(messages) {
+  if (!Array.isArray(messages)) return messages
+  const projected = messages.filter(message => {
+    // Forks/imports can retain the original session's message IDs. Provenance,
+    // role and version still identify these plugin seeds without matching prose.
+    const match = /^tavern-seed-trajectory:v1:.+:([123])$/.exec(str(message?.id))
+    if (!match || message?.source?.version !== 1) return true
+    const index = Number(match[1]) - 1
+    const source = message.source
+    const owned = index === 1
+      ? message.role === 'assistant' && source.kind === 'model' && source.provider === 'dsh-tavern' && source.model === 'synthetic-trajectory'
+      : message.role === 'user' && source.kind === 'plugin' && source.plugin === 'dsh-tavern' && source.form === 'synthetic-trajectory'
+    return !owned
+  })
+  return projected.length === messages.length ? messages : projected
+}
+
 function messageId(event) {
   if (event && event.type === 'user/message') return str(event.data && event.data.id)
   if (event && event.type === 'assistant/message') return str(event.data && event.data.message && event.data.message.id)

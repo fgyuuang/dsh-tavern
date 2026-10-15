@@ -1,3 +1,4 @@
+import { projectWithoutSessionSeedTrajectory } from '../domain/session-seed-trajectory.js'
 import { compatibleReasoningConfig } from '../domain/model-reasoning-compatibility.js'
 import { createImportContextPreparation, needsImportContextPreparation } from '../domain/import-context-preparation.js'
 import { createStoryCompactionRequest, nativelyRetainedRounds, retainRecentStoryRounds, usesStoryCompaction } from '../domain/story-compaction.js'
@@ -54,6 +55,10 @@ export function registerModelStreamHooks({
     const chat = await chatForSession(str(request.sessionId))
     if (!usesStoryCompaction(chat)) return { request }
     if (needsImportContextPreparation(chat)) throw new Error('导入对话尚未完成首次上下文容量检查，暂不调用摘要模型')
+    if (isWritingAgentExecution(chat)) {
+      const messages = projectWithoutSessionSeedTrajectory(request.messages)
+      if (messages !== request.messages) request = { ...request, messages }
+    }
     const story = createStoryCompactionRequest(request, runtimePrompt('story-compaction'))
     const session = sessionStore.get(story.sessionId) || agentRegistry.get(story.sessionId)?.session
     const retention = await storyRetention(story)
@@ -95,6 +100,15 @@ export function registerModelStreamHooks({
         'requestMode', 'compatibilityTraces', 'bypassPlanId', 'runtimePresetSnapshot', 'foregroundFrames',
         'playPresetId', 'dreamSikeExecutionPolicy', 'generationMode'
       ])
+      // Apply the same seed projection to writing and maintenance requests. Re-entry
+      // preserves the attempt identity and counts only the final provider dispatch.
+      if (isWritingAgentExecution(chat)) {
+        const messages = projectWithoutSessionSeedTrajectory(options.messages)
+        if (messages !== options.messages) {
+          yield * ctx.llm.stream(markRequestAttempt({ ...options, messages }, attempt))
+          return
+        }
+      }
       if (chat && !isSingleReplyMode(chat) && ['story', 'script'].includes(chat.mode) && options.purpose === undefined && chat.requestMode !== 'sillytavern' && !requestHandledBy(options, 'full-template')) {
         const projected = await fullTemplateRuntime.forSession(ownerSessionId).projectRequestProjection({ messages: options.messages, system: options.system, model: options.model })
         yield * ctx.llm.stream(markRequestAttempt(markRequestHandled({ ...options, ...projected }, 'full-template'), attempt))

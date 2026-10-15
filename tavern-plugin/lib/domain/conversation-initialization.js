@@ -9,7 +9,7 @@ import { bindSceneWorldbook } from './scene-worldbook.js'
 import { normalizeBackgroundModel } from './background-model-selection.js'
 import { normalizeBackgroundTasks, normalizePlayDefaults } from './tavern-settings.js'
 import { normalizePlayPresetId } from './dream-sike-mode.js'
-import { normalizeGenerationMode } from './generation-mode.js'
+import { normalizeGenerationMode, isWritingAgentExecution } from './generation-mode.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 import { ensureSessionSeedTrajectory } from './session-seed-trajectory.js'
 import { defaultUserPreferenceProfile } from './user-preference-profile.js'
@@ -346,7 +346,7 @@ export function createConversationInitialization(options) {
     const target = readyTarget || await native.wait(sessionId)
     if (groupOfMode(chat.mode) === 'play' && chat.requestMode !== 'sillytavern') {
       await native.ensurePrefix(target.session, await snapshots.ensure(chat, card))
-      await ensureSessionSeedTrajectory(target.session)
+      if (!isWritingAgentExecution(chat)) await ensureSessionSeedTrajectory(target.session)
       await native.flush(target.session)
     }
     if (groupOfMode(chat.mode) === 'card') {
