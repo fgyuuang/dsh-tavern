@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
 const source = readFileSync(new URL('../tavern-plugin/src/client/features/assistant-renderer.js', import.meta.url), 'utf8')
-const start = source.indexOf('function tavernAssistantOwnsFinalProjection(')
+const start = source.indexOf('function tavernAssistantIsOpening(')
 const end = source.indexOf('function tavernReceiptViewPaths(', start)
 assert.ok(start >= 0 && end > start, 'assistant renderer keeps a testable final-step ownership rule')
-const policy = runInNewContext(source.slice(start, end) + '\n({ owns: tavernAssistantOwnsFinalProjection, mode: tavernAssistantContentMode })', {})
+const policy = runInNewContext(source.slice(start, end) + '\n({ opening: tavernAssistantIsOpening, owns: tavernAssistantOwnsFinalProjection, mode: tavernAssistantContentMode })', {})
 
 test('only the turn-closing assistant step owns the Story Timeline body', () => {
   const turn = { status: 'closed' }
@@ -27,4 +27,17 @@ test('dream mode hides model steps and private reasoning from the main body', ()
   assert.match(source, /projection = settled && finalAssistantStep \? tavernProjectionForTurn/)
   assert.match(source, /blocks: dreamSikeMode \? \[\] : data\.blocks/)
   assert.match(source, /contentMode === "progress" \? \[React\.createElement\(DreamSikeMainTurnStatus/)
+})
+
+test('author opening remains native when Agent turn ownership has not arrived', () => {
+  const data = { finalNode: { messageId: 'tavern-opening:fixture', seq: 12 } }
+  assert.equal(policy.opening(data), true)
+  assert.equal(policy.owns({ status: 'closed' }, data, null), false)
+  for (const preset of ['dream-sike-dsh', 'hushen-dsh']) {
+    assert.equal(policy.mode(Boolean(preset) && !policy.opening(data), 'completed', true), 'native')
+  }
+  for (const value of [null, {}, { finalNode: {} }, { finalNode: { messageId: 'assistant:private' } }]) {
+    assert.equal(policy.opening(value), false)
+  }
+  assert.match(source, /storyTurn > 0 && !openingMessage/)
 })

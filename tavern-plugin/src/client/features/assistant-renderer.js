@@ -379,7 +379,10 @@
 				return ["mode", "playPresetId", "generationMode", eager ? "tavernHelper" : "$helperAvailable",
 					"tavernRuntimePolicy", "tavernMvuRuntime", "releaseCapabilities", "statusBarPlacement"].map(field => [field]).concat([["$projectionTurn", String(turn)], ["$projectionLatestTurn", String(turn)]]);
 			}
-			function tavernAssistantOwnsFinalProjection(turnRef, data, tail) {
+			function tavernAssistantIsOpening(data) {
+                return typeof data?.finalNode?.messageId === "string" && data.finalNode.messageId.startsWith("tavern-opening:");
+            }
+            function tavernAssistantOwnsFinalProjection(turnRef, data, tail) {
 				return Boolean(turnRef && turnRef.status === "closed" && data && data.finalNode && tail && tail.closing && tail.closing.finalNode && tail.closing.finalNode.seq === data.finalNode.seq);
 			}
 			function tavernAssistantContentMode(dreamSikeMode, status, finalAssistantStep) {
@@ -475,8 +478,9 @@
                 const liveState = useLiveTavernView(props.sessionId, revision, tavernAssistantViewPaths(storyTurn, storyTurn > 0 && storyTurn === tavernLatestProjectionTurn(currentView)));
 				const sessionTransitioning = React.useSyncExternalStore(tavernSessionTransition.subscribe, tavernSessionTransition.getSnapshot, tavernSessionTransition.getSnapshot);
 				const tail = props.useTurnData("turn-tail");
-				const finalAssistantStep = tavernAssistantOwnsFinalProjection(turnRef, data, tail);
-				const dreamSikeMode = isWritingAgentView(liveState.view) && storyTurn > 0;
+				const openingMessage = tavernAssistantIsOpening(data);
+                const finalAssistantStep = openingMessage || tavernAssistantOwnsFinalProjection(turnRef, data, tail);
+				const dreamSikeMode = isWritingAgentView(liveState.view) && storyTurn > 0 && !openingMessage;
 				const contentMode = tavernAssistantContentMode(dreamSikeMode, data.status, finalAssistantStep);
 				const projection = settled && finalAssistantStep ? tavernProjectionForTurn(liveState.view, storyTurn) : null;
 					const latestProjectionTurn = tavernLatestProjectionTurn(liveState.view);
