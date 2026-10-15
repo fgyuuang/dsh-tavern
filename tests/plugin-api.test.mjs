@@ -487,7 +487,7 @@ test('示例插件按文档写法运行：先占位，再换成图片', { skip: 
 
 test('内置 Skill 携带的接口文档与示例和正本一致', async () => {
   const { readFile } = await import('node:fs/promises')
-  const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8')
+  const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8').then(text => text.replace(/\r\n/g, '\n'))
   assert.equal(await read('presets/tavern/skills/tavern-plugin/references/plugin-api.md'), await read('docs/plugin-api.md'), '修改 docs/plugin-api.md 后同步复制到 Skill')
   assert.equal(await read('presets/tavern/skills/tavern-plugin/references/plugin-recipes.md'), await read('docs/plugin-recipes.md'), '修改 docs/plugin-recipes.md 后同步复制到 Skill')
   const copy = await read('presets/tavern/skills/tavern-plugin/references/example-plugin.md')

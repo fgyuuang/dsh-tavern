@@ -48,6 +48,15 @@
 			const service = {
 				ctx: undefined,
 				apiVersion: 2,
+                writingPresets: Object.freeze({ version: 1,
+                    async openSettings(gameId) {
+                        if (typeof gameId !== "string" || !gameId || !host) throw new TypeError("请先打开一局游戏");
+                        const view = liveTavernView.getSnapshot(gameId).view;
+                        return ["dream-sike-dsh", "hushen-dsh"].includes(view?.playPresetId) || view?.generationMode === "sillytavern-once"
+                            ? agentWorkbenchFeature.open(host, gameId, "tavern/author-settings")
+                            : openTavernSidebarTab(host, { type: "dsh-tavern:dream-sike-settings" }, { sessionId: gameId });
+                    }
+                }),
 				registerMediaRenderer(kind, render) {
 					if (typeof kind !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,63}$/.test(kind)) throw new TypeError("只能为插件自定义的 <插件名>/<类型> 注册显示方式");
 					if (typeof render !== "function") throw new TypeError("registerMediaRenderer 需要 render 函数");

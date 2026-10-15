@@ -51,7 +51,7 @@ test('后台保存或前台持久化失败时补偿恢复原模型', async () =>
 test('集中页新游戏默认修改不改已有本局模型，未知范围和字段被拒绝', async () => {
   const f = fixture(), before = structuredClone(f.snapshot().chat)
   const result = await f.service.apply('native', { scope: 'new-games', models: { defaultForegroundModel: worker, defaultBackgroundModel: null, defaultWorkbenchModel: front } })
-  assert.deepEqual(result.defaults, { defaultForegroundModel: worker, defaultBackgroundModel: null, defaultWorkbenchModel: front })
+  assert.deepEqual(result.defaults, { defaultForegroundModel: worker, defaultBackgroundModel: null, defaultWorkbenchModel: front, defaultImageModel: null })
   assert.deepEqual(f.snapshot().chat, before); assert.deepEqual(result.foregroundModel, front)
   await assert.rejects(f.service.apply('native', { scope: 'all-sessions', models: { foregroundModel: worker } }), /范围无效/)
   await assert.rejects(f.service.apply('native', { models: { providers: {} } }), /设置项无效/)

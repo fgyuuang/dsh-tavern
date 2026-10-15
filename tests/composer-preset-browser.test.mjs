@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile, mkdir } from 'node:fs/promises'
 import { browserReactScript } from './fixtures/browser-react.mjs'
 
-test('composer selects author and reply mode without losing author options, handles errors and narrow viewports', {
+for (const standalone of [false, true]) test('composer selects author and reply mode without losing author options, handles errors and narrow viewports; standalone=' + standalone, {
   skip: !process.env.TAVERN_BROWSER_TESTS, timeout: 30000
 }, async t => {
   const { chromium } = await import('playwright')
@@ -19,7 +19,7 @@ test('composer selects author and reply mode without losing author options, hand
       { id: 'tavern', name: 'DSH 原版' }, { id: 'dream-sike-dsh', name: '梦境思客DSH' }, { id: 'hushen-dsh', name: '狐神抚DSH' }] }
     if (method === 'listPresets') return { presets: [
       { path: 'author.json', title: '作者原预设', valid: true, recognized: true }, { path: 'other.json', title: '其他预设', valid: true, recognized: true }] }
-    if (method === 'getSession') return { view: { runtimePreset: { id: source, name: '作者原预设' } } }
+    if (method === 'getSession') return { view: { mode: 'story', playPresetId: preset, generationMode: reply, runtimePreset: { id: source, name: '作者原预设' } } }
     if (method === 'getGenerationMode') return { generationMode: reply, busy: running }
     if (fail) throw Error('模拟保存失败')
     if (method === 'setGenerationMode') reply = args.generationMode
@@ -39,9 +39,20 @@ test('composer selects author and reply mode without losing author options, hand
     const tavernErrorHub={report:(source,error)=>{throw error}};
     const agentWorkbenchFeature={open:async(ctx,sessionId,panelId)=>{window.opened={sessionId,panelId}}};
     const openTavernSidebarTab=async()=>{};
-    ${await readFile(new URL('../tavern-plugin/src/client/features/composer-preset.js', import.meta.url), 'utf8')}
     const root=modules['react-dom/client'].createRoot(document.getElementById('root'));
-    window.renderSession=id=>root.render(React.createElement(TavernComposerPreset,{sessionId:id,ctx:{sessions:{subagentAddress:()=>null}}}));
+    ${standalone ? `
+      window.__ModuleLoader__={load:module=>window.plugin=module.factory(id=>modules[id])};
+      ${await readFile(new URL('../plugins/dsh-tavern-writing-presets/client.js', import.meta.url), 'utf8')}
+      const ctx={sessions:{subagentAddress:()=>null},effect:register=>register(),
+        slots:{inject:(_name,register)=>register(),register:(_descriptor,component)=>{window.Menu=component;return()=>{}}},
+        tavernUi:{writingPresets:{version:1,openSettings:async sessionId=>{window.opened={sessionId,panelId:'tavern/author-settings'}}},
+          callHost:(_name,input)=>window.fixtureRpc(input.method,input.args),assetUrl:()=> 'data:text/css,',watchTurnState:()=>()=>{}}};
+      window.plugin.apply(ctx);
+      window.renderSession=id=>root.render(React.createElement(window.Menu,{sessionId:id}));
+    ` : `
+      ${await readFile(new URL('../tavern-plugin/src/client/features/composer-preset.js', import.meta.url), 'utf8')}
+      window.renderSession=id=>root.render(React.createElement(TavernComposerPreset,{sessionId:id,ctx:{sessions:{subagentAddress:()=>null}}}));
+    `}
     window.renderSession('game-one');
   ` })
   const trigger = page.getByRole('button', { name: '选择预设与回复方式', exact: true })
@@ -73,7 +84,7 @@ test('composer selects author and reply mode without losing author options, hand
   }
   await mkdir('output/playwright/composer-preset', { recursive: true })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({ path: 'output/playwright/composer-preset/menu-390.png' })
+  await page.screenshot({ path: 'output/playwright/composer-preset/menu-390' + (standalone ? '-plugin' : '') + '.png' })
   await page.keyboard.press('Escape')
   assert.equal(await menu.count(), 0)
   assert.equal(await trigger.evaluate(el=>el===document.activeElement), true)

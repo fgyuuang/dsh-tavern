@@ -2,6 +2,11 @@
 
 接口版本：**2**
 
+维护分支另提供可选的 `tavern.writingPresets` 与 `tavernUi.writingPresets` 扩展（各自 `version: 1`）：
+宿主侧 `request(method, args)` 只接受预设选择、作者设置、执行策略及中断恢复的操作；`getSession` 只返回菜单需要的模式和预设信息。
+浏览器侧 `openSettings(gameId)` 打开完整作者设置。插件应先检查扩展版本；未提供时保持原界面。
+实现示例位于 `plugins/dsh-tavern-writing-presets/`，部署到持久数据目录的 `plugins/` 后独立加载，卸载时恢复宿主菜单。
+
 DSH Tavern 把扩展功能交给第三方 **DSH 插件**：文生图、文生视频、配音，以及记忆、叙事锚点这类需要参与提示词和后台结算的功能。Tavern 提供一层稳定的接口：让插件知道「这一轮写完了、写了什么」，把图片或别的内容「挂回这一轮」，并往正文请求和后台结算里**添加**内容。多数是添加类接口，插件出错只会丢掉它自己那一份，游戏照常进行；少数替换类接口（如 `replaceSettlement`）让插件接管某个流程，插件失败时自动退回 Tavern 自己的做法。
 
 ## 三条承诺

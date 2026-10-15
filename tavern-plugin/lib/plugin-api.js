@@ -227,6 +227,8 @@ export function createTavernPluginApi(deps) {
   const service = {
     ctx: deps.ctx,
     apiVersion: TAVERN_PLUGIN_API_VERSION,
+    // Optional, separately versioned extension supplied by maintained builds.
+    writingPresets: deps.writingPresets || null,
 
     onTurnSettled(handler) {
       if (typeof handler !== 'function') throw new TypeError('onTurnSettled 需要一个函数')

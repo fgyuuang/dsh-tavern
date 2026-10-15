@@ -130,6 +130,7 @@ import { createPluginMedia, publicPluginMedia, pluginFileMediaType } from './dom
 import { createPluginData } from './domain/plugin-data.js'
 import { createPluginTurnReader } from './domain/plugin-turns.js'
 import { createTavernPluginApi } from './plugin-api.js'
+import { createWritingPresetExtension } from './domain/writing-preset-extension.js'
 import { createSceneWorldbooks, sceneWorldbookBinding } from './domain/scene-worldbook.js'
 import { createSceneImageDiagnostics, createSceneImageHostLogger, recordSceneImageInteraction } from './domain/scene-image-diagnostics.js'
 import { TAVERN_RELEASE_CAPABILITIES } from './domain/release-capabilities.js'
@@ -2766,6 +2767,14 @@ export async function apply(ctx) {
   }
   const pluginApi = createTavernPluginApi({
     ctx,
+    writingPresets: createWritingPresetExtension({ dispatch,
+      readView: async sessionId => {
+        const chat = await chatHeaderForSession(sessionId, ['mode', 'playPresetId', 'generationMode', 'runtimePresetSnapshot.presetPath', 'runtimePresetSnapshot.presetName'])
+        if (!chat || !['story', 'script'].includes(chat.mode || 'story')) return null
+        return { mode: chat.mode || 'story', playPresetId: chat.playPresetId || 'tavern', generationMode: normalizeGenerationMode(chat.generationMode),
+          runtimePreset: chat.runtimePresetSnapshot ? { id: chat.runtimePresetSnapshot.presetPath || '', name: chat.runtimePresetSnapshot.presetName || '' } : null }
+      }
+    }),
     logger: console,
     reservedToolNames: [...BACKGROUND_TOOLS, HISTORY_RECALL_TOOL].map(tool => tool?.name).concat(['character_design_finish', 'worldbook_search', 'web_search', 'skill']).filter(Boolean),
     media: pluginMedia,
