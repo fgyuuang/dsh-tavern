@@ -21,7 +21,7 @@ function createAgentWorkbenchFeatureModule() {
         useTavernUiExtensions();
         const mode = useTavernSessionMode(props.sessionId);
         const modeView = useLiveTavernView(props.sessionId, "agent-workbench-mode", [["playPresetId"], ["generationMode"]]);
-        const enabled = isPlayMode(mode) && isWritingAgentView(modeView.view);
+        const enabled = isPlayMode(mode) && (isWritingAgentPresetId(modeView.view?.playPresetId) || modeView.view?.generationMode === "sillytavern-once");
         const coordination = useTavernCoordination(props.sessionId);
         const activity = describeTavernActivity(coordination.view?.activity);
         const binding = React.useSyncExternalStore(
@@ -83,10 +83,10 @@ function createAgentWorkbenchFeatureModule() {
         }
         return h("section", { className: "dsh-agent-workbench", "aria-label": "Agent 工作台" },
             h("header", { className: "dsh-agent-workbench-head" },
-                h("div", { className: "dsh-agent-workbench-identity" }, h("span", { className: "dsh-agent-workbench-kicker" }, writingAgentTitle(modeView.view) + " · 创作空间"), h("h2", null, "Agent 工作台")),
+                h("div", { className: "dsh-agent-workbench-identity" }, h("span", { className: "dsh-agent-workbench-kicker" }, (isWritingAgentPresetId(modeView.view?.playPresetId) ? writingAgentTitle(modeView.view) : "原酒馆预设") + " · 创作空间"), h("h2", null, modeView.view?.generationMode === "sillytavern-once" ? "预设与创作" : "Agent 工作台")),
                 h("button", { ref: managementTrigger, type: "button", className: "dsh-agent-workbench-manage", disabled: !enabled, "aria-expanded": managing, "aria-controls": identity + "-modules", onClick: () => setManaging(value => !value) }, "管理模块")),
-            !enabled ? h("div", { className: "dsh-agent-workbench-empty", role: "status" }, modeView.loading ? "正在读取本局模式…" : modeView.view?.generationMode === "sillytavern-once" ? "当前使用原版酒馆 · 单次回复。作者选项可在本局设置中调整；切回 DSH Agent 后可继续使用工作台。" : "在本局设置选择梦境思客DSH或狐神抚DSH，即可打开创作工作台。DSH 原版使用原有交互界面。") : h(React.Fragment, null,
-                h("div", { className: "dsh-agent-workbench-status" }, h("span", { className: "dsh-agent-workbench-dot", "data-busy": String(activity.busy || running), "aria-hidden": true }), running && props.visible ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { role: "status" }, activity.busy ? activity.label || "正在处理本回合" : "等待你的行动"), h("span", { className: "dsh-agent-workbench-status-note" }, "当前游戏")),
+            !enabled ? h("div", { className: "dsh-agent-workbench-empty", role: "status" }, modeView.loading ? "正在读取本局模式…" : "在本局设置选择梦境思客DSH或狐神抚DSH，即可打开创作工作台。DSH 原版使用原有交互界面。") : h(React.Fragment, null,
+                h("div", { className: "dsh-agent-workbench-status" }, h("span", { className: "dsh-agent-workbench-dot", "data-busy": String(activity.busy || running), "aria-hidden": true }), running && props.visible && isWritingAgentView(modeView.view) ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { role: "status" }, running ? "正在生成回复" : activity.busy ? activity.label || "正在处理本回合" : "等待你的行动"), h("span", { className: "dsh-agent-workbench-status-note" }, "当前游戏")),
                 managing ? h("section", { ref: managementBox, id: identity + "-modules", className: "dsh-agent-workbench-modules", "aria-label": "工作台模块管理" },
                     h("div", { className: "dsh-agent-workbench-module-heading" }, h("strong", null, "按你的习惯布置"), h("button", { type: "button", onClick: () => { update(current => ({ ...current, hidden: [] })); } }, "显示全部")),
                     h("p", null, "只调整本局的界面显示。Agent 继续使用已启用的能力。"),
@@ -113,8 +113,8 @@ function createAgentWorkbenchFeatureModule() {
         const owner = ownerOf(props.ctx, props.sessionId);
         const mode = useTavernSessionMode(owner);
         const view = useLiveTavernView(owner, "agent-workbench-action", [["playPresetId"], ["generationMode"]]);
-        if (!isPlayMode(mode) || !isWritingAgentView(view.view)) return null;
-        return React.createElement("button", { type: "button", className: "dsh-tavern-btn", "aria-label": "打开 Agent 工作台", onClick: () => { void open(props.ctx, owner); } }, icon("workbench"), React.createElement("span", { className: "dsh-tavern-header-action-label" }, "Agent 工作台"));
+        if (!isPlayMode(mode) || !(isWritingAgentPresetId(view.view?.playPresetId) || view.view?.generationMode === "sillytavern-once")) return null;
+        return React.createElement("button", { type: "button", className: "dsh-tavern-btn", "aria-label": view.view?.generationMode === "sillytavern-once" ? "打开预设与创作设置" : "打开 Agent 工作台", onClick: () => { void open(props.ctx, owner); } }, icon("workbench"), React.createElement("span", { className: "dsh-tavern-header-action-label" }, view.view?.generationMode === "sillytavern-once" ? "预设设置" : "Agent 工作台"));
     }
     function register(input) {
         const ctx = input.ctx;

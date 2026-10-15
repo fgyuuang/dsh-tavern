@@ -295,7 +295,7 @@
 			function register(input) {
 				const ctx = input.ctx;
 				const slots = input.slots;
-                ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({ id: "tavern/draft", label: "正文与过程", description: "当前草稿、检查结果与执行记录", order: 20,
+                ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({ id: "tavern/draft", label: "正文与过程", description: "当前草稿、检查结果与执行记录", order: 20, when: context => isWritingAgentPresetId(context.playPresetId) && context.generationMode !== "sillytavern-once",
                     component: props => React.createElement(DreamSikeDraftTab, { sessionId: props.gameId, visible: props.visible, ctx, embedded: true })
                 }), "dsh-tavern: draft workbench module");
 			ctx.effect(function () {

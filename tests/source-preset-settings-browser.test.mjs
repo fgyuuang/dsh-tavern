@@ -160,14 +160,14 @@ test('切换会话后拒绝过期设置读取和保存响应', {
   assert.equal(await page.getByRole('combobox', { name: '文风', exact: true }).inputValue(), 'plain')
 })
 
-test('真实原预设全部 72 选项、13 组和 2 变量可访问，窄屏无横向溢出，原文只读', {
+for (const presetMode of ['dream-sike-dsh', 'tavern']) test(`真实原预设全部 72 选项、13 组和 2 变量可访问，窄屏无横向溢出，原文只读（${presetMode}）`, {
   skip: !process.env.TAVERN_BROWSER_TESTS || !process.env.TAVERN_AUTHOR_PRESET_FILE, timeout: 30000
 }, async t => {
   const text = await readFile(process.env.TAVERN_AUTHOR_PRESET_FILE, 'utf8'), preset = inspectPreset(text, 'presets/梦鲸思客V4-0915.json')
   const snapshot = { presetName: preset.title, digest: 'real-source', compatibilityPreset: preset, compatibilityPresetDocument: JSON.parse(text),
     front: { entries: preset.entries.filter(entry => entry.enabled && entry.injectable && !entry.marker).map(entry => ({ ...entry, id: entry.entryKey })) },
     middle: { entries: [] }, back: { entries: [] }, regexScripts: preset.regexScripts }
-  const settings = conversationPresetSettings(snapshot, 'dream-sike-dsh')
+  const settings = conversationPresetSettings(snapshot, presetMode)
   const page = await mount(t, () => ({ settings }))
   await page.getByRole('tab').first().waitFor()
   const seen = new Set(), variables = new Set(), groups = new Set()

@@ -8,6 +8,8 @@ async function fixture(t) {
   const browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {})
   t.after(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 } })
+  page.setDefaultTimeout(7000)
+  page.on("pageerror", error => console.error("Workbench fixture:", error.message))
   await page.route('http://workbench.test/**', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }))
   await page.goto('http://workbench.test/')
   await page.addStyleTag({ content: await readFile(new URL('../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8') + '\nbody{margin:0;background:#e4eae4;font-family:"Segoe UI",sans-serif}#root{margin:32px auto;width:1120px;height:850px;border:1px solid #d7e0d8;border-radius:16px;overflow:hidden}@media(max-width:600px){#root{width:100%;height:100dvh;margin:0;border:0;border-radius:0}}.test-module{padding:22px}.test-module h3{margin:0 0 8px;font-size:18px}.test-module p{color:#68716c;line-height:1.7}.test-module input{width:100%;max-width:450px;padding:10px;border:1px solid #d7e0d8;border-radius:7px;font:inherit}.test-module .test-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.test-module article{padding:18px;border:1px solid #d7e0d8;border-radius:10px;background:#fff}.test-module article h4{margin:0 0 7px}.test-module article p{margin:0;font-size:12px}' })
@@ -18,7 +20,12 @@ async function fixture(t) {
     window.errors=[];window.mounts=[];window.cleanups=[];window.visibility=[];window.openCalls=[];
     let currentMode='dream-sike-dsh';
     const useTavernSessionMode=()=> 'play',isPlayMode=mode=>mode==='play';
-    const useLiveTavernView=()=>({view:{playPresetId:currentMode}});
+    let generationMode="agent";
+    const isWritingAgentPresetId=id=>id==="dream-sike-dsh"||id==="hushen-dsh";
+    const writingAgentTitle=view=>view?.playPresetId==="hushen-dsh"?"狐神抚":"梦境思客";
+    const isWritingAgentView=view=>isWritingAgentPresetId(view?.playPresetId)&&view?.generationMode!=="sillytavern-once";
+    const useLiveTavernView=()=>({view:{playPresetId:currentMode,generationMode}});
+    window.setGenerationMode=value=>{generationMode=value;window.showSession()};
     const useTavernCoordination=()=>({view:{activity:{busy:false}}}),describeTavernActivity=activity=>activity;
     const DreamSikeMainTurnStatus=()=>React.createElement('span',null,'正在撰写正文');
     const listListeners=new Set(),sessionListeners=new Set();let running=false,bindingAvailable=false;
@@ -137,4 +144,16 @@ test('工作台键盘导航、模块恢复和宽窄屏无横向溢出', config, 
     assert.equal(await page.locator('.dsh-agent-workbench').evaluate(element => element.scrollWidth <= element.clientWidth), true)
     if (process.env.TAVERN_WORKBENCH_SCREENSHOT_DIR) await page.screenshot({ path: process.env.TAVERN_WORKBENCH_SCREENSHOT_DIR + '/agent-workbench-' + width + '.png', fullPage: true })
   }
+})
+
+test('single reply keeps author settings accessible and restores them when switching back', config, async t => {
+  const page = await fixture(t)
+  await page.getByLabel('settings输入').fill('保留的作者选项')
+  await page.evaluate(() => window.setGenerationMode('sillytavern-once'))
+  await page.getByRole('heading', { name: '预设与创作', exact: true }).waitFor()
+  assert.equal(await page.getByRole('tab', { name: '创作设置', exact: false }).isVisible(), true)
+  assert.equal(await page.getByLabel('settings输入').inputValue(), '保留的作者选项')
+  await page.evaluate(() => window.setGenerationMode('agent'))
+  await page.getByRole('heading', { name: 'Agent 工作台', exact: true }).waitFor()
+  assert.equal(await page.getByLabel('settings输入').inputValue(), '保留的作者选项')
 })

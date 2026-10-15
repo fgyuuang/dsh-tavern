@@ -31,6 +31,7 @@ test('the reply mode switch keeps the selected author preset and its settings vi
   await page.setContent('<div id="root"></div>')
   await page.addScriptTag({ content: await browserReactScript() + `
     const React=modules.react, rpc=window.testRpc;
+    const isWritingAgentPresetId=id=>["dream-sike-dsh","hushen-dsh"].includes(id);
     const liveTavernView={invalidate(){}},tavernCoordination={invalidate(){}};
     const notifyTavernDataChanged=()=>{},setCandidatePanel=()=>{},setCandidateGuidePanel=()=>{};
     const TavernPresetSettings=()=>React.createElement('p',{'data-author-settings':true},'Original author options');

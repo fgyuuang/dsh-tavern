@@ -932,10 +932,6 @@ window.__ModuleLoader__.load({
 					order: 100
 				}, function (props) { return React.createElement(TavernBackgroundModelLabel, Object.assign({}, props, { sessions: ctx.sessions })); }); });
 			}, "dsh-tavern: background model label");
-            ctx.effect(() => slots.inject("conversation.input.right", () => slots.register({
-                name: "conversation.input.right", id: "dsh-tavern-reasoning", order: 90
-            }, props => React.createElement(TavernComposerReasoning, { ...props, sessions: ctx.sessions }))), "dsh-tavern: composer reasoning control");
-
 			ctx.effect(function () {
 				return slots.inject("settings.section", function () { return slots.register({
 					name: "settings.section",

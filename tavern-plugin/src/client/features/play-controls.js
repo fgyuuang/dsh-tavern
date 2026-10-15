@@ -1018,12 +1018,12 @@
         function DreamSikeSettingsTab(props) {
             const h = React.createElement;
             const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
-            const live = useLiveTavernView(owner, "dream-settings", [["playPresetId"]]);
+            const live = useLiveTavernView(owner, "dream-settings", [["mode"], ["playPresetId"], ["generationMode"]]);
             return h("aside", { className: "dsh-tavern-status dsh-sike-settings-workspace", "aria-label": writingAgentTitle(live.view) + "创作设置" },
                 h("header", { className: "dsh-tavern-status-head" }, h("div", null,
                     h("strong", null, writingAgentTitle(live.view) + " · 创作设置"),
                     h("p", { className: "dsh-tavern-settings-desc" }, "本局的角色、文风与写作流程；修改从下一回合生效。"))),
-                isWritingAgentPresetId(live.view?.playPresetId) ? h(TavernPresetSettings, { key: owner, sessionId: owner }) :
+                isPlayMode(live.view?.mode) ? h(TavernPresetSettings, { key: owner, sessionId: owner, revision: live.view?.playPresetId + ":" + live.view?.generationMode }) :
                     h("p", { className: "dsh-tavern-empty" }, "当前未使用独立写作 Agent 预设。请在本局设置中选择梦境思客DSH或狐神抚DSH。"));
         }
 
@@ -1564,14 +1564,19 @@
 				body
 			);
 		}
+        // @include features/composer-preset.js
 		function register(input) {
 			const ctx = input.ctx;
 			const slots = input.slots;
 			const uiConversation = ctx.get("uiConversation") || ctx.get("conversation");
 			const executeSlash = createTavernFrameSlashExecutor(ctx);
+            ctx.effect(() => slots.inject("conversation.input.right", () => slots.register({
+                name: "conversation.input.right", id: "dsh-tavern-composer-preset", order: 90
+            }, props => React.createElement(TavernComposerPreset, { ...props, ctx }))), "dsh-tavern: composer preset menu");
+
             ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
                 id: "tavern/author-settings", label: "创作设置", description: "角色、文风、叙事与写作规则", order: 10, keepAlive: true,
-                component: props => React.createElement(TavernPresetSettings, { key: props.gameId, sessionId: props.gameId, visible: props.visible })
+                component: props => React.createElement(TavernPresetSettings, { key: props.gameId, sessionId: props.gameId, visible: props.visible, revision: props.playPresetId + ":" + props.generationMode })
             }), "dsh-tavern: author settings workbench module");
             ctx.effect(() => tavernUiExtensions.service.registerWorkbenchPanel({
                 id: "tavern/state", label: "人物与状态", description: "人物卡、当前变量与卡片界面", order: 40,

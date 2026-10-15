@@ -1,3 +1,4 @@
+import { isSingleReplyMode } from '../tavern-plugin/lib/domain/generation-mode.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -32,7 +33,7 @@ const rpcSource = readFileSync(new URL('../tavern-plugin/lib/index.js', import.m
 const rpcBody = rpcSource.split("case 'updateConversationPresetSettings': {")[1].split("case 'applyConversationPreset':")[0]
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const invoke = new AsyncFunction('args', 'str', 'chatForSession', 'groupOfMode', 'agentRegistry', 'backgroundTasks', 'tavernScriptDispatch',
-  'replayFailedTurnActive', 'updateConversationPresetSettings', 'updateChat', 'conversationPresetSettings', '{' + rpcBody)
+  'replayFailedTurnActive', 'updateConversationPresetSettings', 'updateChat', 'conversationPresetSettings', 'isSingleReplyMode', '{' + rpcBody)
 test('生产保存 RPC 只改本局快照，闲置限制和 CAS 阻止竞态，清理旧脚本', async () => {
   for (const failure of ['', 'busy', 'stale']) {
     let saved = { id: 'game', mode: 'story', _storageRevision: 3, playPresetId: 'dream-sike-dsh', runtimePresetSnapshot: presetFixture(),
@@ -42,7 +43,7 @@ test('生产保存 RPC 只改本局快照，闲置限制和 CAS 阻止竞态，�
     const promise = invoke({ sessionId: 'front', digest: 'original', changes: { entries: [{ key: 'entry-1', enabled: true }], regexScripts: [] } }, String,
       async () => structuredClone(saved), () => 'play', new Map(), { activity: () => ({ busy: failure === 'busy' }) },
       { status: () => ({ busy: false }), dispose() { disposed++ } }, () => false, updateConversationPresetSettings,
-      async (_id, updater) => { const copy = structuredClone(saved); if (failure === 'stale') copy._storageRevision++; saved = updater(copy); return saved }, conversationPresetSettings)
+      async (_id, updater) => { const copy = structuredClone(saved); if (failure === 'stale') copy._storageRevision++; saved = updater(copy); return saved }, conversationPresetSettings, isSingleReplyMode)
     if (failure) { await assert.rejects(promise, /等待|变化/); assert.deepEqual(saved, before); assert.equal(disposed, 0) }
     else {
       await promise; assert.equal(disposed, 1)
