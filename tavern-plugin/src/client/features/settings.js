@@ -107,9 +107,11 @@
                     h("option", { value: "", disabled: props.disableFallback === true }, props.fallback),
                     !known ? h("option", { value: key }, backgroundModelLabel(selection, props.catalog) + "（当前不可用）") : null,
                     props.catalog.map(group => h("optgroup", { key: group.provider, label: group.providerName || group.provider }, group.models.map(model => h("option", { key: model.id, value: JSON.stringify({ provider: group.provider, model: model.id }) }, model.name || model.id))))),
-                h("select", { className: "dsh-tavern-settings-select", "aria-label": props.label + "推理强度", value: selection?.reasoningEffort || "", disabled: props.disabled || !key || !efforts.length,
+                h("select", { className: "dsh-tavern-settings-select", "aria-label": props.label + "推理强度", value: efforts.some(item => item.id === selection?.reasoningEffort) ? selection.reasoningEffort : "", disabled: props.disabled || !key || !efforts.length,
                     onChange: event => { const next = { ...selection }; if (event.target.value) next.reasoningEffort = event.target.value; else delete next.reasoningEffort; return props.onChange(next); } },
                     h("option", { value: "" }, key ? "模型默认" : props.fallback), efforts.map(item => h("option", { key: item.id, value: item.id }, item.name || item.id)))),
+                key && reasoning.key === key && !reasoning.error && selection?.reasoningEffort && !efforts.some(item => item.id === selection.reasoningEffort)
+                    ? h("p", { className: "dsh-tavern-settings-desc" }, "此模型不支持已保存的推理强度，将使用模型默认值。") : null,
                 key && reasoning.key === key && reasoning.error ? h("p", { role: "alert" }, reasoning.error) : null);
         }
 

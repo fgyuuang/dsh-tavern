@@ -1,3 +1,4 @@
+import { compatibleReasoningConfig } from '../domain/model-reasoning-compatibility.js'
 import { synchronizeBodyEdits } from '../domain/body-editor.js'
 import { randomUUID } from 'node:crypto'
 import { lastRoundVariableChanges } from '../domain/foreground-variable-changes.js'
@@ -42,6 +43,15 @@ export function registerRequestHooks({
   tavernRetryLimiter,
 }) {
   const checkDreamSikeProgress = createDreamSikeLoopGuard()
+  // Run after downstream model selection, before the native prepareCall validates it.
+  ctx.on('agent/request', async function (payload, next) {
+    const config = await next()
+    if (config?.reasoningEffort === undefined) return config
+    const sessionId = payload.agent?.session?.id || ''
+    if (!sessionId || (!backgroundAgentRunner.owns(sessionId) && !await chatForSession(sessionId))) return config
+    return await compatibleReasoningConfig(ctx.llm, config, payload.signal)
+  }, { prepend: true })
+
   ctx.on('agent/request', async function (payload, next) {
     const sessionId = payload.agent && payload.agent.session ? payload.agent.session.id : ''
     if (sessionId !== '') {

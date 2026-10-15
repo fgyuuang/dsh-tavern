@@ -1,3 +1,4 @@
+import { compatibleReasoningConfig } from './domain/model-reasoning-compatibility.js'
 import { globalAgentPresetDefaults, saveGlobalAgentPresetDefaults } from './domain/global-agent-presets.js'
 import { ensureSessionVariableDirectory } from './domain/session-variable-directory.js'
 import { createCompatibilityTurnCompiler } from './domain/compatibility-turn.js'
@@ -383,10 +384,14 @@ export async function apply(ctx) {
     tavernSettingsDocument = await profileData.readJson(settingsPath)
     return presentTavernSettings(tavernSettingsDocument, promptDefaults())
   }
+  async function resolveTavernModelConfig(selection, signal) {
+    return await llm.resolveCallConfig(await compatibleReasoningConfig(llm, selection, signal), signal)
+  }
   async function updateTavernSettings(patch) {
     if (patch && (Object.hasOwn(patch, 'backgroundModel') || Object.hasOwn(patch, 'backgroundTasks') || Object.hasOwn(patch, 'webSearchEnabled'))) throw new Error('后台配置已移至顶栏的本局设置')
+    patch = { ...patch }
     for (const name of ['defaultForegroundModel', 'defaultBackgroundModel', 'defaultWorkbenchModel']) {
-      if (patch?.[name] != null) await llm.resolveCallConfig(patch[name])
+      if (patch?.[name] != null) patch[name] = normalizeBackgroundModel(await resolveTavernModelConfig(patch[name]))
     }
     tavernSettingsDocument = await profileData.updateJson(settingsPath, function (current) {
       return applyTavernSettingsPatch(current, patch)
@@ -619,7 +624,7 @@ export async function apply(ctx) {
     // Codex Responses API 不接受 temperature；其他模型仍保留候选温度阶梯。
     if (typeof opts.temperature === 'number' && sel.provider !== 'openai-codex') cfg.temperature = opts.temperature
     if (typeof opts.maxTokens === 'number') cfg.maxTokens = opts.maxTokens
-    const prepared = await llm.prepareCall(cfg, opts.signal)
+    const prepared = await llm.prepareCall(await compatibleReasoningConfig(llm, cfg, opts.signal), opts.signal)
     opts.signal?.throwIfAborted()
     const options = Object.assign({}, prepared.config, { messages: identifyHelperModelMessages(opts.messages), system: opts.system }, opts.signal ? { signal: opts.signal } : {})
     let text = ''
@@ -2255,11 +2260,11 @@ export async function apply(ctx) {
       ensureCardWorkspace: ensureNativeCardWorkspace,
       flush: function (session) { return sessionStore.flush(session) },
       selection: modelSelection,
-      resolveModel: selection => llm.resolveCallConfig(selection),
+      resolveModel: selection => resolveTavernModelConfig(selection),
       async selectModel(target, selection) {
         const controller = ctx.get('sessionController')
         if (!target.agent || typeof controller?.agents?.selectForNextRequest !== 'function') throw new Error('无法设置新游戏默认前台模型')
-        const resolved = await llm.resolveCallConfig(selection)
+        const resolved = await resolveTavernModelConfig(selection)
         controller.agents.selectForNextRequest(target.agent, { provider: resolved.provider, model: resolved.model, ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}) })
         await sessionStore.flush(target.session)
       }
@@ -2860,7 +2865,7 @@ export async function apply(ctx) {
     },
     update: (id, mutation) => updateChat(id, mutation, { source: 'models.switch-conversation' }),
     selection: modelSelection, catalog: tavernModelCatalog,
-    resolve: route => llm.resolveCallConfig(route), readSettings: readTavernSettings, updateSettings: updateTavernSettings,
+    resolve: route => resolveTavernModelConfig(route), readSettings: readTavernSettings, updateSettings: updateTavernSettings,
     isBusy: modelSettingsBusy,
     async select(sessionId, route) {
       const target = await waitForWritableSession({ registry: agentRegistry, sessions: sessionStore, sessionId, sleep })
