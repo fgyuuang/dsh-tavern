@@ -23,3 +23,6 @@ Pocket 入口已监听 `0.0.0.0:3081`，当前 WLAN 为 `192.168.5.153/24`。现
 ## 回滚
 
 关闭此安装的桌面程序后，以 `Copy-Item -LiteralPath 'D:\pro\DSH-Tavern\data\harness\settings.yaml.bak.20261015-075948' -Destination 'D:\pro\DSH-Tavern\data\harness\settings.yaml'` 恢复备份，再通过 `DSH Tavern.exe` 启动。备份包含其他设置，仅在确认没有后续配置编辑时整份恢复；否则只恢复上述两字段。
+## 地址选择修正
+
+用户确认原页面显示192.168.137.1:3081，实际为Windows移动热点网卡。为当前WLAN设置Pocket支持的lanIpOverride=192.168.5.153；设置字节备份位于 D:\pro\DSH-Tavern\data\harness\dsh-pocket\settings.json.bak.20261015-080228。运行中的pocket.status接口已返回正确lanUrl，重新完成密码、API及WebSocket检查；无需重启。WLAN地址变化后需在手机访问设置中重新选择当前网卡或恢复自动选择。
