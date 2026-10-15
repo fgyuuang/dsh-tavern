@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../tavern-plugin/lib/client.js', import.met
 function fixture() {
   const draft = { card: { path: 'fixture.json' }, preparationId: 'draft', index: 2, userName: '玩家', requestMode: 'dsh' }
   const state = { openingPicker: draft, picking: true, uiMode: 'play', requestMode: 'dsh' }
-  const ctx = vm.createContext({ ...state, busy: false, compatibilityAvailable: true,
+  const ctx = vm.createContext({ ...state, busy: false, mainOpening: false, compatibilityAvailable: true,
     playPrewarmRef: { current: { cancel() {} } }, cardBatch: { reset() {} },
     tavernErrorHub: { clear() {}, report() {}, resolve() {} }, setCards() {}, setMenuSession() {}, setCardEntry() {}, setError() {}, setChatImport() {}, setBusy() {},
     setOpeningPicker(value) { ctx.openingPicker = state.openingPicker = value },
@@ -15,7 +15,7 @@ function fixture() {
     setUiMode(value) { ctx.uiMode = state.uiMode = value },
     setRequestMode(value) { ctx.requestMode = state.requestMode = value },
     call: async () => ({}), history: [], groupOfMode: v => v, isPlayMode: v => v !== 'card',
-    props: { sessions: { clear() {} } }, window: { localStorage: { setItem() {} } },
+    props: { sessions: { clear() {} } }, window: { matchMedia: () => ({ matches: false }), localStorage: { setItem() {} } },
     openSessionWhenReady: async () => {}, askConfirm: async () => false,
   })
   vm.runInContext(source.slice(source.indexOf('function openPicker()'), source.indexOf('async function loadInitialResources')), ctx)

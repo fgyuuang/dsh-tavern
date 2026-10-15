@@ -1845,7 +1845,7 @@ test('native opening send resolves identity macros using the chosen player name'
   const sent = []
   const started = []
   const timing = { measure: (_name, fn) => fn(), finish() {} }
-  const sandbox = { uiMode: 'play', openingPicker: { playPresetId: 'dream-sike-dsh' }, compatibilityAvailable: false, requestMode: 'dsh',
+  const sandbox = { uiMode: 'play', openingPicker: { card: { path: 'card.json' }, foregroundModel: { provider: 'fixture', model: 'fixture' }, worldbookReady: true, playPresetId: 'dream-sike-dsh' }, compatibilityAvailable: false, requestMode: 'dsh',
     openingPerformance: { begin: () => timing }, tavernSessionTransition: { begin() {}, end() {} },
     setBusy() {}, setError(error) { if (error) throw Error(error) }, setOpeningPicker() {},
     playPrewarmRef: { current: { claim: async () => '' } },
@@ -1854,7 +1854,7 @@ test('native opening send resolves identity macros using the chosen player name'
     window: { localStorage: { setItem() {} } }, console: { info() {}, warn() {} }
   }
   vm.runInNewContext(identity + start + '\nthis.start = newConversation;', sandbox)
-  await sandbox.start({ name: '角色甲' }, 'play', 'primary', '小林', '{{user}}遇见{{char}}，{{ USER }}继续。')
+  await sandbox.start({ name: '角色甲', path: 'card.json' }, 'play', 'primary', '小林', '{{user}}遇见{{char}}，{{ USER }}继续。')
   assert.equal(started[0].playPresetId, 'dream-sike-dsh')
   assert.deepEqual(sent, [{ line: '/send 小林遇见角色甲，小林继续。|/trigger', sessionId: 'new-session' }])
 })
@@ -1870,11 +1870,11 @@ test('new game preparation offers the current default Agent without changing it'
     setBusy() {}, setError(error) { if (error) throw Error(error) },
     playPrewarmRef: { current: { begin() {}, cancel() {} } },
     openingPerformance: { begin: () => ({ finish() {} }) },
-    rpc: async method => { assert.equal(method, 'getTavernSettings'); return { settings: { defaultPlaySettings: { playerName: '玩家' } } } },
+    rpc: async method => { assert.equal(method, 'getTavernSettings'); return { settings: { defaultPlaySettings: { playerName: '玩家' }, defaultForegroundModel: { provider: 'fixture', model: 'fixture' } } } },
     call: async method => method === 'listPlayPresets' ? catalog : { preparationId: 'preview', openings: [] },
     initializeFullOpeningTemplate: async value => value,
-    setOpeningPicker: value => states.push(value),
-    compatibilityAvailable: false, requestMode: 'dsh'
+    setOpeningPicker: value => states.push(typeof value === "function" ? value(states.at(-1)) : value),
+    mainOpening: false, compatibilityAvailable: false, requestMode: 'dsh'
   }
   vm.runInNewContext(prepare + '\nthis.prepare = preparePlayConversation;', sandbox)
   await sandbox.prepare({ path: 'card' })

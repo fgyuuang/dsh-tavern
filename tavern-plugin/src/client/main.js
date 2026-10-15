@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({
 		var exports = module.exports;
 			Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 			let React = require("react");
+            const ReactDom = require("react-dom");
 			let DshUi = require("@deepseek-ai/dsh-client-ui-primitives");
 
 		// @include crypto-digest.js
