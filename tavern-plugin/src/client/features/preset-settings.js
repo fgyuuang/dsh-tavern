@@ -7,6 +7,11 @@ function TavernPresetSettings(props) {
     const [stageId, setStageId] = React.useState("role-scene"), [query, setQuery] = React.useState("");
     const [sourceDrawer, setSourceDrawer] = React.useState(null);
     const drawerElement = React.useRef(null), drawerTrigger = React.useRef(null);
+    function presetRpc(method, args = {}, sessionId) {
+        if (!props.globalDefaults) return rpc(method, args, sessionId);
+        return rpc(method === "getConversationPresetSettings" ? "getGlobalAgentPresetSettings" : "updateGlobalAgentPresetSettings",
+            { ...args, presetId: props.presetId, ...(method === "updateConversationPresetSettings" ? { revision: settings?.globalRevision } : {}) });
+    }
     const context = React.useRef({ sessionId: props.sessionId, revision: props.revision, generation: 0 });
     const saving = React.useRef(false), previousVisible = React.useRef(props.visible);
     const reads = React.useRef(0), editState = React.useRef(false);
@@ -21,11 +26,16 @@ function TavernPresetSettings(props) {
         const request = ++reads.current;
         setExternalChange(false);
         setSettings(null); setDrafts({}); setVariableDrafts({}); setBusy(false); setNotice(""); setError(""); setSourceDrawer(null);
-        rpc("getConversationPresetSettings", {}, props.sessionId).then(result => {
+        presetRpc("getConversationPresetSettings", {}, props.sessionId).then(result => {
             if (active && request === reads.current) setSettings(result.settings);
         }, error => { if (active) setError(String(error.message || error)); });
         return () => { active = false; context.current.generation += 1; };
     }, [props.sessionId, props.revision, reload]);
+    React.useEffect(function () {
+        if (!props.globalDefaults || !settings || props.globalRevision === settings.globalRevision) return;
+        if (editState.current) setExternalChange(true);
+        else setReload(value => value + 1);
+    }, [props.globalRevision]);
     React.useEffect(function () {
         let active = true;
         async function refresh(event) {
@@ -33,7 +43,7 @@ function TavernPresetSettings(props) {
             if (editState.current) { setExternalChange(true); return; }
             const request = ++reads.current;
             try {
-                const result = await rpc("getConversationPresetSettings", {}, props.sessionId);
+                const result = await presetRpc("getConversationPresetSettings", {}, props.sessionId);
                 if (!active || request !== reads.current || saving.current) return;
                 if (editState.current) { setExternalChange(true); return; }
                 setSettings(result.settings); setExternalChange(false); setSourceDrawer(null);
@@ -68,15 +78,16 @@ function TavernPresetSettings(props) {
         reads.current += 1;
         setBusy(true); setError(""); setNotice("");
         try {
-            const result = await rpc("updateConversationPresetSettings", { digest: settings.digest, changes }, request.sessionId);
+            const result = await presetRpc("updateConversationPresetSettings", { digest: settings.digest, changes }, request.sessionId);
             if (!isCurrent()) return;
-            setSettings(result.settings); setDrafts({}); setExternalChange(false); setNotice("已保存到本局，从下一回合生效");
+            setSettings(result.settings); setDrafts({}); setExternalChange(false); setNotice(props.globalDefaults ? "已永久保存为此 Agent 预设的默认配置，新游戏自动继承" : "已保存到本局，从下一回合生效");
+            props.onSaved?.(result);
             if (changes.sourceAction?.value !== undefined) setVariableDrafts(current => {
                 const next = { ...current };
                 delete next[changes.sourceAction.groupId + ":" + changes.sourceAction.optionId];
                 return next;
             });
-            liveTavernView.invalidate(request.sessionId);
+            if (!props.globalDefaults) liveTavernView.invalidate(request.sessionId);
             notifyTavernDataChanged(["sessions"], "preset-settings");
         } catch (error) { if (isCurrent()) setError(String(error.message || error)); }
         finally { if (isCurrent()) { saving.current = false; setBusy(false); } }
@@ -115,7 +126,7 @@ function TavernPresetSettings(props) {
             h("label", null, h("input", { type: "checkbox", checked: value.enabled, disabled: busy,
                 "aria-label": "启用 " + item.name, onChange: event => patch(kind, item, { enabled: event.target.checked }) }), "启用该规则"),
             item.execution ? h("p", { className: "dsh-tavern-settings-desc" }, item.execution) : null,
-            kind === "entries" ? h("label", null, "本局规则内容", h("textarea", { rows: 8, maxLength: 100000, readOnly: item.editableContent === false,
+            kind === "entries" ? h("label", null, props.globalDefaults ? "默认规则内容" : "本局规则内容", h("textarea", { rows: 8, maxLength: 100000, readOnly: item.editableContent === false,
                 className: "dsh-tavern-preset-entry-editor", "aria-label": item.name + "规则内容", value: value.content,
                 disabled: busy, onChange: event => patch(kind, item, { content: event.target.value }) })) : null);
     }
@@ -161,7 +172,7 @@ function TavernPresetSettings(props) {
                     input.description || input.compatibility?.reason ? h("details", { className: "dsh-agent-preset-help" }, h("summary", null, "用法说明"),
                         input.description ? h("p", null, input.description) : null,
                         input.compatibility?.reason ? h("p", null, input.compatibility.reason) : null) : null,
-                    h("small", null, "保存到本局"),
+                    h("small", null, props.globalDefaults ? "保存为全局默认" : "保存到本局"),
                     compatibility(input),
                     h("button", { type: "button", className: "dsh-tavern-btn",
                         disabled: busy || hasDrafts || input.available === false || value === String(input.value == null ? "" : input.value),
@@ -239,7 +250,7 @@ function TavernPresetSettings(props) {
                     h("p", null, search ? "显示所有分类中匹配的功能" : agentEnabled ? current.description || "选择后立即保存，从下一回合生效" : "原预设选项，选择后从下一回合生效")),
                 groups.length ? h("div", { className: "dsh-agent-preset-groups" }, groups.map(sourceGroup)) : h("p", null, search ? "没有匹配的功能" : "此阶段暂无可配置选项")),
             h("details", { className: "dsh-agent-preset-advanced" }, h("summary", null, "高级设置：规则、正则与脚本"), advanced()),
-            h("footer", { className: "dsh-agent-preset-footer" }, h("span", null, settings.presetName || "原预设"), h("span", null, "仅影响本局 · 下一回合生效")),
+            h("footer", { className: "dsh-agent-preset-footer" }, h("span", null, settings.presetName || "原预设"), h("span", null, props.globalDefaults ? "全局模板 · 永久保存 · 新游戏继承" : "仅影响本局 · 下一回合生效")),
             sourceDrawer ? h("div", { className: "dsh-agent-preset-overlay", onClick: event => { if (event.target === event.currentTarget) setSourceDrawer(null); } },
                 h("dialog", { "aria-modal": "true", "aria-label": "来源提示词原文", className: "dsh-agent-preset-drawer", ref: drawerElement,
                     onCancel: event => { event.preventDefault(); setSourceDrawer(null); },
@@ -253,7 +264,7 @@ function TavernPresetSettings(props) {
                         }
                     } },
                     h("div", { className: "dsh-agent-preset-drawer-heading" }, h("h3", null, "来源与原文"), h("button", { type: "button", "aria-label": "关闭来源原文", onClick: () => setSourceDrawer(null) }, "关闭")),
-                    h("p", null, "原作者提示词仅供查看，选项与高级设置保存在本局。"),
+                    h("p", null, props.globalDefaults ? "沿用原作者提示词，选项与高级设置永久保存在本预设的全局模板中。" : "原作者提示词仅供查看，选项与高级设置保存在本局。"),
                     settings.sourceSettings.groups.filter(group => !sourceDrawer.groupId || sourceDrawer.groupId === group.id).map(group =>
                         h("section", { key: group.id }, h("h4", null, group.label), (group.options || []).map(option =>
                             h("details", { key: option.id, className: "dsh-agent-preset-source-row" }, h("summary", null, option.label + (option.enabled ? " · 已开启" : "")),
@@ -268,16 +279,16 @@ function TavernPresetSettings(props) {
             }),
             settings.regexScripts.length ? h("details", null, h("summary", null, "正则与渲染（" + settings.regexScripts.length + "）"), settings.regexScripts.map(item => row("regexScripts", item))) : null,
             settings.helperScripts.length ? h("details", null, h("summary", null, "预设脚本与 Agent 接管"), settings.helperScripts.map((script, index) => h("p", { key: index }, script.name + "：" + (script.configured ? "原配置启用；" : "原配置关闭；") + script.execution))) : null,
-            h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !hasDrafts, onClick: save }, busy ? "保存中…" : "保存本局预设设置"),
+            h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !hasDrafts, onClick: save }, busy ? "保存中…" : props.globalDefaults ? "永久保存默认预设配置" : "保存本局预设设置"),
             h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !hasDrafts, onClick: () => setDrafts({}) }, "撤销未保存修改"));
     }
     return h("section", { "aria-label": "预设功能设置", className: settings?.sourceSettings ? "dsh-agent-preset" : "dsh-local-field" },
         !settings?.sourceSettings ? h("h3", null, "预设功能设置") : null,
-        !settings?.sourceSettings ? h("p", { className: "dsh-tavern-settings-desc" }, "本局的文风、剧情分析和格式规则会进入 Agent 请求。展开规则可查看原文或修改；保存仅影响本局。") : null,
+        !settings?.sourceSettings ? h("p", { className: "dsh-tavern-settings-desc" }, props.globalDefaults ? "保存作者规则与功能选项的全局默认副本，新游戏自动继承。" : "本局的文风、剧情分析和格式规则会进入 Agent 请求。展开规则可查看原文或修改；保存仅影响本局。") : null,
         settings ? h(React.Fragment, null,
-            settings.sourceSettings ? workbench() : h(React.Fragment, null, h("p", null, settings.presetName || "本局没有引用酒馆预设"), advanced())) : h("p", null, "正在读取本局预设…"),
-        externalChange ? h("div", { role: "status" }, "本局设置已在其他页面更新，未保存的编辑已保留。", h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: () => setReload(value => value + 1) }, "重新载入（放弃未保存修改）")) : null,
-        error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, busy ? "正在保存本局预设设置…" : notice));
+            settings.sourceSettings ? workbench() : h(React.Fragment, null, h("p", null, settings.presetName || "本局没有引用酒馆预设"), advanced())) : h("p", null, props.globalDefaults ? "正在读取全局预设…" : "正在读取本局预设…"),
+        externalChange ? h("div", { role: "status" }, props.globalDefaults ? "全局默认已变化，未保存的编辑已保留。" : "本局设置已在其他页面更新，未保存的编辑已保留。", h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: () => setReload(value => value + 1) }, "重新载入（放弃未保存修改）")) : null,
+        error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, busy ? (props.globalDefaults ? "正在保存全局默认预设…" : "正在保存本局预设设置…") : notice));
 }
 
 function TavernReturnToStory(props) {

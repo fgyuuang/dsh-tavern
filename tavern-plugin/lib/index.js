@@ -1,3 +1,4 @@
+import { globalAgentPresetDefaults, saveGlobalAgentPresetDefaults } from './domain/global-agent-presets.js'
 import { ensureSessionVariableDirectory } from './domain/session-variable-directory.js'
 import { createCompatibilityTurnCompiler } from './domain/compatibility-turn.js'
 import { registerTavernHttpRoutes } from './http/routes.js'
@@ -2245,6 +2246,7 @@ export async function apply(ctx) {
     userPreferenceProfile,
     presets: runtimePresets,
     settings: readTavernSettings,
+    presetDefaults: async presetId => globalAgentPresetDefaults(await profileData.readJson(settingsPath), presetId),
     emptyCardWorkspace,
     id: uid,
     native: {
@@ -3910,7 +3912,8 @@ export async function apply(ctx) {
         return {
           presets: listPlayPresets({ chat, settings, legacyPresetTitle: chat?.runtimePresetSnapshot?.presetName }),
           currentPlayPresetId: chat ? normalizePlayPresetId(chat.playPresetId) : null,
-          defaultPlayPresetId: normalizePlayPresetId(settings.defaultPlayPresetId)
+          defaultPlayPresetId: normalizePlayPresetId(settings.defaultPlayPresetId),
+          generationModes: Object.fromEntries(['tavern', 'dream-sike-dsh', 'hushen-dsh'].map(id => [id, globalAgentPresetDefaults(tavernSettingsDocument, id).generationMode]))
         }
       }
       case 'applyPlayPreset': {
@@ -4008,6 +4011,31 @@ export async function apply(ctx) {
           return current
         }, { source: 'dream-sike.execution-policy' })
         return { policy: normalizeDreamSikeExecutionPolicy(saved.dreamSikeExecutionPolicy), busy: false, nextTurn: true }
+      }
+      case 'getGlobalAgentPresetSettings': {
+        const presetId = args?.presetId
+        const document = await profileData.readJson(settingsPath)
+        const defaults = globalAgentPresetDefaults(document, presetId)
+        const snapshot = defaults.snapshot || await runtimePresets.fullSnapshotForPlayPreset(presetId)
+        return { settings: { ...conversationPresetSettings(snapshot, defaults.generationMode === 'sillytavern-once' ? 'tavern' : presetId),
+          globalRevision: defaults.revision }, generationMode: defaults.generationMode,
+          executionPolicy: defaults.executionPolicy || normalizeDreamSikeExecutionPolicy(document?.defaultPlaySettings?.dreamSikeExecutionPolicy) }
+      }
+      case 'updateGlobalAgentPresetSettings': {
+        const presetId = args?.presetId
+        const document = await profileData.readJson(settingsPath)
+        const defaults = globalAgentPresetDefaults(document, presetId)
+        if (defaults.revision !== args?.revision) throw new Error('全局预设已变化，请重新载入')
+        const generationMode = args?.generationMode ?? defaults.generationMode
+        let snapshot = defaults.snapshot || await runtimePresets.fullSnapshotForPlayPreset(presetId)
+        if (args?.changes) snapshot = updateConversationPresetSettings(snapshot, args.changes, args.digest,
+          generationMode === 'sillytavern-once' ? 'tavern' : presetId)
+        const executionPolicy = args?.executionPolicy || defaults.executionPolicy || document?.defaultPlaySettings?.dreamSikeExecutionPolicy
+        tavernSettingsDocument = await profileData.updateJson(settingsPath, current => saveGlobalAgentPresetDefaults(current, presetId,
+          { snapshot, generationMode, executionPolicy }, args.revision))
+        const saved = globalAgentPresetDefaults(tavernSettingsDocument, presetId)
+        return { settings: { ...conversationPresetSettings(saved.snapshot, generationMode === 'sillytavern-once' ? 'tavern' : presetId),
+          globalRevision: saved.revision }, generationMode: saved.generationMode, executionPolicy: saved.executionPolicy }
       }
       case 'getConversationPresetSettings': {
         const sessionId = str(args?.sessionId)

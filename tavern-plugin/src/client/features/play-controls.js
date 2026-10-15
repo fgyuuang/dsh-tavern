@@ -942,22 +942,7 @@
                 }, failure => { if (active) setError(String(failure.message || failure)); });
                 return () => { active = false; };
             }, [reload]);
-            async function setDefault(presetId) {
-                if (busy || !catalog || presetId === catalog.defaultPlayPresetId) return;
-                setBusy(true); setError(""); setNotice("");
-                try {
-                    const result = await rpc("setDefaultPlayPreset", { presetId });
-                    setCatalog(current => ({ ...current, defaultPlayPresetId: result.defaultPlayPresetId }));
-                    setNotice("已保存为新游戏默认，已有游戏保持当前配置。");
-                    window.dispatchEvent(new CustomEvent("dsh-tavern-settings-changed"));
-                } catch (failure) { setError(String(failure.message || failure)); }
-                finally { setBusy(false); }
-            }
             return h("div", { className: "dsh-tavern-gs-card dsh-local-settings" },
-                h("label", { className: "dsh-local-field" }, "新游戏默认 Agent 预设",
-                    h("select", { className: "dsh-tavern-settings-select", "aria-label": "新游戏默认 Agent 预设", disabled: !catalog || busy,
-                        value: catalog?.defaultPlayPresetId || "tavern", onChange: event => setDefault(event.target.value) },
-                        (catalog?.presets || []).map(item => h("option", { key: item.id, value: item.id }, item.name)))),
                 h("p", { className: "dsh-local-help" }, "预设功能选项保存在各局中。请选择要配置的游戏，可直接修改回复方式、Agent 预设、作者选项和调用预算。"),
                 h("label", { className: "dsh-local-field" }, "配置已有游戏",
                     h("select", { className: "dsh-tavern-settings-select", "aria-label": "选择要配置预设的游戏", disabled: !catalog || busy,

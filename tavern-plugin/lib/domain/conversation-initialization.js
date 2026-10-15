@@ -130,7 +130,8 @@ export function createConversationInitialization(options) {
     }
     const macroState = { userName: str(userName).trim().slice(0, 80) || defaults.playerName, local: {}, global: {} }
     const selectedPlayPresetId = groupOfMode(chatMode) === 'play' ? normalizePlayPresetId(playPresetId || currentSettings.defaultPlayPresetId) : 'tavern'
-    const runtimePresetSnapshot = groupOfMode(chatMode) === 'play' ? await playPresetSnapshot(selectedPlayPresetId) : null
+    const presetDefaults = groupOfMode(chatMode) === 'play' && options.presetDefaults ? await options.presetDefaults(selectedPlayPresetId) : null
+    const runtimePresetSnapshot = groupOfMode(chatMode) === 'play' ? (presetDefaults?.snapshot || await playPresetSnapshot(selectedPlayPresetId)) : null
     // The card workbench opens empty: no greeting is shown or sent to the model.
     let openingSourceText = chatMode === 'card' ? '' : resolveCardOpening(card, openingId)
     const openingExtensions = chatMode === 'card' ? null : await cards.extensions(cardPath)
@@ -169,9 +170,9 @@ export function createConversationInitialization(options) {
     const openingTarget = typeof sessionId === 'string' && sessionId !== '' ? await native.wait(sessionId) : undefined
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
     chat.playPresetId = selectedPlayPresetId
-    chat.generationMode = groupOfMode(chatMode) === 'play' ? normalizeGenerationMode(generationMode) : 'agent'
+    chat.generationMode = groupOfMode(chatMode) === 'play' ? normalizeGenerationMode(generationMode ?? presetDefaults?.generationMode) : 'agent'
     if (['dream-sike-dsh', 'hushen-dsh'].includes(selectedPlayPresetId)) {
-      chat.dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy(defaults.dreamSikeExecutionPolicy)
+      chat.dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy(presetDefaults?.executionPolicy || defaults.dreamSikeExecutionPolicy)
     }
     chat.bypassPlanId = runtimePresetSnapshot && runtimePresetSnapshot.planId || ''
     chat.runtimePresetSnapshot = runtimePresetSnapshot

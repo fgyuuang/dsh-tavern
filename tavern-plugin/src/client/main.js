@@ -940,6 +940,11 @@ window.__ModuleLoader__.load({
 					label: function () { return "DSH Tavern"; }
 				}, TavernSettingsSection); });
 			}, "dsh-tavern: settings section");
+            ctx.effect(() => slots.inject("settings.section", () => slots.register({
+                name: "settings.section", id: "dsh-tavern-agent-presets", order: 111,
+                label: () => "Agent 预设"
+            }, AgentPresetSettingsSection)), "dsh-tavern: global Agent presets");
+
 
 			ctx.effect(function () {
 				const dispose = ctx.betterSidebar.registerTab({ id: "dsh-tavern:system-prompts", title: "系统提示词", order: 5, single: true, component: SystemPromptSidebarTab });
