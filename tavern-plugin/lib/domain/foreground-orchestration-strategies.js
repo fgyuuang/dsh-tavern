@@ -7,7 +7,7 @@ import { markRequestHandled, requestHandledBy } from './request-lineage.js'
 import { writingAgentInstruction } from './writing-agent-contract.js'
 import { dreamSikeAgentInstruction } from './dream-sike-mode.js'
 import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
-import { projectInterruptedReply } from './interrupted-reply.js'
+import { isInterruptedReplyResume, projectInterruptedReply } from './interrupted-reply.js'
 import { inputKind } from './session-turn-input.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
@@ -229,7 +229,11 @@ export function createCompatibilityOrchestrationStrategy(options) {
     if (isSingleReplyMode(chat) && Number(payload.step) > 1) throw new Error('原版酒馆模式只进行一次正文生成，不继续工具调用；已生成内容保留在执行记录中。')
     const userText = userTextOf(payload.messages)
     if (Number(payload.step) === 1) {
-      await options.beforeTurn({ sessionId, chat, userText })
+      // The original player message already ran MESSAGE_SENT before its first
+      // attempt. A continuation reuses that same input and must not replay card
+      // scripts against a virtual/nonexistent message floor.
+      const resumingInterruptedReply = isSingleReplyMode(chat) && isInterruptedReplyResume(chat, payload.turn)
+      if (!resumingInterruptedReply) await options.beforeTurn({ sessionId, chat, userText })
       const begun = await options.beginTurn({ sessionId, turn: payload.turn, requestId: input.requestId, userText })
       if (begun && begun.duplicate) throw new Error('该消息已由酒馆处理，请勿重复发送')
       chat = await options.chatForSession(sessionId)

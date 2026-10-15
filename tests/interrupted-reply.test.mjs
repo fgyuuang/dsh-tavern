@@ -95,16 +95,13 @@ test('watchdog preserves delivered text and aborts a transport that never finish
   const chunks = []
   async function* stalled(signal) { providerSignal = signal; yield { type: 'text-delta', text: 'partial' }; await new Promise(() => {}) }
   await assert.rejects(async () => {
-    for await (const chunk of boundedReplyStream(stalled, undefined, { idleMs: 15, totalMs: 1000 })) chunks.push(chunk)
+    for await (const chunk of boundedReplyStream(stalled, undefined, { idleMs: 15 })) chunks.push(chunk)
   }, /90 秒/)
   assert.equal(chunks[0].text, 'partial')
   assert.equal(providerSignal.aborted, true)
 })
 
-test('watchdog bounds generation before first text, propagates cancel, and closes successful streams', async () => {
-  await assert.rejects(async () => {
-    for await (const _ of boundedReplyStream(async function* () { await new Promise(() => {}) }, undefined, { totalMs: 15 })) {}
-  }, /8 分钟/)
+test('watchdog propagates cancellation and closes successful streams', async () => {
   const controller = new AbortController()
   const stream = boundedReplyStream(async function* () { controller.abort(Error('cancelled')); await new Promise(() => {}) }, controller.signal)
   await assert.rejects(stream.next(), /cancelled/)

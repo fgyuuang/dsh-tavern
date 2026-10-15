@@ -39,14 +39,24 @@ function contract(chat) {
 
 function currentResume(chat, turn) {
   const marker = chat?.interruptedReplyResume
-  if (!marker || marker.nextTurn !== Number(turn) || chat.nativeCommits?.[String(turn)]) return null
+  if (!marker) return null
+  if (marker.nextTurn !== Number(turn) || chat.nativeCommits?.[String(turn)]) {
+    throw new Error('中断正文的续写位置与当前回合不一致，请刷新对话后重试；不要从头覆盖已保留正文')
+  }
   if (!isSingleReplyMode(chat) || marker.sessionId !== chat.sessionId
     || marker.branchId !== chat.timeline?.branchId || marker.storyRevision !== chat.timeline?.revision
-    || marker.contract !== contract(chat)) throw new Error('中断正文的分支或预设已变化，请重新生成本轮')
+    || marker.contract !== contract(chat)) throw new Error('中断正文的分支或预设已变化，无法安全续写；已保留正文仍在对话中，请恢复原分支与预设，或明确选择从头重新生成')
+  if (typeof marker.text !== 'string' || !marker.text.trim()) throw new Error('中断正文恢复点为空，请从对话中确认保留内容后再试')
   return marker
 }
 
+export function isInterruptedReplyResume(chat, turn) {
+  return currentResume(chat, turn) !== null
+}
+
 export function singleReplyText(chat, turn, suffix) {
+  const pending = chat?.interruptedReplyResume
+  if (pending && pending.failedTurn === Number(turn) && pending.nextTurn === Number(turn) + 1) return pending.text
   const marker = currentResume(chat, turn)
   return marker ? mergeInterruptedReply(marker.text, suffix)
     : String(chat.compatibilityTraces?.[String(turn)]?.assistantPrefill || '') + suffix
@@ -103,7 +113,12 @@ export function collectInterruptedReplies(chat, session, turn) {
 export function projectInterruptedReply(messages, chat, turn) {
   const marker = currentResume(chat, turn)
   if (!marker) return messages
-  return [...messages,
+  // The saved prefix already contains the imported preset's assistant prefill.
+  // Replaying that prefill before the prefix can make the model restart its
+  // opening instead of continuing after the last saved character.
+  const withoutDuplicatePrefill = messages.filter(message =>
+    message?.source?.kind !== 'assistant-prefill' && message?.source?.trace?.kind !== 'assistant-prefill')
+  return [...withoutDuplicatePrefill,
     // Pi-AI's foreign-assistant adapter requires every assistant history item to
     // carry a source. These ephemeral messages are request-only and must never
     // be appended to the native session surface.

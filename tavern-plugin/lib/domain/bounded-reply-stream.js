@@ -1,9 +1,9 @@
 // Bounds only foreground Tavern single replies, never background/compaction.
 // Abort the provider as well as the consumer, even if the provider ignores abort.
-export async function* boundedReplyStream(open, signal, { totalMs = 480000, idleMs = 90000 } = {}) {
+export async function* boundedReplyStream(open, signal, { idleMs = 90000 } = {}) {
   const controller = new AbortController()
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
-  let totalTimer, idleTimer, iterator
+  let idleTimer, iterator
   let fail
   const failed = new Promise((_, reject) => { fail = reject })
   // Register a handler immediately so cancellation during a suspended yield is safe.
@@ -17,7 +17,6 @@ export async function* boundedReplyStream(open, signal, { totalMs = 480000, idle
   combined.addEventListener('abort', aborted, { once: true })
   try {
     combined.throwIfAborted()
-    totalTimer = setTimeout(() => timeout('本次正文生成已达到 8 分钟时限，收到的内容已保留，可继续本回合'), totalMs)
     iterator = open(combined)[Symbol.asyncIterator]()
     while (true) {
       const result = await Promise.race([iterator.next(), failed])
@@ -30,7 +29,6 @@ export async function* boundedReplyStream(open, signal, { totalMs = 480000, idle
       yield chunk
     }
   } finally {
-    clearTimeout(totalTimer)
     clearTimeout(idleTimer)
     combined.removeEventListener('abort', aborted)
     if (!controller.signal.aborted) controller.abort()

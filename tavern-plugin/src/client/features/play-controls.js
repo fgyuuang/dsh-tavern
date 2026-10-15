@@ -573,7 +573,8 @@
             if (view.generationMode === "sillytavern-once") {
                 const response = await rpc("getInterruptedReply", { sessionId, turn }, sessionId);
                 current();
-                return submitFailedTurnReplay(sessionId, response.draft ? { turn, digest: response.draft.digest } : undefined);
+                if (!response?.draft?.digest) throw new Error("没有找到可验证的续写正文。已保存内容仍留在本回合；请刷新后重试，或明确选择从头重新生成。");
+                return submitFailedTurnReplay(sessionId, { turn, digest: response.draft.digest });
             }
             if (isWritingAgentView(view)) {
                 const response = await rpc("getDraftView", { sessionId }, sessionId);
