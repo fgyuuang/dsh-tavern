@@ -2964,6 +2964,10 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 .dsh-composer-preset-trigger { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; max-width: 150px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary, inherit); font: inherit; font-size: 12px; cursor: pointer; }
 .dsh-composer-preset-trigger:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.1)); }
 .dsh-composer-preset-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-tavern-interrupted-preview { flex-basis: 100%; min-width: 0; max-width: 100%; }
+.dsh-tavern-interrupted-archive { min-width: 0; max-width: 100%; margin: 12px 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; font-size: 13px; }
+.dsh-tavern-interrupted-preview summary { cursor: pointer; padding: 8px 0; }
+.dsh-tavern-interrupted-preview pre { max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; }
 .dsh-composer-preset-menu { box-sizing: border-box; position: fixed; z-index: 1000; width: min(340px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 16px; border: 1px solid var(--dsw-alias-border-l2, #d9dfd9); border-radius: 12px; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #28352c); box-shadow: 0 8px 32px #0002; font-size: 13px; }
 .dsh-composer-preset-menu header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .dsh-composer-preset-menu label { display: grid; gap: 6px; margin: 12px 0; }

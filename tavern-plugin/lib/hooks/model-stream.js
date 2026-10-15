@@ -8,6 +8,7 @@ import { presentModelError } from '../domain/model-error-presentation.js'
 import { markRequestAttempt, markRequestHandled, requestAttemptOf, requestHandledBy } from '../domain/request-lineage.js'
 import { randomUUID } from 'node:crypto'
 import { isSingleReplyMode, isWritingAgentExecution } from '../domain/generation-mode.js'
+import { boundedReplyStream } from '../domain/bounded-reply-stream.js'
 
 
 export function registerModelStreamHooks({
@@ -100,6 +101,11 @@ export function registerModelStreamHooks({
         'requestMode', 'compatibilityTraces', 'bypassPlanId', 'runtimePresetSnapshot', 'foregroundFrames',
         'playPresetId', 'dreamSikeExecutionPolicy', 'generationMode'
       ])
+      if (isSingleReplyMode(chat) && !backgroundContext && options.purpose === undefined
+        && !requestHandledBy(options, 'bounded-single-reply')) {
+        yield * boundedReplyStream(signal => ctx.llm.stream(markRequestHandled({ ...options, signal }, 'bounded-single-reply')), options.signal)
+        return
+      }
       // Apply the same seed projection to writing and maintenance requests. Re-entry
       // preserves the attempt identity and counts only the final provider dispatch.
       if (isWritingAgentExecution(chat)) {

@@ -13,6 +13,7 @@ import { rollbackAvailability, clearFailedTurnSurface, locateRegenerationSurface
 import { assertRegenerationSourceCurrent, replaceLastRound } from './last-round-replacement.js'
 import { diagnosticIdentity, regenerationTargetDiagnostic } from './regeneration-diagnostics.js'
 import { planDreamSikeDraftResume } from './dream-sike-draft.js'
+import { planInterruptedReplyResume } from './interrupted-reply.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -488,7 +489,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
   // and nothing to replace. Clearing its residue restores the exact request
   // prefix the provider already cached; replaying the same input then only pays
   // for the completion that was interrupted.
-  async function replayFailedTurn(chatId, sessionId, resumeDraft = null) {
+  async function replayFailedTurn(chatId, sessionId, resumeDraft = null, resumeReply = null) {
     if (sessionPatch && !sessionPatch.replacementAllowed()) throw new Error(sessionPatch.blockReason())
     const chat = str(chatId) === '' ? await chatForSession(sessionId) : await readChat(chatId)
     if (chat === undefined || chat === null) throw new Error('聊天不存在: ' + chatId)
@@ -514,9 +515,16 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
         target = candidate
       }
     }
+    if (!target && resumeReply && chat.interruptedReplyResume?.digest === resumeReply.digest) {
+      const candidate = replayableFailedTurn({ events })
+      if (candidate?.turn === chat.interruptedReplyResume.failedTurn
+        && candidate.turn === Number(resumeReply.turn)) target = candidate
+    }
     if (target === null) throw new Error(replay.reason)
     const resume = resumeDraft ? planDreamSikeDraftResume(chat, { ...resumeDraft, failedTurn: target.turn }) : null
-    if (resume && agent.inbox?.hasPending) throw new Error('续写输入已排队，请等待原生 Agent 完成恢复')
+    if (resumeReply && Number(resumeReply.turn) !== target.turn) throw new Error('中断回合已变化，请刷新后继续')
+    const replyResume = resumeReply ? planInterruptedReplyResume(chat, session, target.turn, resumeReply.digest) : null
+    if ((resume || replyResume) && agent.inbox?.hasPending) throw new Error('续写输入已排队，请等待原生 Agent 完成恢复')
     // Read the card before spending a generation: a broken card must fail here,
     // not after the new turn has already committed.
     const card = await readChatCard(chat)
@@ -531,8 +539,10 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       await updateChat(chat.id, function (current) {
         if (current === null || typeof current !== 'object') return current
         const currentResume = resume ? planDreamSikeDraftResume(current, { ...resumeDraft, failedTurn: target.turn }) : null
+        const currentReply = replyResume ? planInterruptedReplyResume(current, session, target.turn, resumeReply.digest) : null
         return {
           ...current,
+          interruptedReplyResume: currentReply,
           ...(currentResume ? { dreamSikeResume: currentResume } : {}),
           suppressedDshTurns: Array.from(new Set([...(Array.isArray(current.suppressedDshTurns) ? current.suppressedDshTurns : []), target.turn]))
             .sort(function (left, right) { return left - right }),
@@ -557,11 +567,13 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       if (resume) result.resumedDraft = { fromTurn: target.turn, version: resume.sourceVersion }
       return result
     } catch (error) {
-      if (resume && !queued) {
+      if ((resume || replyResume) && !queued) {
         await updateChat(chat.id, current => {
-          if (current?.dreamSikeResume?.sourceOperationId !== resume.sourceOperationId) return undefined
+          if (resume && current?.dreamSikeResume?.sourceOperationId !== resume.sourceOperationId) return undefined
+          if (replyResume && current?.interruptedReplyResume?.digest !== replyResume.digest) return undefined
           const next = { ...current }
-          delete next.dreamSikeResume
+          if (resume) delete next.dreamSikeResume
+          if (replyResume) next.interruptedReplyResume = chat.interruptedReplyResume || null
           next.suppressedDshTurns = (Array.isArray(next.suppressedDshTurns) ? next.suppressedDshTurns : []).filter(turn => Number(turn) !== target.turn)
           return next
         }, { source: 'replay.draft-unqueue' })

@@ -27,7 +27,7 @@ export function projectChatSessionState(chat, options = {}) {
   // Legacy timeline inspection migrates a foreground body using its full text.
   if (Object.values(chat.timeline?.operations || {}).some(operation =>
     operation?.kind === 'body' && operation.status === 'foreground-completed')) return { ...copyJsonTree(chat), pendingMvuSettlement }
-  const selected = { pendingMvuSettlement, dreamSikeDraftState: dreamSikeDraftStatus(chat) }
+  const selected = { pendingMvuSettlement, dreamSikeDraftState: dreamSikeDraftStatus(chat), interruptedReplyArchive: chat.interruptedReplyArchive || [] }
   for (const key of ['id', 'sessionId', '_storageRevision', 'mode', 'cardPath', 'cardContextRevision', 'playPresetId', 'playPresetRevision', 'playPresetSettingsIndependent', 'generationMode', 'generationModeRevision', 'gameMemory', 'projectId',
     'backgroundConfigVersion', 'conversationFeaturesVersion', 'disabledWritingSkills', 'contextCompaction', 'updatedAt', 'timeline', 'candidateAgent',
     'cardName', 'requestMode', 'statusBarPlacement', 'webSearchEnabled', 'candidates', 'dreamSikeFollowup', 'taskMailbox', 'regenInProgress',

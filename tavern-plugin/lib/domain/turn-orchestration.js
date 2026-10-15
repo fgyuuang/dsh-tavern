@@ -821,6 +821,12 @@ export function createTurnOrchestrator(options) {
         draft.settleStatus = 'pending'
         draft.settleError = null
         draft.foregroundError = null
+        if (draft.interruptedReplyResume?.nextTurn === turn) {
+          const resumedTurn = draft.interruptedReplyResume.failedTurn
+          draft.interruptedReplyArchive = (draft.interruptedReplyArchive || []).map(row =>
+            row.branchId === draft.timeline?.branchId && row.turn === resumedTurn ? { ...row, status: 'completed' } : row)
+          delete draft.interruptedReplyResume
+        }
         draft.presentationWarnings = Array.isArray(reply.warnings) ? clone(reply.warnings) : []
         if (isSingleReplyMode(draft)) consumeScriptPrompts(draft)
         rememberCommit(draft, turn, { mode, userText, requestId, scriptReference }, before, now)

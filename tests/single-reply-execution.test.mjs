@@ -10,6 +10,8 @@ import { compileSillyTavernRequest } from '../tavern-plugin/lib/domain/sillytave
 import { resolveRuntimeMacroText } from '../tavern-plugin/lib/domain/runtime-content-projection.js'
 import { normalizeGenerationMode, selectGenerationMode } from '../tavern-plugin/lib/domain/generation-mode.js'
 import { registerTurnLifecycleHooks } from '../tavern-plugin/lib/hooks/turn-lifecycle.js'
+import { planInterruptedReplyResume, collectInterruptedReplies } from '../tavern-plugin/lib/domain/interrupted-reply.js'
+import { projectPlayPresetSnapshot } from '../tavern-plugin/lib/domain/dream-sike-mode.js'
 
 const clone = value => structuredClone(value)
 const body = '<正文>房门缓缓打开，她停在门边等待你的回答。</正文>\n<parallel>另一条街上，信使带走了密封的信。</parallel>\n<options>1. 询问来意\n2. 请她进屋</options>\n<UpdateVariable><JSONPatch>[{"op":"replace","path":"/hp","value":9}]</JSONPatch></UpdateVariable>'
@@ -36,6 +38,32 @@ function turnFixture(playPresetId, overrides = {}) {
     cards: {}, scripts: {}, workspace: {}, projectReply: projectReplyLayers, now: () => 1000 })
   return { orchestrator, timeline, writes, chat: () => clone(chat) }
 }
+
+test('a retained prefix is submitted with its continuation once, archives survive, variables wait for settlement', async () => {
+  const seed = { sessionId: 'session', generationMode: 'sillytavern-once', playPresetId: 'dream-sike-dsh', runtimePresetSnapshot: { digest: 'author-options', front: { entries: [] }, regexScripts: [] },
+    timeline: { schemaVersion: 1, checkpoints: [], branchId: 'branch', revision: 2, operations: { old: { id: 'old', kind: 'body', turn: 1, status: 'failed', basedOn: { branchId: 'branch', revision: 2 } } } } }
+  const savedSession = { events: [{ seq: 1, type: 'assistant/attempt', data: { turn: 1, stream: [{ type: 'text-chunks', texts: ['<正文>前半篇。'] }] } }] }
+  const archived = collectInterruptedReplies(seed, savedSession, 1)
+  const { readInterruptedReply } = await import('../tavern-plugin/lib/domain/interrupted-reply.js')
+  const marker = planInterruptedReplyResume(seed, savedSession, 1, readInterruptedReply(seed, savedSession, 1).digest)
+  const fixture = turnFixture('dream-sike-dsh', { timeline: seed.timeline, interruptedReplyResume: marker, interruptedReplyArchive: archived.interruptedReplyArchive })
+  await fixture.orchestrator.beginCompatibility({ sessionId: 'session', turn: 2, requestId: 'resume', userText: '开门。' })
+  const hooks = new Map(), replacements = []
+  registerTurnLifecycleHooks({ ctx: { on: (name, callback) => hooks.set(name, callback) }, backgroundAgentRunner: { requestContext() {}, owns: () => false },
+    fullTemplateRuntime: { cancel() {} }, clearRuntimePresetRequestState() {}, chatForSession: async () => fixture.chat(),
+    userMessageForTurn: () => clone(userMessage), contentText: value => value.content[0].text, requestIdForTurn: () => 'resume',
+    foregroundHandoff: { finalize: input => fixture.orchestrator.finalize(input) }, turnOrchestrator: fixture.orchestrator,
+    replaceAssistantReply: (_session, _result, text) => replacements.push(text) })
+  const session = { id: 'session', events: [{ type: 'assistant/message', data: { turn: 2, message: { source: { kind: 'model' }, content: [{ type: 'text', text: '后半篇。</正文>' }] } } }] }
+  await hooks.get('agent/turn-stopping')({ agent: { session }, turn: 2 })
+  assert.equal(fixture.chat().messages.at(-1).sourceText, '<正文>前半篇。后半篇。</正文>')
+  assert.deepEqual(replacements, ['<正文>前半篇。后半篇。</正文>'])
+  assert.equal(fixture.chat().interruptedReplyResume, undefined)
+  assert.equal(fixture.chat().interruptedReplyArchive[0].status, 'completed')
+  assert.deepEqual(fixture.chat().variables, { hp: 10 })
+  await hooks.get('agent/turn-stopping')({ agent: { session }, turn: 2 })
+  assert.equal(fixture.chat().messages.length, 3)
+})
 
 for (const presetId of ['tavern', 'dream-sike-dsh', 'another-author-preset']) {
   test('single reply commits one complete body through Timeline with preset ' + presetId, async () => {
@@ -147,7 +175,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 function rpcCase(name, next) {
   const body = rpcSource.split("case '" + name + "': {")[1]?.split("case '" + next + "':")[0]
   assert.ok(body, 'Production RPC case exists: ' + name)
-  return new AsyncFunction('args', 'dependencies', `const {str,chatForSession,groupOfMode,agentRegistry,sessionActivity,tavernScriptDispatch,replayFailedTurnActive,normalizeGenerationMode,selectGenerationMode,updateChat,backgroundTasks,fullTemplateRuntime,foregroundStrategies}=dependencies; {${body}`)
+  return new AsyncFunction('args', 'dependencies', `const {str,chatForSession,groupOfMode,agentRegistry,sessionActivity,tavernScriptDispatch,replayFailedTurnActive,normalizeGenerationMode,selectGenerationMode,projectPlayPresetSnapshot,updateChat,backgroundTasks,fullTemplateRuntime,foregroundStrategies}=dependencies; {${body}`)
 }
 const getMode = rpcCase('getGenerationMode', 'setGenerationMode')
 const setMode = rpcCase('setGenerationMode', 'getDreamSikeExecutionPolicy')
@@ -165,7 +193,7 @@ function rpcFixture(failure = '') {
   if (failure === 'foreground') agentRegistry.set('session', { phase: { kind: 'running' } })
   const events = []
   let updating = false
-  const dependencies = { str: value => String(value || ''), normalizeGenerationMode, selectGenerationMode, agentRegistry,
+  const dependencies = { str: value => String(value || ''), normalizeGenerationMode, selectGenerationMode, projectPlayPresetSnapshot, agentRegistry,
     chatForSession: async () => clone(saved), groupOfMode: mode => mode === 'card' ? 'card' : 'play',
     sessionActivity: async () => ({ busy: failure === 'background' }),
     tavernScriptDispatch: { status: () => ({ busy: failure === 'script' }), dispose: id => events.push('dispose:' + id) },

@@ -21,8 +21,10 @@ async function fixture(t) {
     const historyProjection={};const setRegenPanel=()=>{};const setCandidatePanel=()=>{};const setCandidateGuidePanel=()=>{};
     const notifyTavernDataChanged=()=>{};const tavernCoordination={invalidate:()=>{}};
     const applyBodyRegenerationResult=result=>window.applied.push(result);
-    const submitFailedTurnReplay=async id=>{window.replays.push(id);return {ok:true}};
-    const rpc=async(method,args,id)=>{window.calls.push({method,args,id});if(method==='getDraftView')return {draft:window.savedDraft};return new Promise(resolve=>window.resolveResume=resolve)};
+    const isWritingAgentView=view=>view.playPresetId==='dream-sike-dsh' && view.generationMode!=='sillytavern-once';
+    const submitFailedTurnReplay=async(id,reply)=>{window.replays.push(reply?{id,reply}:id);return {ok:true}};
+    window.interruptedReply={turn:8,digest:'partial-digest',preview:'保留正文<script>window.unsafe=true</script>',characters:50};
+    const rpc=async(method,args,id)=>{window.calls.push({method,args,id});if(method==='getDraftView')return {draft:window.savedDraft};if(method==='getInterruptedReply')return {draft:window.interruptedReply};return new Promise(resolve=>window.resolveResume=resolve)};
     ${component}
     const root=modules['react-dom/client'].createRoot(document.getElementById('root'));
     window.show=(patch={},running=false)=>{view={...view,...patch};root.render(React.createElement(TavernInterruptedContinuation,{sessionId:'session',view,running}))};
@@ -43,6 +45,24 @@ test('中断提示直接继续现有草稿，防止双击重复排队并保持�
   await page.waitForFunction(() => window.applied.length === 1)
   assert.equal(await page.locator('#player-input').inputValue(), '尚未发送的新行动')
   assert.deepEqual(await page.evaluate(() => window.replays), [])
+})
+
+test('single reply shows retained text in chat safely and explicitly continues its digest', config, async t => {
+  const page = await fixture(t)
+  await page.evaluate(() => window.show({ generationMode: 'sillytavern-once', dreamSikeDraftState: null }))
+  await page.getByText('保留正文（未提交）', { exact: true }).waitFor()
+  assert.equal(await page.locator('details').evaluate(element => element.open), true)
+  assert.match(await page.locator('pre').textContent(), /保留正文<script>/)
+  assert.equal(await page.evaluate(() => window.unsafe), undefined)
+  await page.getByRole('button', { name: '继续本回合' }).click()
+  await page.waitForFunction(() => window.replays.length === 1)
+  assert.deepEqual(await page.evaluate(() => window.replays[0]), { id: 'session', reply: { turn: 8, digest: 'partial-digest' } })
+  await page.evaluate(() => window.show({ canReplayFailedTurn: false, interruptedReplyArchive: [
+    { branchId: 'branch', turn: 8, seq: 2, preview: '持久保存的正文', characters: 8, status: 'interrupted' }
+  ] }, true))
+  await page.getByText('持久保存的正文', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: '继续本回合' }).count(), 0)
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth<=window.innerWidth), true)
 })
 test('手动停止没有错误节点时也显示继续入口；没有草稿则重放原输入', config, async t => {
   const page = await fixture(t)

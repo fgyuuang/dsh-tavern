@@ -1,6 +1,7 @@
 import { sessionEvents } from './session-events.js'
 import { randomUUID } from 'node:crypto'
 import { exhaustedModelQuota } from './model-error-presentation.js'
+import { interruptedAttempt } from './interrupted-reply.js'
 
 const POLICY_KEY = 'dsh-tavern:max-attempts:2'
 const MAX_RETRIES = 1
@@ -46,6 +47,10 @@ export function createTavernRetryLimiter(options = {}) {
     if (!await owns(payload.agent)) return next()
     if (payload.failure?.code === 'DREAM_SIKE_REQUEST_LIMIT') return undefined
     if (exhaustedModelQuota(payload.failure)) return undefined
+    // A retry starts an alternative completion and discards the visible prefix.
+    // Once text exists, let the user explicitly continue the retained reply.
+    if (interruptedAttempt(payload.agent?.session, payload.turn, payload.step)) return undefined
+    if (payload.failure?.code === 'TIMEOUT') return undefined
     if (!retryable(payload)) return next()
     const session = payload.agent && payload.agent.session
     if (!session || typeof session.append !== 'function') return next()

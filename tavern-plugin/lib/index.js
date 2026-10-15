@@ -190,6 +190,7 @@ import { OFFICIAL_MVU_VERSION, inspectOfficialMvuAsset } from './domain/official
 import { createTavernStaticResourceCache } from './domain/tavern-static-resource-cache.js'
 import { SILLYTAVERN_CSS_COMPAT_URLS } from './domain/sillytavern-css-compatibility.js'
 import { createRoundHistory } from './domain/round-history.js'
+import { collectInterruptedReplies, readInterruptedReply } from './domain/interrupted-reply.js'
 import { createResourceWorkspaceProjection } from './domain/resource-workspace-projection.js'
 import { projectAgentContent, projectAgentMessageText, projectRuntimeReply } from './domain/runtime-content-projection.js'
 import { createScriptContinuity } from './domain/script-continuity.js'
@@ -1920,6 +1921,7 @@ export async function apply(ctx) {
       generationMode: normalizeGenerationMode(chat.generationMode),
       interactionProfile: playPresetInteractionProfile(chat.playPresetId, chat.generationMode),
       dreamSikeDraftState: isSingleReplyMode(chat) ? null : dreamSikeDraftStatus(chat),
+      interruptedReplyArchive: chat.interruptedReplyArchive || [],
       dreamSikeFollowup: dreamSikeFollowupView(chat),
       requestMode: chat.requestMode === 'sillytavern' ? 'sillytavern' : 'dsh',
       playerName: str(chat.macroState && chat.macroState.userName).trim() || '你',
@@ -2080,6 +2082,7 @@ export async function apply(ctx) {
       generationMode: normalizeGenerationMode(chat.generationMode),
       interactionProfile: playPresetInteractionProfile(chat.playPresetId, chat.generationMode),
       dreamSikeDraftState: isSingleReplyMode(chat) ? null : (chat.dreamSikeDraftState || dreamSikeDraftStatus(chat)),
+      interruptedReplyArchive: chat.interruptedReplyArchive || [],
       dreamSikeFollowup: dreamSikeFollowupView(chat),
       forkTurnsByMessageId: forkTurnsForChat(chat) }
   }
@@ -4586,7 +4589,30 @@ export async function apply(ctx) {
       case 'getBodyEdit': return { edit: await bodyEditor.read(args && args.sessionId) }
       case 'saveBodyEdit': return { view: await bodyEditor.save(args && args.sessionId, args) }
       case 'regenBody': return { view: await regenBody(args && args.chatId, args && args.guidance, args && args.sessionId) }
-      case 'replayTurn': return { view: await replayFailedTurn(args && args.chatId, args && args.sessionId) }
+      case 'getInterruptedReply': {
+        const sessionId = str(args?.sessionId)
+        if (!sessionId) throw new Error('缺少待恢复的酒馆会话')
+        if (!agentRegistry.get(sessionId)?.session) await agentRegistry.resume({ resumeSessionId: sessionId })
+        const agent = agentRegistry.get(sessionId), chat = await chatForSession(sessionId)
+        if (!chat || !isSingleReplyMode(chat) || agent?.phase?.kind === 'running') return { draft: null }
+        let target = failedTurnReplayAvailability({ events: sessionEvents(agent?.session),
+          nodes: agent?.session?.surface?.nodes || [], cleared: chat.suppressedDshTurns || [] }).target
+        if (!target && chat.interruptedReplyResume?.failedTurn === Number(args?.turn)) {
+          const candidate = replayableFailedTurn({ events: sessionEvents(agent?.session) })
+          if (candidate?.turn === Number(args.turn)) target = candidate
+        }
+        if (!target || target.turn !== Number(args?.turn)) return { draft: null }
+        const draft = readInterruptedReply(chat, agent.session, target.turn)
+        // Old installations already persisted partial streams in the native log.
+        // Recover their readable versions into this conversation on first access.
+        if (draft) await updateChat(chat.id, current => collectInterruptedReplies(current, agent.session, target.turn), { source: 'foreground.recover-interrupted' })
+        return { draft: draft ? { turn: draft.turn, digest: draft.digest, preview: draft.preview, characters: draft.characters } : null }
+      }
+      case 'replayTurn': {
+        const sessionId = str(args?.sessionId)
+        if (sessionId && !agentRegistry.get(sessionId)?.session) await agentRegistry.resume({ resumeSessionId: sessionId })
+        return { view: await replayFailedTurn(args?.chatId, sessionId, null, args?.continueReply || null) }
+      }
       case 'setAllFailedErrorVisibility': {
         const sessionId = str(args && args.sessionId)
         const chat = await chatForSession(sessionId)
@@ -4952,6 +4978,7 @@ export async function apply(ctx) {
     sessionStore,
     turnOrchestrator,
     userMessageForTurn,
+    updateChat,
   })
 
   // ---------- 模型可选工具 ----------

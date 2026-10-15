@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { dreamSikeExecutionStageForPhase } from '../domain/dream-sike-execution-usage.js'
 import { isSingleReplyMode, isWritingAgentExecution } from '../domain/generation-mode.js'
+import { collectInterruptedReplies, singleReplyText } from '../domain/interrupted-reply.js'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
@@ -34,6 +35,7 @@ export function registerTurnLifecycleHooks({
   sessionStore,
   turnOrchestrator,
   userMessageForTurn,
+  updateChat,
 }) {
   const incompleteStops = new WeakMap()
   ctx.on('agent/turn-stopping', async function (payload) {
@@ -111,7 +113,7 @@ export function registerTurnLifecycleHooks({
       userText,
       userContent,
       assistantText: dreamMode ? draft.text : (isSingleReplyMode(chat)
-        ? String(chat.compatibilityTraces?.[String(payload.turn)]?.assistantPrefill || '') + (assistant?.text || '')
+        ? singleReplyText(chat, payload.turn, assistant?.text || '')
         : (assistant === null ? '' : assistant.text))
     })
     if (saved.reply) replaceAssistantReply(session, assistant, saved.reply.sessionText)
@@ -126,6 +128,11 @@ export function registerTurnLifecycleHooks({
     foregroundStrategies.endTurn(session.id)
     if (backgroundAgentRunner.owns(session.id)) return
     const reason = event.data && event.data.reason ? event.data.reason.kind : ''
+    if (['error', 'aborted'].includes(reason) && updateChat) {
+      void chatForSession(session.id).then(chat => chat && updateChat(chat.id,
+        current => collectInterruptedReplies(current, session, event.data.turn), { source: 'foreground.preserve-interrupted' }))
+        .catch(error => console.error('dsh-tavern: 保留中断正文失败', String(error?.message || error)))
+    }
     foregroundHandoff.end({ sessionId: session.id, turn: event.data && event.data.turn, reason })
   })
 

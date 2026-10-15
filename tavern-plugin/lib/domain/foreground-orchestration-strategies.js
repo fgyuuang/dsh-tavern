@@ -7,6 +7,7 @@ import { markRequestHandled, requestHandledBy } from './request-lineage.js'
 import { writingAgentInstruction } from './writing-agent-contract.js'
 import { dreamSikeAgentInstruction } from './dream-sike-mode.js'
 import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
+import { projectInterruptedReply } from './interrupted-reply.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 
@@ -218,7 +219,7 @@ export function createCompatibilityOrchestrationStrategy(options) {
     stagedRequests.set(sessionId, {
       turn: Number(payload.turn) || 0,
       step: Number(payload.step) || 0,
-      messages: options.projectMessages(compiled),
+      messages: isSingleReplyMode(chat) ? projectInterruptedReply(options.projectMessages(compiled), chat, payload.turn) : options.projectMessages(compiled),
       singleReply: isSingleReplyMode(chat),
       generationOptions: compiled.generationOptions || {}
     })
