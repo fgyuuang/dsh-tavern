@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { Session } from './fixtures/dsh-session-host.mjs'
 import { sessionEvents } from '../tavern-plugin/lib/domain/session-events.js'
-import { createForegroundOrchestrationStrategies, createNativePlayOrchestrationStrategy, createCompatibilityOrchestrationStrategy } from '../tavern-plugin/lib/domain/foreground-orchestration-strategies.js'
+import { CARD_REFERENCE_SECTION_LIMIT, CARD_REFERENCE_WORLDBOOK_LIMIT, createForegroundOrchestrationStrategies, createNativePlayOrchestrationStrategy, createCompatibilityOrchestrationStrategy } from '../tavern-plugin/lib/domain/foreground-orchestration-strategies.js'
 import { ensureSessionStablePrefix, sessionStablePrefixSections } from '../tavern-plugin/lib/domain/session-stable-prefix.js'
 import { ensureSessionSeedTrajectory } from '../tavern-plugin/lib/domain/session-seed-trajectory.js'
 
@@ -178,6 +178,61 @@ test('新版 DSH 文件工具只向卡片 Agent 开放，不泄漏给正文 Agen
   assert.deepEqual(await assembledToolNames('story'), ['tavern_recall_history'])
 })
 
+test('新旧两代文件编辑工具同时存在时，只给模型新版，省去重复的旧编辑器 schema', async () => {
+  async function names(available) {
+    const run = strategies({ nativePlay: { async modeFor() { return 'card' }, async visibleTools() { return available }, workspaceContext() { return '' }, controlledToolNames: new Set(available) } })
+    const assembly = await run.value.assembleSystemPrompt({ sections: [], contexts: [], tools: available.map(name => ({ name })) }, { sessionId: 'native', chat: { mode: 'card' }, cwd: '/w' })
+    return assembly.tools.map(tool => tool.name)
+  }
+  assert.deepEqual(await names(['str_replace_editor', 'read', 'edit', 'write']), ['read', 'edit', 'write'])
+  assert.deepEqual(await names(['str_replace_editor']), ['str_replace_editor'])
+})
+
+test('卡片 Agent 参考资料只预载较短的常驻世界书，超长时改为按需读取提示', async () => {
+  async function worldbookSection(text) {
+    const run = strategies({
+      nativePlay: {
+        async modeFor() { return 'card' },
+        async visibleTools() { return [] },
+        cardReferencePrompt() { return '参考说明' },
+        workspaceContext() { return '' },
+        controlledToolNames: new Set()
+      }
+    })
+    const assembly = await run.value.assembleSystemPrompt({ sections: [], contexts: [], tools: [] }, {
+      sessionId: 'native', chat: { mode: 'card' }, cwd: '/workspace',
+      fixedSystemSections: [
+        { name: 'tavern:character-card', text: '【故事设定 · 人物卡】\n名字: 甲' },
+        { name: 'tavern:constant-worldbook', text: '【常驻世界书】\n' + text }
+      ]
+    })
+    assert.deepEqual(assembly.sections.map(section => section.name), ['tavern:card-reference', 'tavern:character-card', 'tavern:constant-worldbook'])
+    return assembly.sections[2].text
+  }
+
+  assert.equal(await worldbookSection('短条目'), '【常驻世界书】\n短条目')
+  const long = await worldbookSection('长'.repeat(CARD_REFERENCE_WORLDBOOK_LIMIT + 1))
+  assert.match(long, /^【常驻世界书】\n共约 8001 字，超过预载上限/)
+  assert.match(long, /tavern_read_worldbook/)
+  assert.doesNotMatch(long, /长长/)
+})
+
+test('卡片 Agent 参考资料中超长的人物卡设定与系统提示改为按字段读取提示', async () => {
+  const run = strategies({ nativePlay: { async modeFor() { return 'card' }, async visibleTools() { return [] }, cardReferencePrompt() { return '参考说明' }, workspaceContext() { return '' }, controlledToolNames: new Set() } })
+  const long = '长'.repeat(CARD_REFERENCE_SECTION_LIMIT)
+  const assembly = await run.value.assembleSystemPrompt({ sections: [], contexts: [], tools: [] }, {
+    sessionId: 'native', chat: { mode: 'card' }, cwd: '/w',
+    fixedSystemSections: [
+      { name: 'tavern:character-card', text: '【故事设定 · 人物卡】\n名字: 甲\n\n设定: ' + long },
+      { name: 'tavern:card-system-prompt', text: '【人物卡系统提示】\n' + long }
+    ]
+  })
+  const [, card, system] = assembly.sections
+  assert.match(card.text, /^【故事设定 · 人物卡】\n名字: 甲\n人物卡设定共约 \d+ 字，超过预载上限.*tavern_read_card/)
+  assert.match(system.text, /^【人物卡系统提示】\n共约 \d+ 字.*system_prompt/)
+  assert.doesNotMatch(card.text + system.text, /长长/)
+})
+
 for (const sessionId of ['native']) test('regeneration gates ordinary and stale inputs before preparation: '+sessionId,async()=>{
   const run=strategies();const chat=run.chats.get(sessionId)
   chat.regenInProgress=true;chat.regenRecovery={id:'current'}
@@ -250,4 +305,28 @@ test('请求证据标出系统消息中的预设前段，供请求上下文界�
   assert.deepEqual(request.messages[0].source.sections, [{ name: 'tavern:runtime-preset-front', text: '预设前置' }])
   assert.deepEqual(request.messages[0].content, system.content, '发给模型的内容不变')
   assert.equal(system.source.sections, undefined, '轨迹中的消息不被修改')
+})
+
+test('预设后段骰子同一轮各步一致，新一轮或重新生成重新抽', async () => {
+  const backs = []
+  const run = strategies({ nativePlay: {
+    async modeFor() { return 'story' },
+    filterMessages(messages) { return messages },
+    async resolvePreset() { return { back: { entries: [{ id: 'b', role: 'system', content: '骰子 {{roll::1d1000000}}' }] } } },
+    async prepareTurn() { return { frame: { userInput: { projectedText: '输入' } } } },
+    appendFrame(input) { return { messages: input.messages, receipt: {} } },
+    recordFrame() {}, async visibleTools() { return [] },
+    modePrompt() { return '正文任务' }, controlledToolNames: new Set()
+  } })
+  const stepOf = async (turn, step) => {
+    const incoming = [userMessage('新输入')]
+    await run.value.prepareStep({ sessionId: 'native', payload: { turn, step, messages: incoming }, decision: { kind: 'enter', messages: incoming }, chat: run.chats.get('native') })
+    const request = run.value.projectRequest({ sessionId: 'native', system: 's', messages: incoming })
+    backs.push(request.messages.at(-1).content[0].text.match(/骰子 (\d+)/)[1])
+    run.value.clearRequestState('native')
+  }
+  await stepOf(1, 1); await stepOf(1, 2); await stepOf(1, 1); await stepOf(2, 1)
+  assert.equal(backs[0], backs[1], '同一轮后续步骤沿用结果')
+  assert.notEqual(backs[1], backs[2], '同一轮重新开始（重新生成）重新抽')
+  assert.notEqual(backs[2], backs[3], '下一轮重新抽')
 })

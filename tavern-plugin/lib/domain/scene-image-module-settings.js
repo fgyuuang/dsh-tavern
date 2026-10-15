@@ -24,8 +24,9 @@ function previewBytes(value) {
 }
 function document(value = {}) {
   // Opt in explicitly; keep saved choices when reading older configurations.
-  if (!Object.keys(value).length) return { version: 4, provider: 'openai', enabled: false, style: imageStyleSettings(), providers: {} }
-  if ([2, 3, 4].includes(value.version)) return { ...value, provider: value.provider || 'openai', enabled: value.enabled === true, style: imageStyleSettings(value.style), providers: { ...value.providers } }
+  // auto: draw each new round once it settles. Off unless the player turns it on (it costs per round).
+  if (!Object.keys(value).length) return { version: 4, provider: 'openai', enabled: false, auto: false, style: imageStyleSettings(), providers: {} }
+  if ([2, 3, 4].includes(value.version)) return { ...value, provider: value.provider || 'openai', enabled: value.enabled === true, auto: value.auto === true, style: imageStyleSettings(value.style), providers: { ...value.providers } }
   return { version: 2, provider: 'openai', enabled: value.enabled === true, style: imageStyleSettings(value.style), providers: { openai: channelSettings(value, 'openai') } }
 }
 
@@ -42,7 +43,7 @@ export function createModuleSceneImageSettings({ store, credentials, imageModule
     const migration = Boolean(legacy && current.provider !== 'dsh-image-gen')
     const value = migration ? { ...current, ...channelSettings(legacy, current.provider), migrationPending: true } : current
     const oldKey = resolveKey && migration && channelNeedsKey(value) ? await credentials()?.resolve(imageCredentialRef(value.provider, value.authType)) : undefined
-    return { ...value, enabled: doc.enabled,
+    return { ...value, enabled: doc.enabled, auto: doc.auto === true,
       ready: !migration && current.ready, hasKey: migration ? Boolean(oldKey?.value) : current.hasKey,
       style: doc.style, stylePresets: SCENE_STYLE_PRESETS, activeProvider: doc.provider === 'dsh-image-gen' ? current.provider : doc.provider }
   }
@@ -65,12 +66,13 @@ export function createModuleSceneImageSettings({ store, credentials, imageModule
     configure: (input = {}) => serial(async () => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('生图配置必须是对象')
       if (input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new Error('启用状态必须为布尔值')
+      if (input.auto !== undefined && typeof input.auto !== 'boolean') throw new Error('自动生图开关必须为布尔值')
       const doc = document(await store.readJson(path) || {})
       const current = await read(input.provider)
       const id = current.provider
       const changesProvider = id !== (doc.provider === 'dsh-image-gen' ? current.activeProvider : doc.provider)
-      const edits = Object.keys(input).some(key => !['provider', 'enabled'].includes(key))
-      if (input.enabled === true && (changesProvider || edits)) throw new Error('请先保存完整生图配置，再手动启用')
+      const edits = Object.keys(input).some(key => !['provider', 'enabled', 'auto'].includes(key))
+      if (input.enabled === true && (changesProvider || edits || !current.ready)) throw new Error('请先保存完整生图配置（渠道、模型和 API Key），再开启场景生图')
       let next = current
       if (edits) {
         const style = imageStyleSettings({ ...doc.style, ...input.style })
@@ -100,7 +102,8 @@ export function createModuleSceneImageSettings({ store, credentials, imageModule
         const providers = { ...latest.providers }
         if (!next.migrationPending) { delete providers[id]; if (latest.provider === 'dsh-image-gen') delete providers['dsh-image-gen'] }
         return { ...latest, version: 4, provider: id, providers, style: doc.style,
-          enabled: input.enabled ?? doc.enabled }
+          // A switch left on cannot outlive the configuration it was turned on for.
+          enabled: (input.enabled ?? doc.enabled) && Boolean(next.ready), auto: (input.auto ?? doc.auto) === true }
       })
       return read()
     }),

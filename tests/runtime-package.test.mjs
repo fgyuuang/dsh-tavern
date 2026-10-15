@@ -113,3 +113,15 @@ for (const format of ['tar', 'zip']) {
     }
   })
 }
+
+test('依赖补丁每个文件段都以 diff --git 标头开头（pnpm 12 拒绝缺标头的补丁，#194）', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs')
+  const dir = new URL('../patches/', import.meta.url)
+  for (const name of readdirSync(dir).filter(file => file.endsWith('.patch'))) {
+    const lines = readFileSync(new URL(name, dir), 'utf8').split(/\r?\n/)
+    assert.match(lines[0], /^diff --git a\/\S+ b\/\S+$/, name)
+    lines.forEach((line, index) => {
+      if (line.startsWith('--- a/') && lines[index + 1]?.startsWith('+++ b/')) assert.ok(lines.slice(Math.max(0, index - 4), index).some(item => item.startsWith('diff --git ')), name + ' 第 ' + (index + 1) + ' 行')
+    })
+  }
+})

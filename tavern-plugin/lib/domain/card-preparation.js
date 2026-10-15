@@ -1,3 +1,4 @@
+import { withTavernCredit } from './card-credit.js'
 import { inspectCardExtensions } from './card-extension-reading.js'
 
 const TEXT_FIELDS = Object.freeze([
@@ -407,9 +408,7 @@ export function createCardPreparation(options = {}) {
       data.tags = normalizedList(draft.tags, 30)
       data.alternate_greetings = normalizedGreetings(draft.alternate_greetings, 20)
       if (object(draft.character_book)) data.character_book = clone(draft.character_book)
-      const notes = str(data.creator_notes).trim()
-      const provenance = '[卡片工作台] ' + (Array.isArray(request.sourcePaths) ? request.sourcePaths.join(',') : (Array.isArray(request.sourceIds) ? request.sourceIds.join(',') : '')) + '\n[玩家] ' + (player || '未确认（旧会话）')
-      data.creator_notes = notes === '' ? provenance : notes + '\n' + provenance
+      data.creator_notes = withTavernCredit(data.creator_notes)
       return makeWorkspace({ spec: 'chara_card_v3', spec_version: '3.0', data }, { id: nextId(), importedAt: now(), revisionHistory: [] })
     }
     throw new Error('未知人物卡准备类型: ' + str(request.kind))
@@ -497,6 +496,13 @@ export function createCardPreparation(options = {}) {
     }
     if (applyWorldBookOperations(data, request.worldBookOperations) && !changedFields.includes('character_book')) changedFields.push('character_book')
     data.name = str(data.name).trim() || '未命名角色'
+    // V2/V3 exports keep V1 copies of some fields at the root; edited fields
+    // update both so readers of either copy (and the Agent checking the file) agree.
+    if (data !== workspace.raw) {
+      for (const field of changedFields) {
+        if (field !== 'character_book' && CARD_FIELDS.has(field) && Object.prototype.hasOwnProperty.call(workspace.raw, field)) workspace.raw[field] = clone(data[field])
+      }
+    }
     if (changedFields.length > 0) {
       workspace.meta.updatedAt = now()
       if (request.revision !== undefined && request.revision !== null) {
@@ -515,7 +521,8 @@ export function createCardPreparation(options = {}) {
     if (request.as === 'raw-section') {
       const pointer = str(request.pointer)
       const value = rawAt(rawOf(request.card), pointer)
-      const serialized = JSON.stringify(value, null, 2)
+      // Compact JSON: indentation would be resent on every later step.
+      const serialized = JSON.stringify(value)
       const text = serialized === undefined ? 'null' : serialized
       const offset = Number.isInteger(request.offset) && request.offset > 0 ? request.offset : 1
       const limit = Number.isInteger(request.limit) ? Math.max(1, Math.min(request.limit, 12000)) : 6000
@@ -563,6 +570,7 @@ export function createCardPreparation(options = {}) {
     project,
     update,
     present,
+    raw: rawOf,
     textFields: TEXT_FIELDS
   })
 }

@@ -47,7 +47,7 @@ async function harness({ beginRunning = true, mvu = true } = {}) {
   }).chat
   const running = beginRunning ? await tasks.begin(current, 'settlement') : null
   const sandbox = vm.createContext({
-    createSettlementProgressGuard, readSettlementInput, chatPersistence: { readWindow: async () => null }, readOpeningWindow: async () => null,
+    createSettlementProgressGuard, readSettlementInput, chatPersistence: { readWindow: async () => null }, readOpeningWindow: async () => null, serverScripts: null,
     taskStateReader: { forSession: async () => projectChatSessionState(await store.readChat()) },
     collectMvuHelperContext, normalizeBackgroundTasks, pendingMvuSettlementState, structuredClone, Date, AbortController, console: { log() {}, error() {} },
     str: value => value == null ? '' : String(value),
@@ -75,7 +75,8 @@ async function harness({ beginRunning = true, mvu = true } = {}) {
     agentRegistry: { get: () => undefined }, sessionStore: { get: () => undefined },
     LEDGER_SUBMIT_TOOL, LEDGER_RULES, ledgerContext, createLedgerSubmission,
     conversationRegistry: { list: async () => [] }, ctx: { effect() {} },
-    mvuSettlement: { settleVariables: async () => ({ receipt: { version: 1, status: 'unchanged', changes: [] } }) }
+    mvuSettlement: { settleVariables: async () => ({ receipt: { version: 1, status: 'unchanged', changes: [] } }) },
+    pluginApi: { replaceSettlement: async () => null }
   })
   sandbox.mvuReceiptsOf = createSessionStateView({activity:chat=>tasks.activity(chat),evidence:()=>({})}).receipts
   vm.runInContext(section('  function pendingMvuTarget(', '  async function mvuUpdateRules('), sandbox)
@@ -183,6 +184,27 @@ test('non-MVU settlement binds session before first response so interruption can
   const next = await restarted.begin(h.get(), 'candidate');
   assert.equal(next.participantRequest.sessionId, 'background-first-interrupted');
 });
+
+test('插件替换结算：采用插件交回的姿势，不再运行 Tavern 自己的后台结算；插件退回时照常运行', async () => {
+  const h = await harness({ beginRunning: false, mvu: false })
+  const applied = [], requests = []
+  let runs = 0
+  h.sandbox.applySettlement = (_draft, result) => { applied.push(result); return { postureUpdated: Boolean(result.posture) } }
+  h.sandbox.backgroundAgentRunner.run = async input => { runs++; await input.onToolCall({ name: 'posture_submit', arguments: { posture: 'Tavern 的姿势' } }); return { text: '' } }
+  h.sandbox.pluginApi.replaceSettlement = async input => { requests.push(input); return { owner: 'anchor', posture: '插件的姿势' } }
+  await h.sandbox.queueSettlement('chat')
+  assert.equal(runs, 0)
+  assert.deepEqual(JSON.parse(JSON.stringify(applied)), [{ posture: '插件的姿势' }])
+  assert.deepEqual(JSON.parse(JSON.stringify([requests[0].gameId, requests[0].turn, requests[0].text, requests[0].tasks])), ['session', 2, '门开了', { posture: true }])
+  assert.equal(h.get().settleStatus, 'done')
+
+  const fallback = await harness({ beginRunning: false, mvu: false })
+  const fellBack = []
+  fallback.sandbox.applySettlement = (_draft, result) => { fellBack.push(result); return { postureUpdated: true } }
+  fallback.sandbox.backgroundAgentRunner.run = async input => { await input.onToolCall({ name: 'posture_submit', arguments: { posture: 'Tavern 的姿势' } }); return { text: '' } }
+  await fallback.sandbox.queueSettlement('chat')
+  assert.deepEqual(JSON.parse(JSON.stringify(fellBack)), [{ posture: 'Tavern 的姿势' }], 'no replacement: Tavern settles as before')
+})
 
 test('MVU 执行器失联保留持久任务，恢复后自动续办且不重开模型', async () => {
   const run = await harness({ beginRunning: false })
@@ -385,4 +407,50 @@ for(const storyChanged of [false,true])test(`retry CAS revalidates concurrent ${
   assert.equal(run.get().messages[0].tavernPluginData.template_rendered,true)
   assert.equal(run.get().messages[1].mvu.variableRetry,true)
  }
+})
+
+test('插件结算任务：结算前的在结算待办时运行，结算后的在提交之后运行，期间本局显示后台忙', async () => {
+  const h = await harness({ beginRunning: false, mvu: false })
+  const seen = []
+  h.sandbox.backgroundAgentRunner.run = async input => { seen.push('tavern'); await input.onToolCall({ name: 'posture_submit', arguments: { posture: '门边' } }); return { text: '' } }
+  h.sandbox.taskStateReader.read = async () => h.store.readChat()
+  h.sandbox.pluginSettlementProgress = { begin: () => () => {} }
+  h.sandbox.pluginApi.runSettlementTasks = async ({ gameId, phase, around }) => {
+    const activity = h.tasks.activity(h.get())
+    seen.push(phase + ':' + gameId + ':' + activity.role + ':' + activity.phase)
+    if (around) await around(async () => { const inside = h.tasks.activity(h.get()); seen.push('inside:' + inside.role + ':' + inside.busy) })
+  }
+  const jobs = createSettlementJobs({ run: (...args) => h.sandbox.runSettlementCycle(...args), onSettled: () => {} })
+  await jobs.start('chat')
+  assert.deepEqual(seen, ['before:session:settlement:pending', 'tavern', 'after:session:settlement:idle', 'inside:plugin-task:true'])
+  assert.equal(h.get().settleStatus, 'done')
+  assert.equal(h.tasks.activity(h.get()).busy, false, 'the plugin-task operation is closed afterwards')
+  jobs.dispose()
+})
+
+test('手动插件任务：登记为独占的后台任务，跑完后关闭；结算待办时不能启动', async () => {
+  const pending = await harness({ beginRunning: false, mvu: false })
+  pending.sandbox.pluginApi.manualTaskFor = async () => ({})
+  await assert.rejects(pending.sandbox.startPluginTask('session', 'alpha:summary'), /正在执行 settlement/)
+
+  const h = await harness({ beginRunning: false, mvu: false })
+  h.sandbox.backgroundAgentRunner.run = async input => { await input.onToolCall({ name: 'posture_submit', arguments: { posture: '门边' } }); return { text: '' } }
+  await h.sandbox.queueSettlement('chat')
+  let release
+  const calls = []
+  h.sandbox.pluginSettlementProgress = { begin: () => () => {} }
+  h.sandbox.pluginApi.manualTaskFor = async (gameId, key, input) => { calls.push([gameId, key, input]) }
+  h.sandbox.pluginApi.runManualTask = async () => { await new Promise(resolve => { release = resolve }); return true }
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.sandbox.startPluginTask('session', 'alpha:summary', '人物'))), { started: true })
+  assert.deepEqual(calls, [['session', 'alpha:summary', '人物']])
+  const busy = h.tasks.activity(h.get())
+  assert.equal(busy.role, 'plugin-task')
+  assert.equal(busy.busy, true)
+  await assert.rejects(h.sandbox.startPluginTask('session', 'alpha:summary'), /已有插件任务/)
+  const jobs = vm.runInContext('pluginTaskJobs', h.sandbox)
+  const job = jobs.get('chat')
+  release()
+  await job
+  assert.equal(h.tasks.activity(h.get()).busy, false)
+  assert.equal(jobs.size, 0)
 })

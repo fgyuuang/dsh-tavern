@@ -105,7 +105,7 @@ function mergeComfyUIPrompt(preset, user) {
 const DEFAULT_WORKSPACE_FOLDER = "dsh-image-gen";
 /** Google API credential reference. */
 const GOOGLE_API_KEY_ENV = "GEMINI_API_KEY";
-/** OpenAI Platform or compatible relay credential reference. */
+/** OpenAI Platform or compatible endpoint credential reference. */
 const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
 /** xAI image generation credential; separate from other providers. */
 const GROK_API_KEY_ENV = "XAI_API_KEY";
@@ -2037,6 +2037,7 @@ const NOVELAI_SAMPLERS = Object.freeze([
 	"k_dpmpp_sde",
 	"ddim_v3"
 ]);
+const NOVELAI_PROTOCOLS = Object.freeze(["native", "chat"]);
 const NOVELAI_NOISE_SCHEDULES = Object.freeze([
 	"karras",
 	"native",
@@ -2111,7 +2112,7 @@ function libraryEntries(value, limit, label) {
 		return entry;
 	});
 }
-/** Named NovelAI endpoints (official site or same-protocol relays). Each keeps
+/** Named NovelAI endpoints (official site or custom endpoints). Each keeps
 * its own key; the active one's address is the channel baseURL, so switching
 * endpoints changes only where requests go, never model or prompt settings.
 * Older single-endpoint configurations become the `default` entry. */
@@ -2125,16 +2126,20 @@ function novelaiEndpoints(value, active, baseURL) {
 			throw new Error("接入点地址须为 HTTP(S) API 根地址");
 		}
 		if (parsed && (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash)) throw new Error("接入点地址须为不含密钥、查询参数的 HTTP(S) API 根地址");
+		const protocol = entry.protocol === void 0 || entry.protocol === "" ? "native" : entry.protocol;
+		if (!NOVELAI_PROTOCOLS.includes(protocol)) throw new Error("接口格式只能是官方格式或对话格式");
 		return {
 			id: entry.id,
 			name: libraryText(entry.name, 40, "接入点名称") || "未命名接入点",
-			baseURL: url
+			baseURL: url,
+			protocol
 		};
 	});
 	if (!endpoints.length) endpoints.push({
 		id: "default",
 		name: "默认",
-		baseURL
+		baseURL,
+		protocol: "native"
 	});
 	const id = active || endpoints[0].id;
 	const current = endpoints.find((entry) => entry.id === id);
@@ -2142,7 +2147,8 @@ function novelaiEndpoints(value, active, baseURL) {
 	current.baseURL = baseURL;
 	return {
 		endpoints,
-		endpoint: id
+		endpoint: id,
+		protocol: current.protocol
 	};
 }
 /** Named artist strings, each optionally carrying its own quality and negative
@@ -2315,8 +2321,11 @@ function imageStrength(config) {
 /** Compile frozen per-person blocks, not current game variables. Image-local
 * adjustments live in blocks; stale person.fields must not override them.
 * Names identify records but aren't repeated as invented visual subjects. */
-function novelaiPrompts(input, config = {}) {
-	const plan = input.plan, artist = novelaiArtist(config);
+function novelaiPrompts(input, config = {}, { withArtist = true } = {}) {
+	const plan = input.plan, artist = withArtist ? novelaiArtist(config) : {
+		...novelaiArtist(config),
+		prompt: ""
+	};
 	if (!plan || !Array.isArray(plan.blocks)) {
 		if (typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > 16e3) throw new Error("NovelAI 画面提示词为空或过长");
 		return {
@@ -2443,6 +2452,49 @@ function novelaiRequest(input, config) {
 				sm: false,
 				sm_dyn: false
 			}
+		}
+	};
+}
+/** Conversation generation: the custom endpoint validates a fixed Chinese
+* field template in the user message and reads its values from the higher
+* priority `nai` object. One picture per call; the reply text carries its URL. */
+function novelaiChatRequest(input, config) {
+	const { width, height, guidance, characters: limit } = novelaiSettings(config);
+	const prompt = novelaiPrompts(input, config, { withArtist: false });
+	if (limit && prompt.characters.length > limit) throw new Error("当前 NovelAI 模型最多支持 " + limit + " 人，请选择 V5 或调整画面");
+	const oneLine = (text) => String(text || "").replace(/\s*\n+\s*/g, ", ").trim();
+	const tags = oneLine([prompt.base, ...prompt.characters.map((person) => person.caption)].filter(Boolean).join(", "));
+	const artist = oneLine(novelaiArtist(config).prompt);
+	const negative = oneLine(mergeTags(mergeTags(novelaiArtist(config).negative, novelaiNegativeTags(config)), typeof input.plan?.negative === "string" ? input.plan.negative : ""));
+	const sampler = config.sampler || "k_euler_ancestral";
+	const size = width === height ? "方图" : width > height ? "横图" : "竖图";
+	const scale = config.guidance ? Number(config.guidance) : guidance;
+	const cfg = config.cfgRescale ? Number(config.cfgRescale) : 0;
+	const content = [
+		"提示词:" + tags,
+		"画师串:" + artist,
+		"尺寸:" + size,
+		"提示词引导值:" + scale,
+		"缩放引导值:" + cfg,
+		"负面提示词:" + negative,
+		"采样器:" + sampler
+	].join("\n");
+	return {
+		model: config.model + ":" + sampler,
+		stream: false,
+		messages: [{
+			role: "user",
+			content
+		}],
+		nai: {
+			tag: tags,
+			artist,
+			size,
+			scale,
+			cfg,
+			negative,
+			sampler,
+			noise_schedule: config.noiseSchedule || "karras"
 		}
 	};
 }
@@ -2691,7 +2743,7 @@ const channels = [
 	},
 	{
 		id: "comfyui",
-		label: "ComfyUI",
+		label: "ComfyUI（自建）",
 		baseURL: "",
 		authType: "none",
 		username: "",
@@ -2704,7 +2756,7 @@ const channels = [
 	},
 	{
 		id: "novelai",
-		label: "NovelAI / 同协议第三方",
+		label: "NovelAI（官方或自定义渠道）",
 		baseURL: "https://image.novelai.net",
 		model: "nai-diffusion-5-full",
 		size: "832x1216",
@@ -2713,11 +2765,11 @@ const channels = [
 			"model",
 			"size"
 		],
-		hint: "默认使用官方 V5 Full。第三方必须支持相同的 /ai/generate-image 协议与 ZIP 图片响应，不是 OpenAI 兼容地址。"
+		hint: "默认连 NovelAI 官方，使用 V5 Full。用自定义渠道时新建一个接入点，填它的地址和 Key：接口和官方一样的选「官方格式」，用对话接口出图的选「对话格式」。"
 	},
 	{
 		id: "openai",
-		label: "OpenAI / Images 兼容中转",
+		label: "OpenAI（gpt-image 及兼容接口）",
 		baseURL: "https://api.openai.com/v1",
 		model: "gpt-image-2",
 		size: "1024x1024",
@@ -2726,11 +2778,11 @@ const channels = [
 			"model",
 			"size"
 		],
-		hint: "官方可使用默认地址与模型；兼容中转请填写自己的地址和模型。"
+		hint: "官方可直接用默认地址与模型；自定义渠道请填写自己的地址和模型。"
 	},
 	{
 		id: "gemini",
-		label: "Google Gemini 原生",
+		label: "Google Gemini（官方）",
 		baseURL: "https://generativelanguage.googleapis.com/v1beta",
 		model: "gemini-3.1-flash-image",
 		size: "1K",
@@ -2745,7 +2797,8 @@ const channels = [
 	},
 	{
 		id: "banana",
-		label: "Banana / Gemini 聊天兼容中转",
+		retired: true,
+		label: "Gemini 兼容接口（Nano Banana 等）",
 		baseURL: "",
 		model: "",
 		size: "1K",
@@ -2754,11 +2807,11 @@ const channels = [
 			"model",
 			"size"
 		],
-		hint: "填写支持 chat/completions 生图的中转地址与模型；不自动猜测接口。"
+		hint: "Gemini 图片模型（Nano Banana 等）的兼容接口选这个，地址填到 /v1，模型名照该服务的模型列表填写。NovelAI 的自定义渠道请选「NovelAI（官方或自定义渠道）」。"
 	},
 	{
 		id: "grok",
-		label: "Grok Images",
+		label: "Grok（xAI）",
 		baseURL: "https://api.x.ai/v1",
 		model: "grok-imagine-image-2.0",
 		size: "1k",
@@ -2773,7 +2826,7 @@ const channels = [
 	},
 	{
 		id: "seedream",
-		label: "Seedream / 火山方舟",
+		label: "Seedream（火山方舟）",
 		baseURL: "https://ark.cn-beijing.volces.com/api/v3",
 		model: "doubao-seedream-5-0-260128",
 		size: "2K",
@@ -2786,7 +2839,7 @@ const channels = [
 	},
 	{
 		id: "qwen",
-		label: "百炼 Qwen-Image",
+		label: "Qwen-Image（阿里百炼）",
 		baseURL: "https://dashscope.aliyuncs.com/api/v1",
 		model: "qwen-image-3.0",
 		size: "1024*1024",
@@ -2799,7 +2852,7 @@ const channels = [
 	},
 	{
 		id: "webui",
-		label: "SD WebUI / Forge",
+		label: "SD WebUI / Forge（自建）",
 		baseURL: "",
 		size: "512x512",
 		authType: "none",
@@ -2858,11 +2911,12 @@ for (const channel of channels) {
 	const advanced = channel.id === "novelai" ? [...IMAGE_ADVANCED_FIELDS, ...IMAGE_NOVELAI_PROMPT_FIELDS] : ["webui", "comfyui"].includes(channel.id) ? IMAGE_ADVANCED_FIELDS : channel.id === "qwen" ? ["negativePrompt"] : [];
 	channel.fields = [...channel.fields, ...advanced];
 }
-const SCENE_IMAGE_CHANNELS = channels.filter((channel) => channel.id !== "dsh-image-gen").map(({ id, label, fields, hint, model }) => ({
+const SCENE_IMAGE_CHANNELS = channels.filter((channel) => channel.id !== "dsh-image-gen").map(({ id, label, fields, hint, model, retired }) => ({
 	id,
 	label,
 	fields,
 	hint,
+	...retired ? { retired: true } : {},
 	models: id === "novelai" ? NOVELAI_MODELS : model ? [model] : [],
 	canListModels: [
 		"openai",
@@ -2995,7 +3049,10 @@ function imageChannelRequest(input) {
 	};
 	const prompt = input.prompt;
 	let path = "images/generations", body;
-	if (config.provider === "novelai") {
+	if (config.provider === "novelai" && config.protocol === "chat") {
+		path = new URL(config.baseURL).pathname.replace(/\/+$/, "") ? "chat/completions" : "v1/chat/completions";
+		body = novelaiChatRequest(input, config);
+	} else if (config.provider === "novelai") {
 		path = "ai/generate-image";
 		body = novelaiRequest(input, config);
 	} else if (config.provider === "webui") {
@@ -3125,6 +3182,12 @@ function channelImageResult(provider = "openai", payload) {
 		const image = Array.isArray(parts) ? parts.find((part) => typeof part?.image === "string") : void 0;
 		return image ? { url: image.image } : void 0;
 	}
+	if (provider === "novelai") {
+		const text = String(payload?.choices?.[0]?.message?.content ?? "");
+		const url = text.match(/!\[[^\]]*\]\(((?:https?:\/\/|data:image\/[^;]+;base64,)[^\s)]+)\)/)?.[1] || text.match(/https?:\/\/[^\s)\]"'<>]+/)?.[0];
+		if (url) return { url };
+		throw /* @__PURE__ */ new Error(text.trim() ? "该接口没有返回图片链接：" + text.trim().slice(0, 200) : "该接口没有返回图片链接");
+	}
 	if (provider === "banana") {
 		const message = payload?.choices?.[0]?.message;
 		const image = [
@@ -3211,7 +3274,7 @@ async function verifySceneImageKey({ probe, baseURL, headers, fetchImpl, signal,
 				signal
 			});
 			try {
-				if (![401, 403].includes(control.status)) return unknown("连接成功，但此中转的只读接口未明确要求鉴权，无法确认 API Key 有效性。");
+				if (![401, 403].includes(control.status)) return unknown("连接成功，但此地址的只读接口未明确要求鉴权，无法确认 API Key 有效性。");
 			} finally {
 				await control.body?.cancel().catch(() => {});
 			}
@@ -3489,41 +3552,6 @@ function createSceneImageConnection({ settings, credentials, fetchImpl = fetch, 
 		models: (input) => request(input, true)
 	};
 }
-[
-	{
-		id: "default",
-		label: "默认",
-		tags: ""
-	},
-	{
-		id: "anime",
-		label: "日系插画",
-		tags: "Japanese illustration, clean linework, cel shading"
-	},
-	{
-		id: "photo",
-		label: "写实摄影",
-		tags: "photorealistic photography, lifelike textures"
-	},
-	{
-		id: "watercolor",
-		label: "水彩",
-		tags: "watercolor painting, translucent pigments, paper texture"
-	},
-	{
-		id: "ink",
-		label: "水墨",
-		tags: "Chinese ink wash painting, expressive brushwork, ink on paper"
-	},
-	{
-		id: "custom",
-		label: "自定义",
-		tags: ""
-	}
-].map(({ id, label }) => ({
-	id,
-	label
-}));
 //#endregion
 //#region lib/types/tavern/scene-image-zip.js
 const fail = () => {
@@ -3947,6 +3975,7 @@ async function requestSceneImage(input, deps) {
 			}).filter(([, item]) => typeof item === "string").map(([key, item]) => [key, safe(item)]));
 		} catch {}
 		const error = /* @__PURE__ */ new Error("生图服务请求失败（HTTP " + response.status + "）" + (detail.message ? "：" + detail.message : "") + (detail.param ? "（字段：" + detail.param + "）" : ""));
+		if (response.status === 404 && input.provider === "openai") error.message += "。该地址没有 OpenAI 图片接口；如果它提供的是 NovelAI 图片，请改选「NovelAI（官方或自定义渠道）」并添加接入点";
 		error.imageFailure = {
 			httpStatus: response.status,
 			...detail
@@ -3961,14 +3990,22 @@ async function requestSceneImage(input, deps) {
 		].includes(response.status)) error.imageOutcome = "rejected";
 		throw error;
 	}
-	if (input.provider === "novelai") return {
-		...imageBytes(sceneImageFromZip(await boundedBytes(response, maxBytes + 65536), maxBytes), maxBytes),
-		metadata: {
-			seed: spec.body.parameters.seed,
-			model: spec.body.model,
-			request: spec.body
+	if (input.provider === "novelai" && spec.body.messages === void 0) {
+		const archive = await boundedBytes(response, maxBytes + 65536);
+		if (/^\s*</.test(archive.subarray(0, 64).toString("utf8"))) {
+			const error = /* @__PURE__ */ new Error("该地址返回的是网页，不是 NovelAI 图片。如果这个地址用对话接口出图，请把这个接入点的「接口格式」改成「对话格式」。");
+			error.imageOutcome = "rejected";
+			throw error;
 		}
-	};
+		return {
+			...imageBytes(sceneImageFromZip(archive, maxBytes), maxBytes),
+			metadata: {
+				seed: spec.body.parameters.seed,
+				model: spec.body.model,
+				request: spec.body
+			}
+		};
+	}
 	let payload;
 	try {
 		payload = JSON.parse((await boundedBytes(response, Math.ceil(maxBytes * 1.4) + 4096)).toString("utf8"));

@@ -335,7 +335,7 @@ test('attachment failure recovers received bytes after restart with settings dis
   await assert.rejects(restarted.retrySave('parent', 2, key, 'another-request'), /任务已变化/)
   await Promise.all([restarted.retrySave('parent', 2, key, failed.requestId), fx.createService().retrySave('parent', 2, key, failed.requestId)])
   const ready = await until(async () => { const value = await restarted.status('parent', 2); return value.status === 'succeeded' && value })
-  assert.equal(ready.enabled, false)
+  assert.equal(ready.enabled, false, 'status follows the global switch; recovery still works while it is off')
   assert.equal(ready.recovery, undefined)
   assert.equal(ready.versions.length, 1)
   assert.equal(ready.versions[0].model, 'original-model')
@@ -393,12 +393,14 @@ test('default-off, partial saves and legacy migration never cause paid requests'
   assert.equal((await fx.service.settings()).model, 'concurrent')
   assert.equal((await fx.service.settings()).enabled, false)
   await assert.rejects(fx.service.configure({ enabled: 'true' }), /布尔/)
-  await fx.service.configure({ model: '' })
-  await assert.rejects(fx.service.configure({ enabled: true, model: 'new' }), /先保存/)
   await fx.service.configure({ enabled: true })
-  assert.equal((await fx.service.settings()).enabled, true)
+  await fx.service.configure({ model: '' })
+  assert.equal((await fx.service.settings()).enabled, false, 'an incomplete save turns the switch off')
+  await assert.rejects(fx.service.configure({ enabled: true, model: 'new' }), /先保存/)
+  await assert.rejects(fx.service.configure({ enabled: true }), /先保存完整生图配置/)
+  assert.equal((await fx.service.settings()).enabled, false)
   assert.equal((await fx.service.settings()).ready, false)
-  await assert.rejects(fx.service.start('parent', 2, target.key), /完成生图渠道配置/)
+  await assert.rejects(fx.service.start('parent', 2, target.key), /场景生图未开启/)
   assert.equal(agentCalls, 0)
   assert.equal(fx.imageCalls(), 0)
 })
@@ -547,7 +549,7 @@ test('repaint bypasses text Agent, retains each version and deduplicates replaye
   await fx.service.start('parent', 2, key)
   const first = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state })
   const versionId = first.versions[0].id
-  assert.deepEqual(first.versions[0].configuration, { provider: 'openai', model: 'test-image', baseURL: 'https://provider.example/v1', size: '1024x1024', style: { preset: 'default', custom: '' } })
+  assert.deepEqual(first.versions[0].configuration, { provider: 'openai', model: 'test-image', baseURL: 'https://provider.example/v1', size: '1024x1024', style: { preset: 'auto', custom: '' } })
   const options = { kind: 'repaint', versionId, requestId: 'same-request-id' }
   const values = await Promise.all([fx.service.start('parent', 2, key, options), fx.service.start('parent', 2, key, options)])
   assert.equal(values[0].requestId, values[1].requestId)
@@ -596,22 +598,23 @@ test('style saves do not charge; repaint restyles without text work, frozen jobs
       return { data: png, mediaType: 'image/png' }
     }
   })
-  await fx.service.configure({ style: { preset: 'watercolor', custom: '  低饱和  ' } })
+  await fx.service.configure({ style: { preset: 'custom', custom: '  watercolor, 低饱和  ' } })
   assert.equal(calls, 0)
   assert.equal(prompts.length, 0)
   const key = sceneTarget(fx.chat(), 2).key
   await fx.service.start('parent', 2, key)
   await until(() => release)
-  await fx.service.configure({ style: { preset: 'ink' } })
-  assert.equal((await fx.service.settings()).style.custom, '  低饱和  ', 'partial style saves retain custom text')
+  await fx.service.configure({ style: { orientation: 'fixed' } })
+  assert.equal((await fx.service.settings()).style.custom, '  watercolor, 低饱和  ', 'partial style saves retain custom text')
+  await fx.service.configure({ style: { custom: 'ink wash, 低饱和' } })
   release()
   const first = await until(async () => { const record = await fx.service.status('parent', 2); return record.status === 'succeeded' && record })
   assert.match(first.versions[0].prompt, /watercolor.*低饱和/)
-  assert.equal(first.versions[0].configuration.style.preset, 'watercolor')
+  assert.equal(first.versions[0].configuration.style.custom, '  watercolor, 低饱和  ')
   assert.doesNotMatch(first.versions[0].prompt, /ink wash/)
   const canonical = await fx.store.readJson(imagePath + 'plans.json')
   const restarted = fx.createService()
-  assert.equal((await restarted.settings()).style.preset, 'ink')
+  assert.equal((await restarted.settings()).style.preset, 'custom')
   await restarted.start('parent', 2, key, { kind: 'repaint', versionId: first.versions[0].id })
   const second = await until(async () => { const record = await restarted.status('parent', 2); return record.status === 'succeeded' && record })
   assert.match(second.versions[1].prompt, /ink wash.*低饱和/)
@@ -645,7 +648,7 @@ test('native point status finds existing legacy images, including disabled gener
   fx.deps.sceneStateForSession=(_session,options)=>db.readSceneImageState(original.id,options)
   fx.deps.chatForSession=()=>assert.fail('image status must use point projection')
   const status=await fx.service.status('parent',2)
-  assert.equal(status.enabled,false);assert.equal(status.key,key);assert.deepEqual(status.versions,done.versions)
+  assert.equal(status.enabled,true);assert.equal(status.key,key);assert.deepEqual(status.versions,done.versions)
   await fx.store.writeJson(imagePath+'references.json',{version:1,records:[{id:'existing-reference',source:{key,turn:2,versionId:done.versions[0].id},activation:{key,turn:2},person:{id:'person',name:'人物'},enabled:true}]})
   assert.equal((await fx.service.status('parent',2)).reference.bindings[0].versionId,done.versions[0].id)
   await db.update(original.id,chat=>{chat.messages[0].text='另一条分支';return chat})
@@ -665,4 +668,199 @@ test('after a picture of an earlier moment, the next planning input re-reads the
   await fx.service.start('parent', 3, sceneTarget(fx.chat(), 3).key)
   await until(async () => (await fx.service.status('parent', 3)).status === 'succeeded')
   assert.ok(inputs[1].sources.some(source => source.turn === 2 && source.id !== 'target'), 'the earlier-moment turn is resent as history')
+})
+
+test('retry after a failed image request reuses the committed plan without the text Agent', async t => {
+  let agentCalls = 0, imageAttempts = 0
+  const fx = await fixture(t, {
+    runAgent: async input => { agentCalls++; await submitPlanCall(input, { arguments: { plan: planFixture() } }); return {} },
+    generate: async () => { imageAttempts++; if (imageAttempts === 1) throw Object.assign(new Error('provider down'), { imageOutcome: 'rejected' }); return { data: png, mediaType: 'image/png' } }
+  })
+  const key = sceneTarget(fx.chat(), 2).key
+  await fx.service.start('parent', 2, key)
+  await until(async () => (await fx.service.status('parent', 2)).status === 'failed')
+  await fx.service.start('parent', 2, key)
+  await until(async () => (await fx.service.status('parent', 2)).status === 'succeeded')
+  assert.equal(agentCalls, 1)
+  assert.equal(imageAttempts, 2)
+})
+
+test('test generation uses the saved channel once, returns the picture and keeps nothing', async t => {
+  let request
+  const fx = await fixture(t, { generate: async input => { request = input; return { data: png, mediaType: 'image/png' } } })
+  const result = await fx.service.testGenerate()
+  assert.equal(Buffer.from(result.data, 'base64').equals(png), true)
+  assert.equal(result.mediaType, 'image/png')
+  assert.match(request.prompt, /long black hair/)
+  assert.equal((await fx.service.status('parent', 2)).status, 'idle')
+})
+
+test('auto style: each picture uses the style its plan wrote; the next plan is given it as the previous style', async t => {
+  const prompts = [], inputs = []
+  const fx = await fixture(t, {
+    runAgent: async input => {
+      const request = JSON.parse(input.messages[0].content[0].text)
+      inputs.push(request)
+      const plan = planFixture()
+      plan.style = inputs.length === 1 ? { text: '国风厚涂', tags: 'Chinese xianxia painting' } : { text: '国风厚涂，夜色', tags: 'Chinese xianxia painting, night' }
+      await submitPlanCall(input, { arguments: { plan } })
+      return {}
+    },
+    generate: async input => { prompts.push(input.prompt); return { data: png, mediaType: 'image/png' } }
+  })
+  await fx.service.start('parent', 2, sceneTarget(fx.chat(), 2).key)
+  const first = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state })
+  assert.equal(inputs[0].styleRequest.previous, undefined)
+  assert.match(prompts[0], /Visual style only[^\n]*Chinese xianxia painting$/)
+  assert.equal(first.versions[0].style, '自动：国风厚涂（Chinese xianxia painting）')
+  fx.chat().messages.push({ role: 'assistant', turn: 3, text: '她走进室内。' })
+  await fx.service.start('parent', 3, sceneTarget(fx.chat(), 3).key)
+  await until(async () => (await fx.service.status('parent', 3)).status === 'succeeded')
+  assert.deepEqual(inputs[1].styleRequest.previous, { text: '国风厚涂', tags: 'Chinese xianxia painting' })
+  assert.match(prompts[1], /Chinese xianxia painting, night$/)
+  await fx.service.start('parent', 2, sceneTarget(fx.chat(), 2).key, { kind: 'repaint', versionId: first.versions[0].id })
+  await until(async () => (await fx.service.status('parent', 2)).versions.length === 2)
+  assert.match(prompts[2], /Chinese xianxia painting$/, 'repainting keeps that picture\'s own style')
+})
+
+test('replan reruns the shared Agent with a rethink request, replaces its saved plan and keeps the earlier picture as a version', async t => {
+  const agents = []
+  let tags = 'A woman standing at a rainy window'
+  const fx = await fixture(t, { runAgent: async input => {
+    agents.push({ persistent: input.persistent, resumes: typeof input.resolvePersistentSessionId === 'function', request: JSON.parse(input.messages[0].content[0].text) })
+    const plan = planFixture(tags)
+    if (agents.length > 1) plan.scene.composition.text = '低机位逆光特写'
+    await submitPlanCall(input, { arguments: { plan } })
+    return {}
+  } })
+  const key = sceneTarget(fx.chat(), 2).key
+  await fx.service.start('parent', 2, key)
+  const first = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state })
+  assert.equal(first.versions[0].composition, '窗边一景')
+  tags = 'low angle close-up, backlit, she turns from the window'
+  await fx.service.start('parent', 2, key, { kind: 'replan', versionId: first.versions[0].id })
+  const second = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state.versions.length === 2 && state })
+  assert.deepEqual(agents.map(item => [item.persistent, item.resumes]), [[true, true], [true, true]], 'no one-shot Agent per rethink')
+  assert.equal(agents[0].request.rethink, undefined)
+  assert.match(agents[1].request.rethink.instruction, /重新构思/)
+  assert.equal(agents[1].request.rethink.rejected.composition, '窗边一景')
+  assert.match(second.versions[1].prompt, /^low angle close-up/)
+  assert.match(second.versions[0].prompt, /^A woman standing/)
+  const plans = await fx.store.readJson(imagePath + 'plans.json')
+  assert.match(Object.values(plans.frames[key])[0].prompt, /^low angle close-up/, 'the turn keeps the rethought plan')
+  await fx.service.start('parent', 2, key, { kind: 'repaint', versionId: second.versions[1].id })
+  const third = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state.versions.length === 3 && state })
+  assert.equal(agents.length, 2, 'repaint still skips the Agent')
+  assert.match(third.versions[2].prompt, /^low angle close-up/)
+})
+
+test('a hand-edited prompt repaints without the Agent and leaves the turn plan alone', async t => {
+  let agents = 0
+  const prompts = []
+  const fx = await fixture(t, {
+    runAgent: async input => { agents++; await submitPlanCall(input, { arguments: { plan: planFixture('A woman standing at a rainy window') } }); return {} },
+    generate: async input => { prompts.push(input.prompt); return { data: png, mediaType: 'image/png' } },
+  })
+  const key = sceneTarget(fx.chat(), 2).key
+  await fx.service.start('parent', 2, key)
+  const first = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state })
+  assert.match(first.versions[0].planPrompt, /^A woman standing/)
+  assert.equal(first.versions[0].style, '自动（未写画风）')
+  await assert.rejects(fx.service.start('parent', 2, key, { kind: 'prompt', versionId: first.versions[0].id, prompt: '  ' }), /提示词须为/)
+  await fx.service.start('parent', 2, key, { kind: 'prompt', versionId: first.versions[0].id, prompt: 'dutch angle, she slams the window shut' })
+  const second = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state.versions.length === 2 && state })
+  assert.equal(agents, 1)
+  assert.match(prompts[1], /^dutch angle, she slams the window shut/)
+  assert.equal(second.versions[1].planPrompt, 'dutch angle, she slams the window shut')
+  assert.equal(second.versions[1].description, first.versions[0].description)
+  const plans = await fx.store.readJson(imagePath + 'plans.json')
+  assert.match(Object.values(plans.frames[key])[0].prompt, /^A woman standing/)
+})
+
+test('history lists pictures across games by chat id, reads and removes them without resolving a session', async t => {
+  const fx = await fixture(t)
+  const key = sceneTarget(fx.chat(), 2).key
+  await fx.service.start('parent', 2, key)
+  const first = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state })
+  await fx.service.start('parent', 2, key, { kind: 'repaint', versionId: first.versions[0].id })
+  const second = await until(async () => { const state = await fx.service.status('parent', 2); return state.status === 'succeeded' && state.versions.length === 2 && state })
+  let items = await fx.service.history()
+  assert.deepEqual(items.map(item => [item.chatId, item.key, item.turn, item.deleted, item.versions.length]), [['test-chat', key, 2, true, 2]])
+  fx.deps.chatSummaries = async () => [{ id: 'test-chat', cardName: '段莹莹', title: '晨起' }]
+  items = await fx.service.history()
+  assert.deepEqual([items[0].cardName, items[0].title, items[0].deleted], ['段莹莹', '晨起', false])
+  fx.deps.chatForSession = async () => { throw new Error('session closed') }
+  assert.deepEqual((await fx.service.readStoredImage('test-chat', key, second.versions[0].id)).data, png)
+  await assert.rejects(fx.service.readStoredImage('test-chat', '../plans', second.versions[0].id), /图片地址不合法/)
+  const results = await fx.service.removeStoredImages([{ chatId: 'test-chat', key, versionId: second.versions[0].id }, { chatId: 'test-chat', key, versionId: 'missing' }])
+  assert.deepEqual(results.map(row => row.ok), [true, false])
+  const record = await fx.store.readJson(imagePath + key + '.json')
+  assert.deepEqual(record.versions.map(item => item.id), [second.versions[1].id])
+  assert.equal(record.deletedVersions.length, 1)
+  assert.equal((await fx.service.history())[0].versions.length, 1)
+})
+
+test('adding a picture plans a different moment in its own slot; the turn keeps both, failures can be dismissed', async t => {
+  const requests = []
+  let fail = false
+  const fx = await fixture(t, {
+    runAgent: async input => { requests.push(JSON.parse(input.messages[0].content[0].text)); if (fail) throw new Error('文字模型暂时不可用'); await submitPlanCall(input, { arguments: { plan: { ...planFixture('rain drops on glass, close-up'), description: '雨滴特写' + requests.length } } }); return {} }
+  })
+  const key = sceneTarget(fx.chat(), 2).key
+  await fx.service.start('parent', 2, key)
+  await until(async () => (await fx.service.status('parent', 2)).status === 'succeeded')
+  assert.equal(requests[0].addition, undefined)
+  const added = await fx.service.start('parent', 2, key, { kind: 'add', instruction: '画窗上的雨滴', requestId: 'add-request-1' })
+  assert.equal(added.slot, 1)
+  assert.notEqual(added.key, key)
+  // A repeated click with the same request id stays on its slot instead of buying another picture.
+  assert.equal((await fx.service.start('parent', 2, key, { kind: 'add', instruction: '画窗上的雨滴', requestId: 'add-request-1' })).key, added.key)
+  const both = await until(async () => { const state = await fx.service.status('parent', 2); return state.extras[0]?.status === 'succeeded' && state })
+  assert.equal(requests.length, 2)
+  assert.equal(requests[1].addition.request, '画窗上的雨滴')
+  assert.deepEqual(requests[1].addition.existing.map(item => item.description), ['雨滴特写1'])
+  assert.equal(both.versions.length, 1, 'the first picture is untouched')
+  assert.deepEqual(both.extras.map(extra => [extra.slot, extra.key, extra.versions.length, extra.addRequest]), [[1, added.key, 1, '画窗上的雨滴']])
+  assert.equal(both.maxPictures, 6)
+  // The added slot is addressed by its own key for reading, repainting and deleting.
+  assert.ok((await fx.service.readImage('parent', 2, added.key, both.extras[0].versions[0].id)).data)
+  fail = true
+  const failed = await fx.service.start('parent', 2, key, { kind: 'add', instruction: '', requestId: 'add-request-2' })
+  assert.equal(failed.slot, 2)
+  const shown = await until(async () => { const state = await fx.service.status('parent', 2); return state.extras[1]?.status === 'failed' && state })
+  assert.equal(shown.extras[1].versions.length, 0)
+  await fx.service.removeImage('parent', 2, failed.key, '')
+  assert.equal((await fx.service.status('parent', 2)).extras.length, 1, 'a dismissed failure frees its slot')
+  fail = false
+  assert.equal((await fx.service.start('parent', 2, key, { kind: 'add', requestId: 'add-request-3' })).slot, 2, 'the freed slot, never charged, is reused')
+  await until(async () => (await fx.service.status('parent', 2)).extras[1]?.status === 'succeeded')
+  await assert.rejects(fx.service.start('parent', 2, 'not-a-slot-key', { kind: 'add', requestId: 'add-request-4' }), /正文版本已变化/)
+  assert.equal((await fx.service.start('parent', 2, added.key, { kind: 'add', requestId: 'add-request-5' })).slot, 3, 'any picture of the turn can add another')
+  await until(async () => (await fx.service.status('parent', 2)).extras[2]?.status === 'succeeded')
+})
+
+test('每轮自动生图：默认关闭；打开后结算完的新一轮自动画一张，已有图、删过、失败或可能已计费的轮次不再自动画', async t => {
+  let calls = 0, fail = false
+  const fx = await fixture(t, { generate: async () => { calls++; if (fail) throw new Error('渠道暂时不可用'); return { data: png, mediaType: 'image/png' } } })
+  assert.equal((await fx.service.settings()).auto, false)
+  assert.equal(await fx.service.autoGenerate('parent'), null, 'off by default')
+  await fx.service.configure({ auto: true })
+  assert.equal((await fx.service.settings()).auto, true)
+  await fx.service.autoGenerate('parent')
+  await until(async () => (await fx.service.status('parent', 2)).status === 'succeeded')
+  assert.equal(calls, 1)
+  assert.equal(await fx.service.autoGenerate('parent'), null, 'a round with a picture is not drawn again')
+  const picture = (await fx.service.status('parent', 2)).versions[0]
+  await fx.service.removeImage('parent', 2, sceneTarget(fx.chat(), 2).key, picture.id)
+  assert.equal(await fx.service.autoGenerate('parent'), null, 'a picture the player deleted is not redrawn')
+  // A new swipe is a new round body: drawn once; a failure waits for the player.
+  fx.setChat({ ...fx.chat(), messages: fx.chat().messages.map(message => message.role === 'assistant' ? { ...message, swipeId: 1 } : message) })
+  fail = true
+  await fx.service.autoGenerate('parent')
+  await until(async () => (await fx.service.status('parent', 2)).status === 'failed')
+  const before = calls
+  assert.equal(await fx.service.autoGenerate('parent'), null)
+  assert.equal(calls, before)
+  await fx.service.configure({ auto: false })
+  assert.equal((await fx.service.settings()).auto, false)
 })

@@ -27,6 +27,25 @@ export function apply(ctx) {
           return
         }
       }
+      // Scene planning: draft the layout, confirm the plan, then report. An added
+      // picture (its input carries `addition`) gets a different scene.
+      if (tools.has('submit_scene_layout')) {
+        const latest = input.messages.findLastIndex(message => message.role === 'user' && (message.content || []).some(block => block.type === 'text'))
+        const request = JSON.stringify(input.messages[latest]?.content || [])
+        const after = input.messages.slice(latest + 1).flatMap(message => message.content || [])
+        const called = name => after.some(block => block.type === 'tool-call' && block.name === name)
+        const addition = request.includes('\\"addition\\"')
+        if (process.env.TAVERN_E2E_SCENE_AUDIT && !called('submit_scene_layout')) await appendFile(process.env.TAVERN_E2E_SCENE_AUDIT, JSON.stringify({ addition, request: addition ? /画柜台上的金币/.test(request) : false }) + '\n')
+        const id = 'e2e-scene-' + latest
+        const block = !called('submit_scene_layout') ? { type: 'tool-call', id: id + '-layout', name: 'submit_scene_layout', arguments: JSON.stringify({ description: addition ? '柜台上的金币' : '领取奖励', subjects: [], continuity: 'uncertain', moment: 'end', orientation: 'square', anchor: '',
+          scene: { composition: addition ? { text: '柜台上的金币特写', tags: 'gold coins on a wooden counter, close-up' } : { text: '酒馆柜台前领取奖励', tags: 'tavern counter, receiving a reward' } } }) }
+          : !called('submit_scene_plan') ? { type: 'tool-call', id: id + '-plan', name: 'submit_scene_plan', arguments: '{}' }
+          : { type: 'text', text: '插图已完成。' }
+        yield { type: 'block-start', index: 0, blockType: block.type }
+        yield { type: 'block-end', index: 0, block }
+        yield { type: 'finish', reason: { kind: block.type === 'tool-call' ? 'tool-calls' : 'stop' } }
+        return
+      }
       // Truncation scenario: only the latest user input decides, so later turns answer normally.
       const latestUser = JSON.stringify(input.messages.slice(input.messages.findLastIndex(message => message.role === 'assistant') + 1))
       if (process.env.E2E_TRUNCATE_LOG) await appendFile(process.env.E2E_TRUNCATE_LOG, JSON.stringify({ at: Date.now(), tools: [...tools], tail: input.messages.slice(-4).map(m => ({ role: m.role, content: JSON.stringify(m.content).slice(0, 160) })) }) + '\n')
@@ -45,6 +64,19 @@ export function apply(ctx) {
         return
       }
       const latestInput = JSON.stringify(input.messages.slice(input.messages.findLastIndex(message => message.role === 'assistant') + 1))
+      // Slow reply: streams for ~20 s so the player can press stop mid-reply.
+      if (!tools.has('mvu_submit_update') && !tools.has('candidate_submit_choices') && !tools.has('posture_submit')
+        && latestInput.includes('E2E_SLOW')) {
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        for (let i = 0; i < 40; i++) {
+          if (input.signal?.aborted) { yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } } }; return }
+          yield { type: 'text-delta', index: 0, text: (i ? '' : '<content>\n') + '雨一直下，' }
+          await new Promise(resolve => { const timer = setTimeout(resolve, 500); input.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true }) })
+        }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: '<content>\n' + '雨一直下，'.repeat(40) } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+        return
+      }
       // Mid-stream filter: part of the body already streamed, then the provider cuts it off.
       if (!tools.has('mvu_submit_update') && !tools.has('candidate_submit_choices') && !tools.has('posture_submit')
         && latestInput.includes('E2E_FILTER_MIDSTREAM')) {

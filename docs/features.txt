@@ -148,7 +148,7 @@ DSH Tavern 功能清单（纯文本审阅版）
 5. 在支持的渠道中，将图片绑定为人物造型参考，也可解除绑定。
 6. 查看生成进度、取消任务、失败重试；生成成功但保存失败时可重试保存。
 7. 检查渠道连接，部分渠道支持读取模型列表。
-8. 渠道入口包括 OpenAI Images、Gemini 原生、Gemini 聊天兼容、Grok、Seedream、Qwen-Image、NovelAI、ComfyUI、SD WebUI / Forge。
+8. 渠道入口包括 OpenAI（gpt-image 及兼容接口）、Google Gemini（官方）、Grok（xAI）、Seedream（火山方舟）、Qwen-Image（阿里百炼）、NovelAI（官方或自定义渠道）、ComfyUI（自建）、SD WebUI / Forge（自建）。
 9. 实际模型、参考图和参数能力因渠道而异；本地绘图渠道连接已有服务，不负责安装模型。
 
 十一、诊断、维护与数据
@@ -190,8 +190,8 @@ DSH Tavern 功能清单（纯文本审阅版）
 
 1. 读取剧本：tavern_read_script，按需取得剧本内容，辅助剧本推进或工作台分析。
 2. 读取游玩记录：tavern_read_play_chat，供调试工作台读取已关联记录的概览及相关证据；与正文 Agent 回忆剧情的 recall 工具分工不同。
-3. 人物卡读写：tavern_read_card、tavern_read_card_raw、tavern_update_card，读取结构化设定或原始卡片，按要求修改。
-4. 人物卡检查与恢复：tavern_validate_card、tavern_restore_card，检查卡片结构，按要求恢复导入原版。
+3. 人物卡读写：tavern_read_card、tavern_read_card_raw、tavern_search_card、tavern_replace_card_text、tavern_update_card，读取结构化设定或原始卡片、全卡定位与批量替换文字，按要求修改；转 MVU 时用 tavern_mvu_overview 摸底、tavern_apply_mvu 一次写入变量、规则和面板。
+4. 人物卡检查与恢复：tavern_validate_card、tavern_restore_card，检查卡片结构，按要求恢复导入原版；tavern_update_card 与修改内置世界书的保存结果自动附带同样的校验。
 5. 世界书读写：tavern_read_worldbook、tavern_update_worldbook，检查并修改世界书内容。
 6. 预设读写：tavern_read_preset、tavern_update_preset，检查和修改提示词及相关配置。
    正则库：tavern_read_regex_library，读取用户导入的正则，按要求写入人物卡或预设；正则库本身不生效。

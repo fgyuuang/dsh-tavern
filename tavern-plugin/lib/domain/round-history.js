@@ -9,7 +9,7 @@ import { createRegenerationRecovery } from './regeneration-recovery.js'
 import { isDeepStrictEqual } from 'node:util'
 import { createScopedMessages, isScopedMessages } from './scoped-messages.js'
 import { diffJson } from './json-mutation.js'
-import { rollbackAvailability, clearFailedTurnSurface, locateRegenerationSurface, planRegenerationSurface, failedTurnReplayAvailability, replayableFailedTurn } from './rollback-surface.js'
+import { rollbackAvailability, clearFailedTurnSurface, locateRegenerationSurface, planRegenerationSurface, regenerationProjection, applyRegenerationProjection, failedTurnReplayAvailability, replayableFailedTurn } from './rollback-surface.js'
 import { assertRegenerationSourceCurrent, replaceLastRound } from './last-round-replacement.js'
 import { diagnosticIdentity, regenerationTargetDiagnostic } from './regeneration-diagnostics.js'
 import { planDreamSikeDraftResume } from './dream-sike-draft.js'
@@ -54,6 +54,21 @@ export function selectRegenerationTarget(chat, session, observe) {
  * Timeline owns revisions; this module owns the workflow, including aborts.
  * Callers supply host adapters, never intermediate rollback or swipe state.
  */
+/** Key of a round's commit record: its turn, else (rows saved before turns were recorded) the newest commit with the same input text. */
+function commitKeyOfRound(commits, assistant, userText) {
+  if (!commits || typeof commits !== 'object') return ''
+  const turn = Number(assistant?.turn)
+  if (turn > 0 && commits[String(turn)] && typeof commits[String(turn)] === 'object') return String(turn)
+  const keys = Object.keys(commits).map(Number).filter(Number.isFinite).sort((a, b) => b - a)
+  const key = keys.find(key => str(commits[String(key)]?.userText).trim() === userText)
+  return key === undefined ? '' : String(key)
+}
+
+function commitOfRound(commits, assistant, userText) {
+  const key = commitKeyOfRound(commits, assistant, userText)
+  return key ? commits[key] : null
+}
+
 export function createRoundHistory({ chats, sessions, scripts, timeline, queueSettlement, cancelSettlement, present, diagnostics, sessionPatch }) {
   const { read: readChat, forSession: chatForSession, readCard: readChatCard,
     readRevision: readChatRevision, write: writeChat, update: updateChat } = chats
@@ -161,11 +176,8 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     if (storyTimeline.inspect({ chat }).checkpointCount === 0) {
       let rollbackCommit = null
       if (chat.nativeCommits !== null && typeof chat.nativeCommits === 'object') {
-        const keys = Object.keys(chat.nativeCommits).map(Number).filter(Number.isFinite).sort(function (a, b) { return b - a })
-        for (const key of keys) {
-          const value = chat.nativeCommits[String(key)]
-          if (value && str(value.userText).trim() === originalUserText) { rollbackCommit = value; break }
-        }
+        // The round's own commit, by its turn; text matching is only for rows saved before turns were recorded.
+        rollbackCommit = commitOfRound(chat.nativeCommits, msgs0[oldAssistantIndex], originalUserText)
       }
       const before = rollbackCommit && rollbackCommit.before && typeof rollbackCommit.before === 'object' ? rollbackCommit.before : {}
       legacyBefore = {
@@ -221,7 +233,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       }
       const latestMsgs = latest.messages || []
       if (latestMsgs.length < rolledMessageCount + 2) {
-        throw new Error('重新生成流程未产生新的用户/助手回合')
+        throw new Error('这次重新生成没有完成（可能被内容审核拦截或已停止），正文保持原样，可以再试一次')
       }
       const regeneratedUser = latestMsgs[latestMsgs.length - 2]
       const newAssistant = latestMsgs[latestMsgs.length - 1]
@@ -235,11 +247,8 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       }
       const replacement = planRegenerationSurface({ events: sessionEvents(session), nodes: session.surface.nodes,
         oldAssistantSeq: oldSeq, eventStart })
-      const projection = {
-        data: { turn: oldTurn, step: 1, message: { id: 'tavern-regen:' + operationId,
-          role: 'assistant', content: [{ type: 'text', text: body }], source: oldSource } },
-        range: { start: replacement.start, end: replacement.end, sourceEventSeqs: [...replacement.shadowedSeqs] }
-      }
+      const projection = regenerationProjection(replacement, { turn: oldTurn, step: 1, message: { id: 'tavern-regen:' + operationId,
+        role: 'assistant', content: [{ type: 'text', text: body }], source: oldSource } }, operationId)
       // The persisted intent must only reference events already on disk.
       if (typeof sessions.flush === 'function') await sessions.flush(session)
       committedChat = await updateChat(latest.id, function (current) {
@@ -399,7 +408,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       const latest = await chats.readRecent(chat.id)
       if (latest === undefined) throw new Error('聊天不存在: ' + chat.id)
       const latestMsgs = latest.messages
-      if (latestMsgs.length < rolledMessageCount + 2) throw new Error('重新生成流程未产生新的用户/助手回合')
+      if (latestMsgs.length < rolledMessageCount + 2) throw new Error('这次重新生成没有完成（可能被内容审核拦截或已停止），正文保持原样，可以再试一次')
       const regeneratedUser = latestMsgs[latestMsgs.length - 2]
       const newAssistant = latestMsgs[latestMsgs.length - 1]
       if (regeneratedUser === null || typeof regeneratedUser !== 'object' || regeneratedUser.role !== 'user' ||
@@ -409,11 +418,8 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
       body = str(newAssistant.text).trim()
       if (body === '') throw new Error('重新生成失败：模型返回空文本')
       const replacement = planRegenerationSurface({ events: sessionEvents(session), nodes: session.surface.nodes, oldAssistantSeq: oldSeq, eventStart })
-      const projection = {
-        data: { turn: oldTurn, step: 1, message: { id: 'tavern-regen:' + operationId,
-          role: 'assistant', content: [{ type: 'text', text: body }], source: oldSource } },
-        range: { start: replacement.start, end: replacement.end, sourceEventSeqs: [...replacement.shadowedSeqs] }
-      }
+      const projection = regenerationProjection(replacement, { turn: oldTurn, step: 1, message: { id: 'tavern-regen:' + operationId,
+        role: 'assistant', content: [{ type: 'text', text: body }], source: oldSource } }, operationId)
       if (typeof sessions.flush === 'function') await sessions.flush(session)
       if (latest.regenRecovery?.id !== operationId) throw new Error('重新生成操作已失效')
       // 2) The original floors around the new round. Floors changed since the
@@ -474,7 +480,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     if (saved?.phase !== 'committed' || saved.id !== operationId || saved.sessionId !== session.id || !saved.projection) {
       return await regenerationRecovery.complete({ chatId: chat.id, session, operationId }) || chat
     }
-    replaceSessionSurface(session, 'assistant/message', saved.projection.data, saved.projection.range)
+    applyRegenerationProjection(session, saved.projection)
     if (typeof sessions.flush === 'function') await sessions.flush(session)
     const head = await chats.patch(chat.id, chat._storageRevision, [{ op: 'delete', path: ['regenRecovery'] }, { op: 'delete', path: ['regenInProgress'] }], { source: 'foreground.regen-projected' })
     if (head) {
@@ -669,15 +675,8 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     let rollbackCommit = null
     let rollbackCommitKey = ''
     if (chat.nativeCommits !== null && typeof chat.nativeCommits === 'object') {
-      const keys = Object.keys(chat.nativeCommits).map(Number).filter(Number.isFinite).sort(function (a, b) { return b - a })
-      for (const key of keys) {
-        const commit = chat.nativeCommits[String(key)]
-        if (commit !== null && typeof commit === 'object' && str(commit.userText).trim() === removedUserText) {
-          rollbackCommit = commit
-          rollbackCommitKey = String(key)
-          break
-        }
-      }
+      rollbackCommitKey = commitKeyOfRound(chat.nativeCommits, msgs[assistantIndex], removedUserText)
+      rollbackCommit = rollbackCommitKey ? chat.nativeCommits[rollbackCommitKey] : null
     }
     const before = rollbackCommit !== null && rollbackCommit.before !== null && typeof rollbackCommit.before === 'object' ? rollbackCommit.before : null
     const legacyBefore = {
@@ -795,8 +794,7 @@ export function createRoundHistory({ chats, sessions, scripts, timeline, queueSe
     const removedAssistantText = str(msgs[assistantIndex].text).trim()
     let rollbackCommitKey = ''
     if (header.nativeCommits !== null && typeof header.nativeCommits === 'object') {
-      const keys = Object.keys(header.nativeCommits).map(Number).filter(Number.isFinite).sort(function (a, b) { return b - a })
-      rollbackCommitKey = String(keys.find(key => str(header.nativeCommits[String(key)]?.userText).trim() === removedUserText) ?? '')
+      rollbackCommitKey = commitKeyOfRound(header.nativeCommits, msgs[assistantIndex], removedUserText)
     }
     // The checkpoint state: its header, its floor count, and the floors changed since.
     const revision = chat._storageRevision, count = msgs.length

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { resolveRuntimeMacroText } from './runtime-content-projection.js'
+import { entryRandom, renderWorldbookRandom } from './worldbook-random.js'
 
 function normalizeState(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -118,10 +119,15 @@ export function resolveRuntimePresetMacros(snapshot, options = {}) {
         macroState: state
       })
       state = rendered.macroState
+      // The front is the fixed system prefix and keeps its macros literal; the middle and
+      // back are rebuilt every turn, so dice/random roll there from the turn's seed.
+      const text = phase !== 'front' && typeof options.randomSeed === 'string' && options.randomSeed !== ''
+        ? renderWorldbookRandom(rendered.text, entryRandom(options.randomSeed, phase + ':' + entries.length + ':' + (entry.id || entry.entryKey || '')))
+        : rendered.text
       diagnostics.push.apply(diagnostics, rendered.diagnostics.map(function (item) {
         return Object.assign({ phase, entryId: entry.id || entry.entryKey || '' }, item)
       }))
-      entries.push(Object.assign({}, entry, { content: rendered.text }))
+      entries.push(Object.assign({}, entry, { content: text }))
     }
     resolvedPhases[phase] = phaseValue(entries)
   }

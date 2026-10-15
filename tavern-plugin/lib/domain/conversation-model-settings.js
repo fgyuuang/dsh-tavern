@@ -1,6 +1,6 @@
 import { normalizeBackgroundModel, resolveChatBackgroundModel } from './background-model-selection.js'
 
-const defaults = ['defaultForegroundModel', 'defaultBackgroundModel', 'defaultWorkbenchModel']
+const defaults = ['defaultForegroundModel', 'defaultBackgroundModel', 'defaultWorkbenchModel', 'defaultImageModel']
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 
 /** Coordinate the native foreground selection with the game's background route. */
@@ -13,7 +13,7 @@ export function createConversationModelSettings({ read, update, selection, selec
   function present(chat, settings, modelCatalog) {
     const foregroundModel = normalizeBackgroundModel(selection(chat.sessionId))
     const backgroundModel = normalizeBackgroundModel(chat.backgroundModelSelection)
-    return { foregroundModel, backgroundModel,
+    return { foregroundModel, backgroundModel, imageModel: normalizeBackgroundModel(chat.imageModelSelection),
       effectiveBackgroundModel: resolveChatBackgroundModel(chat, foregroundModel), busy: isBusy(chat),
       defaults: Object.fromEntries(defaults.map(name => [name, settings[name] || null])), modelCatalog }
   }
@@ -27,7 +27,7 @@ export function createConversationModelSettings({ read, update, selection, selec
     saving.add(sessionId)
     try {
       if (input.scope && !['conversation', 'new-games'].includes(input.scope)) throw new Error('模型设置范围无效')
-      const patch = input.models || {}, names = input.scope === 'new-games' ? defaults : ['foregroundModel', 'backgroundModel']
+      const patch = input.models || {}, names = input.scope === 'new-games' ? defaults : ['foregroundModel', 'backgroundModel', 'imageModel']
       if (!Object.keys(patch).length || Object.keys(patch).some(name => !names.includes(name))) throw new Error('模型设置项无效')
       const routes = await catalog(), resolved = {}
       for (const name of Object.keys(patch)) {
@@ -49,10 +49,12 @@ export function createConversationModelSettings({ read, update, selection, selec
       let selected = false, saved = before
       try {
         if (changeFront) { selected = true; await select(sessionId, resolved.foregroundModel) }
-        if (Object.hasOwn(resolved, 'backgroundModel')) saved = await update(before.id, current => {
+        if (Object.hasOwn(resolved, 'backgroundModel') || Object.hasOwn(resolved, 'imageModel')) saved = await update(before.id, current => {
           idle(current)
           if (current._storageRevision !== before._storageRevision) throw new Error('本局设置已变化，请刷新后重试')
-          return { ...current, backgroundConfigVersion: 1, backgroundModelSelection: resolved.backgroundModel }
+          return { ...current, backgroundConfigVersion: 1,
+            ...(Object.hasOwn(resolved, 'backgroundModel') ? { backgroundModelSelection: resolved.backgroundModel } : {}),
+            ...(Object.hasOwn(resolved, 'imageModel') ? { imageModelSelection: resolved.imageModel } : {}) }
         })
       } catch (error) {
         if (selected) {

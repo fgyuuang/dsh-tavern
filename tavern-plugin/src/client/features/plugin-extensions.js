@@ -9,7 +9,11 @@
 			const messageActions = [];
 			const composerActions = [];
 			const workbenchPanels = [];
+			const panels = new Map();
+			const startGroups = [];
 			const listeners = new Set();
+			// Tavern's own context, for the sidebar a plugin panel opens in (set at apply).
+			let host = null;
 			let version = 0;
 			function changed() { version += 1; Array.from(listeners).forEach(function (listener) { listener(); }); }
 			function ownerOf(service) {
@@ -31,6 +35,15 @@
 				if (typeof input.run !== "function") throw new TypeError(kind + " 需要 run 函数");
 				if (input.when !== undefined && typeof input.when !== "function") throw new TypeError(kind + " 的 when 必须是函数");
 				return { id: String(input.id || input.label), label: input.label.trim(), when: input.when, run: input.run };
+			}
+			// The input box of a game open in this page, for setInput / submitInput.
+			function composerFor(input, label) {
+				if (!input || typeof input.gameId !== "string" || !input.gameId) throw new TypeError(label + " 需要 gameId");
+				if (typeof input.text !== "string") throw new TypeError(label + " 需要 text 字符串");
+				const scope = host && host.sessions && host.sessions.scope(input.gameId);
+				const conversation = host && typeof host.get === "function" && host.get("conversation");
+				if (!scope || !conversation) throw new Error("这一局没有在当前页面打开，无法使用输入框");
+				return { input: conversation.input.for(scope), text: input.text };
 			}
 			const service = {
 				ctx: undefined,
@@ -71,18 +84,142 @@
                         if (workbenchPanels.some(panel => panel.id === entry.id)) throw new Error("工作台模块 ID 已注册：" + entry.id);
                         return addTo(workbenchPanels, entry);
                     }, "tavernUi.registerWorkbenchPanel()");
-                }
+                },
+				// Call a host handler registered with tavern.handle(name, handler); JSON in, JSON out.
+				callHost(name, args) {
+					if (typeof name !== "string" || !name) return Promise.reject(new TypeError("callHost 需要处理函数的名字"));
+					return rpc("callPluginHandler", { name: name, args: args === undefined ? {} : args }).then(function (reply) { return reply ? reply.result : null; });
+				},
+				// A sidebar page of the plugin's own, for the game open beside it (apiVersion 2).
+				registerPanel(input) {
+					if (!input || typeof input.id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(input.id)) throw new TypeError("registerPanel 的 id 只能用小写字母、数字、点、下划线和连字符");
+					if (typeof input.title !== "string" || !input.title.trim() || input.title.length > 40) throw new TypeError("registerPanel 需要 1–40 字的 title");
+					if (typeof input.render !== "function") throw new TypeError("registerPanel 需要 render 函数");
+					const owner = ownerOf(this);
+					const tabId = "tavern-plugin:" + owner + ":" + input.id;
+					const render = input.render, title = input.title.trim();
+					return owned(this, function () {
+						if (panels.has(tabId)) throw new Error("面板 " + input.id + " 已注册");
+						if (!host || !host.betterSidebar || typeof host.betterSidebar.registerTab !== "function") throw new Error("当前界面没有侧栏，无法注册插件面板");
+						const dispose = host.betterSidebar.registerTab({ id: tabId, title: title, order: 60, single: true,
+							component: function (props) {
+								const gameId = props.scope && props.scope.sessionId || "";
+								return React.createElement(tavernPluginBoundary(), { owner: owner, fallback: React.createElement("p", { className: "dsh-tavern-plugin-panel-error" }, "插件 " + owner + " 的面板出错了") },
+									gameId ? render({ gameId: gameId, visible: props.visible !== false }) : React.createElement("p", { className: "dsh-tavern-plugin-panel-empty" }, "请先打开一局游戏。"));
+							} });
+						panels.set(tabId, owner);
+						changed();
+						return function () { if (typeof dispose === "function") dispose(); panels.delete(tabId); changed(); };
+					}, "tavernUi.registerPanel()");
+				},
+				// URL of a file in the plugin folder's assets/ (images, maps, sounds, fonts).
+				assetUrl(file) {
+					if (typeof file !== "string" || !file || file.split("/").some(function (part) { return !part || part === "." || part === ".." || part.charAt(0) === "."; })) throw new TypeError("assetUrl 需要 assets/ 下的相对路径，例如 'map/forest.png'");
+					return "/api/dsh-tavern/plugin-assets/" + ownerOf(this).split("/").map(encodeURIComponent).join("/") + "/" + file.split("/").map(encodeURIComponent).join("/");
+				},
+				// Where a game stands now (apiVersion 2): latest turn and whether a reply or settlement runs.
+				getTurnState(gameId) {
+					if (typeof gameId !== "string" || !gameId) return Promise.reject(new TypeError("getTurnState 需要 gameId"));
+					return rpc("pluginTurnState", {}, gameId).then(function (reply) { return reply ? reply.state : null; });
+				},
+				// Calls listener with the state now and after every change, while that game is open here.
+				watchTurnState(gameId, listener) {
+					if (typeof gameId !== "string" || !gameId) throw new TypeError("watchTurnState 需要 gameId");
+					if (typeof listener !== "function") throw new TypeError("watchTurnState 需要 listener 函数");
+					const owner = ownerOf(this), getTurnState = service.getTurnState;
+					return owned(this, function () {
+						let disposed = false, queued = false, last = "", running;
+						function refresh() {
+							if (queued || disposed) return;
+							queued = true;
+							Promise.resolve().then(function () { queued = false; return disposed ? null : getTurnState(gameId); }).then(function (state) {
+								const text = JSON.stringify(state);
+								if (disposed || !state || text === last) return;
+								last = text;
+								try { listener(state); } catch (error) { try { tavernErrorHub.report("插件 " + owner, error); } catch (_) {} }
+							}, function () {});
+						}
+						const list = host && host.sessions && host.sessions.list;
+						// The session list changes while text streams; only a start or stop of this game matters.
+						const stopSessions = list && typeof list.subscribe === "function" ? list.subscribe(function () {
+							const next = list.getSnapshot().byId[gameId]?.running === true;
+							if (next !== running) { running = next; refresh(); }
+						}) : function () {};
+						const stopView = liveTavernView.subscribe(gameId, refresh, [["latestAssistantTurn"], ["activity"], ["settlementTurn"], ["settleStatus"]]);
+						return function () { disposed = true; stopView(); if (typeof stopSessions === "function") stopSessions(); };
+					}, "tavernUi.watchTurnState()");
+				},
+				// Put text in the game's input box without sending it.
+				setInput(input) {
+					const composer = composerFor(input, "setInput");
+					composer.input.setDraft(composer.text);
+				},
+				// Send text as the player's input; queued behind a reply already being written.
+				submitInput(input) {
+					let composer;
+					try { composer = composerFor(input, "submitInput"); } catch (error) { return Promise.reject(error); }
+					if (!composer.text.trim()) return Promise.reject(new TypeError("submitInput 的 text 不能为空"));
+					composer.input.setDraft(composer.text);
+					return Promise.resolve(composer.input.submit("queue")).then(function () { return { submitted: true }; });
+				},
+				// A layer over the whole page for the plugin's own screen (a battle, a map). Escape closes it
+				// unless dismissible is false; it closes by itself when the plugin unloads.
+				openOverlay(input) {
+					if (!input || typeof input.render !== "function") throw new TypeError("openOverlay 需要 render 函数");
+					if (input.onClose !== undefined && typeof input.onClose !== "function") throw new TypeError("openOverlay 的 onClose 必须是函数");
+					if (typeof document === "undefined") throw new Error("当前环境没有页面，无法打开插件界面");
+					const owner = ownerOf(this);
+					let cleanup = function () {}, dispose = null;
+					const handle = { close: function () { if (typeof dispose === "function") dispose(); else cleanup(); } };
+					dispose = owned(this, function () {
+						const container = document.createElement("div");
+						container.className = "dsh-tavern-plugin-overlay";
+						container.setAttribute("role", "dialog");
+						container.setAttribute("aria-modal", "true");
+						document.body.append(container);
+						const root = require("react-dom/client").createRoot(container);
+						let closed = false;
+						function onKey(event) { if (event.key === "Escape" && input.dismissible !== false) { event.stopPropagation(); handle.close(); } }
+						document.addEventListener("keydown", onKey, true);
+						cleanup = function () {
+							if (closed) return;
+							closed = true;
+							document.removeEventListener("keydown", onKey, true);
+							root.unmount();
+							container.remove();
+							if (input.onClose) try { input.onClose(); } catch (error) { try { tavernErrorHub.report("插件 " + owner, error); } catch (_) {} }
+						};
+						const h = React.createElement;
+						const fallback = h("div", { className: "dsh-tavern-plugin-overlay-error" }, "插件 " + owner + " 的界面出错了",
+							h("button", { type: "button", onClick: handle.close }, "关闭"));
+						function Screen() { return input.render({ gameId: String(input.gameId || ""), close: handle.close }); }
+						root.render(h(tavernPluginBoundary(), { owner: owner, fallback: fallback }, h(Screen)));
+						return function () { cleanup(); };
+					}, "tavernUi.openOverlay()");
+					return handle;
+				},
+				// A group of the plugin's own on the sidebar start page; tabs not in any group stay under 「插件」 or 「其他」.
+				registerStartGroup(input) {
+					if (!input || typeof input.title !== "string" || !input.title.trim() || input.title.trim().length > 20) throw new TypeError("registerStartGroup 需要 1–20 字的 title");
+					if (!Array.isArray(input.tabs) || !input.tabs.length || input.tabs.length > 20 || !input.tabs.every(function (tab) { return typeof tab === "string" && tab.length > 0 && tab.length <= 160; })) throw new TypeError("registerStartGroup 的 tabs 需要 1–20 个侧栏页 id");
+					const owner = ownerOf(this);
+					// A bare id names the plugin's own registerPanel page; anything with ":" is a sidebar tab id as registered.
+					const entry = { owner: owner, title: input.title.trim(), tabs: input.tabs.map(function (tab) { return tab.indexOf(":") >= 0 ? tab : "tavern-plugin:" + owner + ":" + tab; }) };
+					return owned(this, function () { return addTo(startGroups, entry); }, "tavernUi.registerStartGroup()");
+				}
 			};
 			Object.defineProperty(service, Symbol.for("cordis.tracker"), { value: { associate: "tavernUi", property: "ctx" } });
 			return {
 				service: service,
+				attachHost: function (ctx) { host = ctx; },
 				subscribe: function (listener) { listeners.add(listener); return function () { listeners.delete(listener); }; },
 				getSnapshot: function () { return version; },
 				mediaRenderer: function (kind) { return mediaRenderers.get(kind); },
 				markers: function () { return markers.slice(); },
 				messageActions: function () { return messageActions.slice(); },
 				composerActions: function () { return composerActions.slice(); },
-                workbenchPanels: function () { return workbenchPanels.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)); }
+                workbenchPanels: function () { return workbenchPanels.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)); },
+				startGroups: function () { return startGroups.map(function (group) { return { title: group.title, tabs: group.tabs.slice() }; }); }
 			};
 		}
 		const tavernUiExtensions = createTavernUiExtensions();

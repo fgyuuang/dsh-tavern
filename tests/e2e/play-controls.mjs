@@ -62,14 +62,14 @@ export async function playControls({ page, step, savedChat, inspectRound, output
     await gold(40)
     await inspectRound('resettled-after-reload', 40, edited)
   })
-  await step('导出纯对话：下载内容与当前可见剧情一致', async () => {
+  await step('导出故事正文：下载内容与当前可见剧情一致', async () => {
     const before = await savedChat()
     await page.getByRole('button', { name: '导出', exact: true }).click()
     const downloading = page.waitForEvent('download')
-    await page.getByRole('menuitem', { name: '故事正文（TXT）', exact: true }).click()
+    await page.getByRole('menuitem', { name: '故事正文', exact: true }).click()
     const download = await downloading
     assert.equal(await download.failure(), null)
-    const path = join(output, 'conversation.txt')
+    const path = join(output, 'conversation.md')
     await download.saveAs(path)
     const text = await readFile(path, 'utf8')
     for (const expected of ['欢迎领取奖励。', '领取任务奖励', '你获得了十枚金币。', '再次领取奖励', edited]) assert.ok(text.includes(expected), '导出遗漏：' + expected)

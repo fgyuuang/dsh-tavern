@@ -21,7 +21,9 @@ export async function collectSaveRevisions(chat, readRevision) {
       const revision = Number(checkpoint?.beforeRevision)
       if (!Number.isSafeInteger(revision) || revision < 0 || states.has(revision)) continue
       if (states.size >= MAX_REVISIONS) throw new Error('这局的回退历史过长，暂不能导出')
-      const value = await readRevision(chat.id, revision)
+      // History older than the kept window was cleaned up; export what remains.
+      let value
+      try { value = await readRevision(chat.id, revision) } catch (error) { if (error?.code === 'DSH_TAVERN_REVISION_NOT_FOUND') continue; throw error }
       if (!value || value._storageRevision !== revision) continue
       states.set(revision, value)
       pending.push(value)
@@ -58,7 +60,8 @@ function unpackState(packed, blobs) {
 /**
  * input: { chat, revisions: [{revision, state}], session: {header, inheritedEventCount, events},
  *   card: {path, payload} (an importCard payload), script?: {path, text}, scene?: {files: [{path, content}], worldbooks: [{digest, content}],
- *   attachments: [{attachmentId, mediaType, data}]}, tavernVersion, exportedAt }
+ *   attachments: [{attachmentId, mediaType, data}]}, plugins?: {data, media, attachments: [{attachmentId, mediaType?, name?, data}]},
+ *   tavernVersion, exportedAt }
  */
 export function buildGameSave(input) {
   const chat = input.chat
@@ -81,12 +84,21 @@ export function buildGameSave(input) {
     scene.attachments.forEach((attachment, index) => entries.push({ path: 'scene/attachments/' + index + '.bin', content: attachment.data }))
     json('scene/attachments.json', scene.attachments.map((attachment, index) => ({ attachmentId: attachment.attachmentId, mediaType: attachment.mediaType, file: 'scene/attachments/' + index + '.bin' })))
   }
+  // Plugin data and media (docs/plugin-api.md): the plugin files as they are, files they point at beside them.
+  const plugins = input.plugins
+  if (plugins) {
+    json('plugins/data.json', plugins.data ?? null)
+    json('plugins/media.json', plugins.media ?? null)
+    plugins.attachments.forEach((attachment, index) => entries.push({ path: 'plugins/attachments/' + index + '.bin', content: attachment.data }))
+    json('plugins/attachments.json', plugins.attachments.map((attachment, index) => ({ attachmentId: attachment.attachmentId,
+      ...(attachment.mediaType ? { mediaType: attachment.mediaType } : {}), ...(attachment.name ? { name: attachment.name } : {}), file: 'plugins/attachments/' + index + '.bin' })))
+  }
   for (const [id, value] of blobs) entries.push({ path: 'blobs/' + id + '.json', content: value })
   const assistantTurns = (chat.messages || []).filter(message => message?.role === 'assistant').length
   entries.unshift({ path: 'manifest.json', content: JSON.stringify({
     format: GAME_SAVE_FORMAT, formatVersion: GAME_SAVE_FORMAT_VERSION, tavernVersion: input.tavernVersion, exportedAt: input.exportedAt,
     source: { chatId: chat.id, sessionId: chat.sessionId, cardPath: chat.cardPath, cardName: chat.cardName, title: chat.title || '', mode: chat.mode || 'story', turns: assistantTurns },
-    contents: { revisions: input.revisions.map(item => item.revision), card: Boolean(input.card?.payload), script: Boolean(input.script), sceneImages: Boolean(scene), attachments: scene ? scene.attachments.length : 0, memoryFiles: (input.memory || []).length }
+    contents: { revisions: input.revisions.map(item => item.revision), card: Boolean(input.card?.payload), script: Boolean(input.script), sceneImages: Boolean(scene), attachments: scene ? scene.attachments.length : 0, plugins: Boolean(plugins), memoryFiles: (input.memory || []).length }
   }, null, 2) })
   return writeZipEntries(entries)
 }
@@ -111,8 +123,14 @@ export function readGameSave(buffer, { tavernVersion } = {}) {
       attachments: JSON.parse(text('scene/attachments.json')).map(item => ({ attachmentId: item.attachmentId, mediaType: item.mediaType, data: files.get(item.file) }))
     }
   }
+  // Packages from before plugin data was saved simply have none.
+  const plugins = manifest.contents.plugins && files.has('plugins/attachments.json') ? {
+    data: parse(text('plugins/data.json'), 'plugins/data.json'),
+    media: parse(text('plugins/media.json'), 'plugins/media.json'),
+    attachments: parse(text('plugins/attachments.json'), 'plugins/attachments.json').map(item => ({ attachmentId: item.attachmentId, mediaType: item.mediaType, name: item.name, data: files.get(item.file) }))
+  } : null
   return {
-    manifest,
+    manifest, plugins,
     chat: unpackState(parse(text('chat/current.json'), 'chat/current.json'), blobs),
     revisions,
     session: parse(text('session/foreground.json'), 'session/foreground.json'),

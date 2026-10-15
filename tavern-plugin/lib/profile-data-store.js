@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
 import { createDurableFilePromotion } from './durable-file-promotion.js'
 
 function resolveSafePath(dataRoot, relativePath) {
@@ -23,6 +24,7 @@ export function createProfileDataStore(options) {
   const files = createDurableFilePromotion(options)
   return Object.freeze({
     async version(relativePath) { return files.version(resolveSafePath(dataRoot, relativePath)) },
+    async size(relativePath) { try { return (await stat(resolveSafePath(dataRoot, relativePath))).size } catch (error) { if (error?.code === 'ENOENT') return 0; throw error } },
     async readJson(relativePath) { return decodeJson(await files.read(resolveSafePath(dataRoot, relativePath))) },
     async readText(relativePath) { return (await files.read(resolveSafePath(dataRoot, relativePath)))?.toString('utf8') },
     async appendText(relativePath, text, options) {
@@ -41,6 +43,16 @@ export function createProfileDataStore(options) {
       })
       return decodeJson(result)
     },
-    async remove(relativePath) { await files.remove(resolveSafePath(dataRoot, relativePath)) }
+    async remove(relativePath) { await files.remove(resolveSafePath(dataRoot, relativePath)) },
+    /** Directory entries; a missing directory is empty. */
+    async list(relativePath) {
+      try {
+        const entries = await readdir(resolveSafePath(dataRoot, relativePath), { withFileTypes: true })
+        return entries.map(entry => ({ name: entry.name, directory: entry.isDirectory() }))
+      } catch (error) {
+        if (error?.code === 'ENOENT') return []
+        throw error
+      }
+    }
   })
 }

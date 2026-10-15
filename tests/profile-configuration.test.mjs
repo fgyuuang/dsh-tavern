@@ -13,7 +13,7 @@ const legacyPatch = await readFile(new URL('../config/legacy-profile-patch-v0.6.
 function sourceManifest() {
   return {
     dependencies: {
-      'dsh-web-mobile': '2.3.0',
+      'dsh-web-mobile': '2.4.1',
       'dsh-better-sidebar': '0.16.0',
       'dsh-tavern-plugin': 'link:./tavern-plugin',
       'dsh-tavern-remote': 'link:./tavern-plugin/packages/dsh-tavern-remote',
@@ -38,7 +38,7 @@ for (const recorded of [false, true]) {
     const next = mergeProfileManifest(options)
     assert.equal(next.dependencies[oldName], undefined)
     assert.equal(next.dsh.profile.bundles.includes(oldName), false)
-    assert.equal(next.dependencies['dsh-web-mobile'], '2.3.0')
+    assert.equal(next.dependencies['dsh-web-mobile'], '2.4.1')
     assert.equal(next.dsh.profile.bundles.filter(name => name === 'dsh-web-mobile').length, 1)
     assert.equal(next.dependencies['user-plugin'], 'link:/user/plugin')
     assert.ok(next.dsh.profile.bundles.includes('user-plugin'))
@@ -60,6 +60,8 @@ for (const host of ['desktop', 'android', 'cli']) {
       const next = mergeProfileManifest({ ...options, current })
       assert.equal(next.dsh.bundle, undefined)
       const selected = host === 'android' ? 'dsh-web-mobile' : host === 'desktop' ? 'dsh-pocket' : null
+      // CLI ships no layout: only what Tavern managed before goes; user-installed layouts stay.
+      const kept = selected ? [selected] : recorded ? ['@dsh-external/dsh-mobile-nav', 'dsh-pocket'] : ['dsh-pocket']
       if (selected) {
         assert.equal(next.dependencies[selected], (source.dependencies[selected] ?? source.devDependencies[selected]))
         assert.ok(next.dshTavern.managedBundles.includes(selected))
@@ -68,8 +70,9 @@ for (const host of ['desktop', 'android', 'cli']) {
       assert.equal(next.dependencies['user-extra'], '3.0.0')
       assert.ok(next.dsh.profile.bundles.includes('user-extra'))
       for (const name of names) {
-        assert.equal(next.dsh.profile.bundles.filter(value => value === name).length, name === selected ? 1 : 0)
-        if (name !== selected) assert.equal(next.dependencies[name], undefined)
+        assert.equal(next.dsh.profile.bundles.filter(value => value === name).length, kept.includes(name) ? 1 : 0)
+        if (!kept.includes(name)) assert.equal(next.dependencies[name], undefined)
+        else if (!selected) assert.equal(next.dependencies[name], '1.0.0')
       }
       assert.deepEqual(mergeProfileManifest({ ...options, current: next }), next)
       const fresh = mergeProfileManifest(options)

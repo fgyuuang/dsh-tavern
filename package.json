@@ -1,6 +1,6 @@
 {
   "name": "dsh-profile-tavern",
-  "version": "2.5.0",
+  "version": "2.7.0",
   "scripts": {
     "build:client": "node bin/build-tavern-client.mjs",
     "check:client": "node bin/build-tavern-client.mjs --check",
@@ -65,7 +65,7 @@
     "dsh-tavern-plugin": "link:./tavern-plugin",
     "dsh-tavern-remote": "link:./tavern-plugin/packages/dsh-tavern-remote",
     "dsh-pocket": "2.10.6",
-    "dsh-web-mobile": "2.3.0",
+    "dsh-web-mobile": "2.4.1",
     "dsh-better-sidebar": "0.19.1",
     "dsh-dream-skin": "link:./tavern-plugin/packages/dsh-dream-skin"
   },

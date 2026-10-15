@@ -186,6 +186,41 @@
 
 		// @include modules/sidebar-start.js
 
+		// 卡片常写“鼠标在哪卡就朝哪倾斜”的 3D 特效，按钮随鼠标跑，很难点中（如《道渊》开场白）。
+		// 鼠标移动期间脚本写入的小角度 rotateX/rotateY 在绘制前还原；翻牌等大角度和样式表动画不受影响。
+		// Chromium 的 style.transform 不是可改写的访问器，只能在写入后用 MutationObserver 还原。
+		function installTavernPointerTiltGuard(win) {
+			var root = win.document && win.document.documentElement;
+			if (!root || typeof win.MutationObserver !== "function") return;
+			var lastMove = -Infinity;
+			["mousemove", "pointermove"].forEach(function (type) { win.addEventListener(type, function () { lastMove = Date.now(); }, true); });
+			function tilt(value) {
+				var pattern = /rotate[XY]\(\s*(-?[\d.]+)(?:deg)?\s*\)/g, match, moved = false;
+				while ((match = pattern.exec(String(value || "")))) {
+					var angle = Math.abs(Number(match[1]));
+					if (!(angle <= 30)) return false;
+					if (angle > 0) moved = true;
+				}
+				return moved;
+			}
+			new win.MutationObserver(function (records) {
+				if (Date.now() - lastMove > 250) return;
+				// 同一批里最后一个被接受的值：批前的值，或批内写入的非倾斜值。
+				var accepted = new Map(), parser = win.document.createElement("span").style;
+				records.forEach(function (record) {
+					if (!record.target.style) return;
+					parser.cssText = record.oldValue || "";
+					var value = { transform: parser.getPropertyValue("transform"), priority: parser.getPropertyPriority("transform") };
+					if (!accepted.has(record.target) || !tilt(value.transform)) accepted.set(record.target, value);
+				});
+				accepted.forEach(function (previous, target) {
+					if (!tilt(target.style.getPropertyValue("transform"))) return;
+					if (previous.transform) target.style.setProperty("transform", previous.transform, previous.priority);
+					else target.style.removeProperty("transform");
+				});
+			}).observe(root, { subtree: true, attributes: true, attributeFilter: ["style"], attributeOldValue: true });
+		}
+
 		function buildTavernFrameDocument(input) {
 			const html = rewriteTavernStaticMarkup(String(input && (input.content !== undefined ? input.content : input.html) || ""));
 			const sizing = tavernFrameSizing(html, input && input.frameSizing, input && input.persistent ? input.panelId : undefined);
@@ -223,6 +258,7 @@
 			const cleanRuntimeReporter = runtimeReporter.replace('addEventListener("load",schedule);schedule();', 'addEventListener("load",schedule);addEventListener("resize",schedule);schedule();').replace("capturedAt:Date.now(),", "capturedAt:Date.now(),layout:window.__dshTavernFrameLayout?window.__dshTavernFrameLayout():null,").replace('dom=copy.innerHTML;', 'Array.from(copy.querySelectorAll("script[data-dsh-tavern-text-colors],script[data-dsh-tavern-touch]")).forEach(function(node){node.remove();});dom=copy.innerHTML;');
 			return '<!doctype html><html><head><meta charset="utf-8">'
                 + '<script data-dsh-tavern-crypto>(' + installTavernCryptoSubtlePolyfill.toString() + ')(window);<\/script>'
+                + '<script data-dsh-tavern-tilt-guard>(' + installTavernPointerTiltGuard.toString() + ')(window);<\/script>'
 				+ '<meta name="viewport" content="width=device-width,initial-scale=1">'
 				+ '<meta name="referrer" content="no-referrer">'
 				+ '<meta http-equiv="Content-Security-Policy" content="default-src https: http: data: blob:; img-src https: http: data: blob:; media-src https: http: data: blob:; font-src https: http: data:; style-src \'unsafe-inline\' https: http:; script-src \'unsafe-inline\' \'unsafe-eval\' https: http: data: blob:; connect-src https: http: wss: data: blob:; frame-src https: http: data: blob:; object-src \'none\'; base-uri \'none\'; form-action \'none\'">'

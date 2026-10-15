@@ -20,6 +20,8 @@ export function registerModelStreamHooks({
   foregroundStrategies,
   fullTemplateRuntime,
   modelRequestLog,
+  pluginCompactionNotes,
+  pluginSettlementProgress,
   requestCoordinates,
   storyRetention,
   runtimePrompt,
@@ -60,12 +62,24 @@ export function registerModelStreamHooks({
       const messages = projectWithoutSessionSeedTrajectory(request.messages)
       if (messages !== request.messages) request = { ...request, messages }
     }
-    const story = createStoryCompactionRequest(request, runtimePrompt('story-compaction'))
+    // Seam to the plugin layer: plugins may add what the summary must keep.
+    const notes = pluginCompactionNotes ? await pluginCompactionNotes({ gameId: str(request.sessionId) }).catch(() => []) : []
+    const instruction = [runtimePrompt('story-compaction'), ...(notes.length ? ['【插件附加的摘要要求】', ...notes.map(note => note.text)] : [])].join('\n\n')
+    const story = createStoryCompactionRequest(request, instruction)
     const session = sessionStore.get(story.sessionId) || agentRegistry.get(story.sessionId)?.session
     const retention = await storyRetention(story)
     return retainRecentStoryRounds(story, retention.rounds - nativelyRetainedRounds(session, story), retention)
   })
 
+  async function gameChildSession(sessionId) {
+    const parentSessionId = str((sessionStore.get(sessionId) || agentRegistry.get(sessionId)?.session)?.header?.parentSession)
+    if (!parentSessionId || parentSessionId === sessionId || backgroundAgentRunner.owns(parentSessionId)) return null
+    const chat = await chatHeaderForSession(parentSessionId, ['requestMode', 'compatibilityTraces', 'bypassPlanId', 'runtimePresetSnapshot'])
+    if (!chat || !['story', 'script'].includes(chat.mode)) return null
+    // The request carries no turn; file it under the game's latest turn so old bodies are pruned with the rest.
+    const turn = (await modelRequestLog.list(chat.id)).reduce((latest, entry) => Math.max(latest, Number(entry.turn) || 0), 0)
+    return { chat, context: { scope: 'background', task: 'subagent', parentSessionId, turn } }
+  }
   ctx.on('llm/stream', function (options, next) {
     const sessionId = str(options && options.sessionId)
     const coordinates = requestCoordinates.get(sessionId)
@@ -153,7 +167,11 @@ export function registerModelStreamHooks({
         }
       }
       let requestRecord = null
-      if (chat !== undefined && ['story', 'script', 'card'].includes(chat.mode)
+      // Agents a plugin creates under a game are not Tavern's own sessions; log them
+      // as that game's background requests so 完整上下文 can show them.
+      const child = options.purpose === undefined && !backgroundContext && !chat ? await gameChildSession(sessionId) : null
+      if (child) requestRecord = await modelRequestLog.record({ chat: child.chat, context: child.context, coordinates: {}, options })
+      else if (chat !== undefined && ['story', 'script', 'card'].includes(chat.mode)
         && (options.purpose === undefined || isWritingAgentExecution(chat) || Boolean(backgroundContext))) {
         const auditCoordinates = { ...coordinates, executionStage: stage, rootOperationId, branchId, rootTurn,
           operationId: str(coordinates.operationId || attempt.operationId), attemptId: attempt.id }
@@ -169,6 +187,8 @@ export function registerModelStreamHooks({
             .catch(error => console.warn('dsh-tavern: 世界书请求日志关联失败', String(error?.message || error)))
         }
       }
+      const progress = child ? event => pluginSettlementProgress?.model(child.context.parentSessionId, event) : () => {}
+      progress('start')
       let responseText = ''
       let finish = null
       let failure = null
@@ -178,6 +198,7 @@ export function registerModelStreamHooks({
         for await (const chunk of stream) {
           if (chunk && chunk.type === 'text-delta') responseText += str(chunk.text)
           if (chunk && chunk.type === 'usage') usage = chunk.usage
+          if (chunk && ['text-delta', 'reasoning-delta', 'tool-call-delta'].includes(chunk.type)) progress('output')
           if (chunk && chunk.type === 'finish') finish = chunk.reason === undefined ? chunk : chunk.reason
           yield chunk
         }
@@ -186,6 +207,7 @@ export function registerModelStreamHooks({
         failure = str(displayedError && displayedError.message || displayedError)
         throw displayedError
       } finally {
+        progress('end')
         const aborted = Boolean(options.signal?.aborted) || finish?.kind === 'aborted'
         const completed = !failure && !aborted && finish?.kind !== 'error'
         foregroundStrategies.completeRequest(options, completed)
@@ -195,8 +217,9 @@ export function registerModelStreamHooks({
             branchId, status, usage, error: failure }) }
           catch (error) { console.error('dsh-tavern: 梦境思客调用台账写入失败', str(error && error.message || error)) }
         }
-        if (chat && requestRecord) {
-          try { await modelRequestLog.complete({ chatId: chat.id, id: requestRecord.id, text: responseText, finish, error: failure, usage }) }
+        const owner = child ? child.chat : chat
+        if (owner && requestRecord) {
+          try { await modelRequestLog.complete({ chatId: owner.id, id: requestRecord.id, text: responseText, finish, error: failure, usage }) }
           catch (error) { console.error('dsh-tavern: 模型结果日志写入失败', str(error && error.message || error)) }
         }
       }

@@ -518,3 +518,98 @@ for (const task of ['settlement', 'image']) test(task + ' 已有会话在明确�
     assert.equal(backgroundReads, 2, 'unchanged revision reuses the saved background')
   } finally { await runner.dispose() }
 })
+
+test('插件结算工具：随后台会话固定注册，只在结算任务里可调用，说明附在本轮任务后', async () => {
+  const registered = new Map(), texts = [], results = []
+  const pluginCalls = []
+  let work = Promise.resolve(), script = async () => {}
+  const pluginSettlement = {
+    tools: () => [{ name: 'anchor_submit', description: '提交锚点', parameters: { type: 'object' }, countsTowardLimit: false }],
+    has: name => name === 'anchor_submit',
+    toolNames: async () => ({ available: ['anchor_submit'], unavailable: ['old_tool'] }),
+    sections: async ({ gameId, turn }) => [{ text: gameId + ' 第 ' + turn + ' 轮记录锚点' }],
+    calls: context => async (name, args) => { pluginCalls.push([context, name, args]); return JSON.stringify({ ok: true }) }
+  }
+  const runner = createBackgroundAgentRunner({
+    id: () => 'background-plugin-tools',
+    backgroundTools: [{ name: 'posture_submit', parameters: { type: 'object' } }, { name: 'candidate_submit', parameters: { type: 'object' } }],
+    pluginSettlement: () => pluginSettlement,
+    pluginCandidate: () => ({ sections: async ({ gameId }) => [{ text: gameId + ' 候选多给探索选项' }] }),
+    agents: {
+      get: () => ({ id: 'parent', session: { header: {} } }),
+      async create(options) {
+        await options.setup({
+          systemPrompt: { section() {}, suppressRuntimeContext() {} }, on() {},
+          tools: { restrict() {}, register(tool) { registered.set(tool.name, tool); return () => registered.delete(tool.name) } }
+        })
+        const session = { id: 'background-plugin-tools', events: [], append(type, data) { this.events.push({ type, data }) } }
+        return { agent: { session,
+          followup(message) { texts.push(message.content[0].text); work = (async () => { await script(); session.append('assistant/message', { message: { content: [{ type: 'text', text: '完成' }] } }) })() },
+          async whenIdle() { await work } }, async dispose() {} }
+      }
+    }
+  })
+  try {
+    let submitted = false
+    script = async () => {
+      results.push(await registered.get('anchor_submit').execute({ text: '门' }))
+      results.push(await registered.get('posture_submit').execute({}))
+      results.push(await registered.get('anchor_submit').execute({ text: '迟到' }))
+    }
+    await runner.run({ sessionId: 'parent', persistent: true, task: 'settlement', turn: 4, selection: { provider: 'test', model: 'test' },
+      messages: [], tools: [{ name: 'posture_submit', parameters: { type: 'object' } }],
+      stopToolsWhen: () => submitted, acceptWithoutText: () => submitted,
+      onToolCall: async call => { if (call.name === 'posture_submit') submitted = true; return JSON.stringify({ ok: true }) } })
+    assert.ok(registered.has('anchor_submit'), 'plugin tools sit in the fixed tool list')
+    assert.deepEqual(pluginCalls, [[{ gameId: 'parent', turn: 4 }, 'anchor_submit', { text: '门' }]])
+    assert.match(results[2], /提交结算之前/, 'after the final submission a plugin tool is refused')
+    assert.match(texts[0], /【插件附加的结算任务】[\s\S]*本轮可用插件工具：anchor_submit。以本轮列出的为准[\s\S]*parent 第 4 轮记录锚点/)
+    assert.match(texts[0], /本轮不可用的插件工具（玩家在本局关闭了对应插件）：old_tool。本轮不要调用/)
+
+    script = async () => { results.push(await registered.get('anchor_submit').execute({ text: '候选里' })) }
+    await runner.run({ sessionId: 'parent', persistent: true, task: 'candidate', selection: { provider: 'test', model: 'test' },
+      messages: [], tools: [{ name: 'candidate_submit', parameters: { type: 'object' } }], onToolCall: async () => '{}' })
+    assert.match(results.at(-1), /不允许调用 anchor_submit/)
+    assert.equal(pluginCalls.length, 1)
+    assert.doesNotMatch(texts[1], /插件附加的结算任务/)
+    assert.match(texts[1], /【插件附加的候选要求】[\s\S]*parent 候选多给探索选项/)
+  } finally { await runner.dispose() }
+})
+
+test('插件后台任务：独立的一次性会话，插件工具注册在这个会话里并交给插件执行，结束后撤销', async () => {
+  const registered = new Map(), texts = [], results = [], created = []
+  let work = Promise.resolve(), script = async () => {}
+  const runner = createBackgroundAgentRunner({
+    id: () => 'plugin-task-' + created.length,
+    backgroundTools: [{ name: 'posture_submit', parameters: { type: 'object' } }],
+    agents: {
+      get: () => ({ id: 'parent', session: { header: {} } }),
+      async create(options) {
+        created.push(options)
+        await options.setup({
+          systemPrompt: { section() {}, suppressRuntimeContext() {} }, on() {},
+          tools: { restrict() {}, register(tool) { registered.set(tool.name, tool); return () => registered.delete(tool.name) } }
+        })
+        const session = { id: 'plugin-task', events: [], append(type, data) { this.events.push({ type, data }) } }
+        return { agent: { session,
+          followup(message) { texts.push(message.content[0].text); work = (async () => { await script(); session.append('assistant/message', { message: { content: [{ type: 'text', text: '推演完成' }] } }) })() },
+          async whenIdle() { await work } }, async dispose() {} }
+      }
+    }
+  })
+  try {
+    const calls = []
+    script = async () => {
+      results.push(await registered.get('world_advance').execute({ days: 15 }))
+      results.push(await registered.get('posture_submit').execute({}))
+    }
+    const result = await runner.run({ sessionId: 'parent', persistent: false, task: 'plugin', pluginName: 'world-sim', selection: { provider: 'test', model: 'test' },
+      system: '按日期推进世界', messages: [], tools: [{ name: 'world_advance', description: '推进', parameters: { type: 'object' } }],
+      onToolCall: async call => { calls.push(call); return JSON.stringify({ ok: true }) } })
+    assert.equal(result.text, '推演完成')
+    assert.deepEqual(calls, [{ name: 'world_advance', arguments: { days: 15 } }])
+    assert.match(results[1], /不允许调用 posture_submit/)
+    assert.match(texts[0], /任务类型：插件任务[\s\S]*【任务要求】\n按日期推进世界/)
+    assert.equal(registered.has('world_advance'), false, '任务结束后撤销插件工具')
+  } finally { await runner.dispose() }
+})

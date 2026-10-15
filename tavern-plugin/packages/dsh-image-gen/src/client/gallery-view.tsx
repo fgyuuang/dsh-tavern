@@ -56,7 +56,7 @@ const DICT = {
     // 筛选工具栏
     filterAllProviders: '全部提供商',
     filterGoogle: 'Google Gemini',
-    filterOpenAI: 'OpenAI / 中转站',
+    filterOpenAI: 'OpenAI / 兼容接口',
     filterSeedream: '字节 Seedream',
     filterDashScope: '阿里 DashScope',
     filterComfyUI: '本地 ComfyUI',
@@ -140,7 +140,7 @@ const DICT = {
     // Filter Toolbar
     filterAllProviders: 'All Providers',
     filterGoogle: 'Google Gemini',
-    filterOpenAI: 'OpenAI / Relay',
+    filterOpenAI: 'OpenAI / Compatible',
     filterSeedream: 'ByteDance Seedream',
     filterDashScope: 'Aliyun DashScope',
     filterComfyUI: 'Local ComfyUI',

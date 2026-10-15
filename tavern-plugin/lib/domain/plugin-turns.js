@@ -29,8 +29,9 @@ export function createPluginTurnReader(deps) {
   async function currentKey(sessionId, turn) { return (await currentTarget(sessionId, turn))?.key ?? null }
 
   // A turn is readable once written: an earlier turn always, the latest one
-  // only after its settlement finished or failed (its text no longer changes).
-  async function material(sessionId, turn, { requireLatest = false } = {}) {
+  // once no settlement is pending or running for it. An edit or a rollback
+  // leaves it 'idle': its text is final, no settlement is coming.
+  async function material(sessionId, turn, { requireLatest = false, allowPending = false } = {}) {
     const game = await resolveGame(sessionId)
     if (!game) return null
     const messages = Array.isArray(game.state.messages) ? game.state.messages : []
@@ -44,14 +45,27 @@ export function createPluginTurnReader(deps) {
     if (index < 0 || (requireLatest && index !== latest)) return null
     const header = await deps.header(game.sessionId, ['settleStatus', 'macroState', 'cardPath', 'cardName'])
     if (!header) return null
-    if (index === latest && !messages[index].greeting && (!['done', 'failed'].includes(header.settleStatus) || messages[index].mvu?.pending === true)) return null
+    if (!allowPending && index === latest && !messages[index].greeting && (!['done', 'failed', 'idle'].includes(header.settleStatus) || messages[index].mvu?.pending === true)) return null
     const target = await currentTarget(game.sessionId, turn)
     if (!target) return null
     return {
-      chatId: game.chatId, sessionId: game.sessionId, turn, index, key: target.key, sourceDigest: target.sourceDigest,
+      chatId: game.chatId, sessionId: game.sessionId, turn, index, greeting: messages[index].greeting === true, key: target.key, sourceDigest: target.sourceDigest,
       source: target.source, text: projectedSceneText(target.source, header.macroState),
       card: { path: String(header.cardPath || ''), name: String(header.cardName || '') }
     }
+  }
+
+  async function turnRow(turn) {
+    const sliced = await deps.slice(turn.sessionId, [turn.index])
+    return sliced ? sliced.chat?.messages?.[0]
+      : ((await deps.fullChat(turn.sessionId))?.messages || []).find(message => message?.role === 'assistant' && storyTurnOf(message) === turn.turn)
+  }
+
+  // Message variables of the shown version after settlement (MVU data under stat_data).
+  async function readVariables(turn) {
+    const row = await turnRow(turn)
+    const value = row?.variables?.[Math.max(0, Number(row.swipeId) || 0)]
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? structuredClone(value) : null
   }
 
   async function readCardContext(turn) {
@@ -59,9 +73,7 @@ export function createPluginTurnReader(deps) {
     const card = header ? await deps.readChatCard(header).catch(() => null) : null
     const project = value => typeof value === 'string' && value.trim()
       ? projectAgentContent(value, { macroState: header?.macroState, charName: card?.name || header?.cardName }).agentText.trim() : ''
-    const sliced = await deps.slice(turn.sessionId, [turn.index])
-    const row = sliced ? sliced.chat?.messages?.[0]
-      : ((await deps.fullChat(turn.sessionId))?.messages || []).find(message => message?.role === 'assistant' && storyTurnOf(message) === turn.turn)
+    const row = await turnRow(turn)
     const binding = row ? sceneWorldbookBinding({ messages: [row] }, { turn: turn.turn, sourceDigest: turn.sourceDigest }) : null
     const book = binding && deps.worldbooks ? await deps.worldbooks.read(binding) : null
     const lore = Array.isArray(book?.entries) ? book.entries.map(entry => ({
@@ -78,6 +90,9 @@ export function createPluginTurnReader(deps) {
     currentKey,
     readTurn: (sessionId, turn) => material(sessionId, turn),
     readLatestSettledTurn: sessionId => material(sessionId, undefined, { requireLatest: true }),
-    readCardContext
+    // The latest turn while its settlement is still to come (plugin tasks that run before it).
+    readPendingTurn: sessionId => material(sessionId, undefined, { requireLatest: true, allowPending: true }),
+    readCardContext,
+    readVariables
   })
 }

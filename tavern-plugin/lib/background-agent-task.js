@@ -39,7 +39,7 @@ function backgroundPrompt(messages, turnContext, task, taskProtocol, input = {})
       : (message && message.role === 'assistant' ? '正文' : '用户')
     return '[' + role + ']\n' + messageText(message)
   }).filter(function (text) { return text.trim() !== '' }).join('\n\n')
-  const taskName = task === 'worldbook-filter' ? '世界书筛选' : task === 'image' ? '场景生图' : task === 'settlement' ? '状态结算' : task === 'dream-followup' ? '梦境后续互动' : task === 'dream-draft-module' ? '独立草稿模块（尚未提交剧情）' : task === 'phone' ? '手机私聊' : task === 'character-design' ? '人物设计' : task === 'ledger' ? '台账整理' : '候选生成'
+  const taskName = task === 'worldbook-filter' ? '世界书筛选' : task === 'image' ? '场景生图' : task === 'settlement' ? '状态结算' : task === 'dream-followup' ? '梦境后续互动' : task === 'dream-draft-module' ? '独立草稿模块（尚未提交剧情）' : task === 'plugin' ? '插件任务' : task === 'phone' ? '手机私聊' : task === 'character-design' ? '人物设计' : task === 'ledger' ? '台账整理' : '候选生成'
   sections.push('【最近剧情与本次任务】\n任务类型：' + taskName + '\n' + recent)
   const protocol = str(taskProtocol).trim()
   if (protocol !== '') sections.push('【任务要求】\n' + protocol)
@@ -85,7 +85,7 @@ export function maximumBackgroundTokens(selection) {
 }
 
 export function traceError(error, traceSessionId, task) {
-  const fallback = task === 'settlement' ? '后台状态结算失败' : task === 'phone' ? '手机私聊回复失败' : '后台候选生成失败'
+  const fallback = task === 'settlement' ? '后台状态结算失败' : task === 'phone' ? '手机私聊回复失败' : task === 'plugin' ? '插件后台任务失败' : '后台候选生成失败'
   const wrapped = new Error(str(error && error.message || error) || fallback, { cause: error })
   wrapped.traceSessionId = traceSessionId
   return wrapped
@@ -112,6 +112,12 @@ export function createBackgroundAgentTask(options) {
     stableNames.add(tool.name)
     stableBackgroundTools.push(tool)
   }
+  // Seam to the plugin layer (plugin-api.js): tools and notes plugins add to settlement.
+  const pluginSettlement = () => typeof options.pluginSettlement === 'function' ? options.pluginSettlement() : null
+  function pluginTools() {
+    const tools = pluginSettlement()?.tools() || []
+    return tools.filter(tool => tool && !stableNames.has(tool.name) && !sharedByName.has(tool.name))
+  }
   function completedBoundary(events) {
     for (let index = (events || []).length - 1; index >= 0; index--) {
       const event = events[index]
@@ -123,6 +129,8 @@ export function createBackgroundAgentTask(options) {
   function setupFor(state, descriptor, appendDescriptor) {
     const backgroundPersona = state.input.task === 'phone'
       ? '你是与故事正文隔离的手机私聊 Agent。你只代表指定联系人回复当前手机消息，不推进正文、不修改状态，也不把私聊虚构成已经发生的现场剧情。'
+      : state.input.task === 'plugin'
+      ? '你是与前台正文生成隔离的酒馆后台 Agent，正在为一个插件完成一次性任务。只按任务要求输出结果，不续写正文，不自行修改游戏状态；需要资料时可以查世界书和历史。'
       : '你是与前台正文生成隔离的酒馆后台 Agent。你会在同一个剧情分支中依次承担状态结算与候选生成，人物设计仅在用户明确发起人物设计任务时执行；严格按每轮末尾追加的任务协议输出，不得把某类任务的输出格式混入另一类任务。最新权威状态优先于 Session 中的旧动态状态。'
     let descriptorAppended = !appendDescriptor
     return async function (childCtx) {
@@ -201,7 +209,9 @@ export function createBackgroundAgentTask(options) {
         if (state.input.task === 'image' || state.stableToolDisposers) return
         // Every task sharing this Session sees one fixed tool list: tool definitions sit in the
         // cached request prefix. What a task may call is enforced when the tool executes.
-        state.stableToolDisposers = stableBackgroundTools.map(function (tool) {
+        // Plugin tools join the list when the Session is set up; a plugin loaded later
+        // reaches Sessions set up after it.
+        state.stableToolDisposers = stableBackgroundTools.concat(pluginTools()).map(function (tool) {
           return childCtx.tools.register({
             name: tool.name,
             description: tool.description,
@@ -264,6 +274,12 @@ export function createBackgroundAgentTask(options) {
           const shared = (input.task !== 'worldbook-filter' || registeredShared?.allowDuringWorldbookFilter === true) &&
             (input.task !== 'character-design' || registeredShared?.allowDuringCharacterDesign === true) ? registeredShared : undefined
           const current = allowed.get(tool.name) || (shared && shared.tool)
+          if (current === undefined && input.task === 'settlement' && state.pluginCall && pluginSettlement()?.has(tool.name)) {
+            if (typeof input.stopToolsWhen === 'function' && input.stopToolsWhen()) {
+              return JSON.stringify({ ok: false, retryable: false, message: '当前任务已经提交完成，请结束本轮。插件工具请在提交结算之前调用。' })
+            }
+            return await state.pluginCall(tool.name, args)
+          }
           if (current === undefined) {
             if (Array.isArray(input.rejectToolNames) && input.rejectToolNames.includes(tool.name)) {
               if (typeof input.stopToolsWhen === 'function' && input.stopToolsWhen()) {
@@ -313,7 +329,15 @@ export function createBackgroundAgentTask(options) {
           return result
         }
       }
+      // A plugin task runs in its own one-off Session: its own tools join the fixed list there.
+      const active = state.activeToolTask
+      const extraDisposers = input.task === 'plugin' ? tools.filter(tool => !stableNames.has(tool.name)).map(tool => state.ctx.tools.register({
+        name: tool.name, description: tool.description, parameters: tool.parameters,
+        output: { schema: { type: 'string' }, render: function (_args, value) { return [{ type: 'text', text: value }] } },
+        execute: (args, execution) => active.execute(tool, args, execution)
+      })).filter(dispose => typeof dispose === 'function') : []
       return async function () {
+        for (const dispose of extraDisposers.reverse()) await dispose()
         if (state.activeToolTask !== null && state.activeToolTask !== undefined) state.activeToolTask = null
         if (state.characterDesignStage === characterDesignStage) state.characterDesignStage = null
       }
@@ -360,8 +384,25 @@ export function createBackgroundAgentTask(options) {
     }
   }
 
+  // Hide the latest task (its request and everything after) from the model's
+  // surface in the same Session; raw events stay for the trace. Fixed seeds remain.
+  async function undoLastTask(session, traceSessionId) {
+    const events = new Map(sessionEvents(session).map(event => [event.seq, event]))
+    const nodes = Array.isArray(session?.surface?.nodes) ? session.surface.nodes : []
+    const start = nodes.findLast(seq => {
+      const event = events.get(seq)
+      return event?.type === 'user/message' && !String(event.data?.id || '').startsWith('tavern-session-prefix:')
+    })
+    if (start === undefined) return { traceSessionId, undone: false }
+    try { rewindBackgroundSurface(session, start - 1) }
+    catch (error) { throw new Error('撤销失败，对话未改变。原因：' + str(error?.message || error), { cause: error }) }
+    if (typeof options.flushSession === 'function') await options.flushSession(session)
+    return { traceSessionId, undone: true }
+  }
+
   async function execute({ agent, state, traceSessionId, persistent }, input) {
     state.session = agent.session
+    if (input.undoLastTask === true) return undoLastTask(agent.session, traceSessionId)
     const runtimeInput = state.input
     try { rewindBackgroundSurface(agent.session, input.rewindTo) }
     catch (error) {
@@ -373,6 +414,9 @@ export function createBackgroundAgentTask(options) {
     state.progress=progress
     runtimeInput.signal=input.signal ? AbortSignal.any([input.signal,progress.signal]) : progress.signal
     const removeTaskTools = installTaskTools(state, runtimeInput, agent.session)
+    const plugins = input.task === 'settlement' ? pluginSettlement() : null
+    const pluginContext = { gameId: str(input.sessionId), turn: Math.max(0, Number(input.turn) || 0) }
+    state.pluginCall = plugins ? plugins.calls(pluginContext) : null
     const cancel = () => progress.cancel()
     input.signal?.addEventListener('abort', cancel, { once: true })
 
@@ -408,8 +452,19 @@ export function createBackgroundAgentTask(options) {
         ? worldbookSnapshot(agent.session, turnWorldbook) : null
       const systemUpdate = input.task === 'candidate' && typeof input.systemPromptText === 'string'
         ? cardSystemPromptSnapshot(agent.session, input.systemPromptText) : null
+      const pluginNotes = plugins ? await plugins.sections(pluginContext) : []
+      // Tool definitions stay fixed for the cache; which ones may be called is stated each
+      // turn, so a plugin turned off and on again is usable without stale refusals.
+      const pluginToolNames = plugins ? await plugins.toolNames(pluginContext) : { available: [], unavailable: [] }
+      const candidateNotes = input.task === 'candidate' && typeof options.pluginCandidate === 'function'
+        ? await options.pluginCandidate()?.sections(pluginContext).catch(() => []) || [] : []
+      const pluginText = pluginNotes.length || pluginToolNames.available.length || pluginToolNames.unavailable.length ? ['【插件附加的结算任务】',
+        ...(pluginToolNames.available.length ? ['本轮可用插件工具：' + pluginToolNames.available.join('、') + '。以本轮列出的为准：之前回合里这些工具被关闭或报错的情况已不再适用。需要时在提交本轮结算之前调用；插件工具失败不影响本轮结算。'] : []),
+        ...(pluginToolNames.unavailable.length ? ['本轮不可用的插件工具（玩家在本局关闭了对应插件）：' + pluginToolNames.unavailable.join('、') + '。本轮不要调用。'] : []),
+        ...pluginNotes.map(note => note.text)].join('\n\n')
+        : candidateNotes.length ? ['【插件附加的候选要求】', ...candidateNotes.map(note => note.text)].join('\n\n') : ''
       const taskText = [foregroundReads, snapshot?.rendered, systemUpdate?.rendered,
-        backgroundPrompt(filterContext?.messages || input.messages, scriptContext?.turnContext ?? input.turnContext, input.task, input.system, input)].filter(Boolean).join('\n\n')
+        backgroundPrompt(filterContext?.messages || input.messages, scriptContext?.turnContext ?? input.turnContext, input.task, input.system, input), pluginText].filter(Boolean).join('\n\n')
       agent.followup({
         id: randomUUID(),
         role: 'user',
@@ -427,7 +482,7 @@ export function createBackgroundAgentTask(options) {
         const underlying = terminalError(sessionEvents(agent.session), eventStart)
         if (underlying !== null) throw underlying
         if (typeof runtimeInput.acceptWithoutText !== 'function' || runtimeInput.acceptWithoutText() !== true) {
-          throw new Error(input.task === 'settlement' ? '后台 Agent 没有返回结算文本' : '后台 Agent 没有返回候选文本')
+          throw new Error(input.task === 'settlement' ? '后台 Agent 没有返回结算文本' : input.task === 'plugin' ? '后台 Agent 没有返回任务结果' : '后台 Agent 没有返回候选文本')
         }
       }
       const text = rawResult === null ? '' : rawResult.text.trim()
@@ -441,6 +496,7 @@ export function createBackgroundAgentTask(options) {
       progress.dispose()
       state.progress=null
       input.signal?.removeEventListener('abort', cancel)
+      state.pluginCall = null
       await removeTaskTools()
     }
   }

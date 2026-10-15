@@ -46,7 +46,7 @@ description: "从零新建一张完整可用的原创人物卡：逐题访谈确
    - `mes_example`：2–3 段以 `<START>` 分隔的示例对话，体现语气。
    - `creator_notes` 与 `tags`：简述玩法和题材。
 2. 需要世界书时，用 `tavern_update_worldbook` 的 `add` 操作写入条目，path 为新卡的 `cards/...` 路径；entry 用 `comment`、`content`、`primaryKeys`（关键词数组）。每个条目一个主题，关键词准确。
-3. 调用 `tavern_validate_card` 读取磁盘校验，修复本次引入的问题后重新校验。
+3. 查看保存结果附带的磁盘校验（直接改文件时调用 `tavern_validate_card`），修复本次引入的问题后重新保存或校验。
 4. 选择了 MVU：通过原生 `skill` 加载 `card-to-mvu`，直接在这张卡上加变量、更新规则和状态栏。面板按选定草图实现，可以用样式和脚本还原草图效果；没选美化时做一个简洁的字段列表面板。
 5. 选择了美化但不用 MVU：开场主页直接写进开场正文的 ```html 代码块；状态栏在 `system_prompt` 或 `post_history_instructions` 中约定每轮末尾输出固定标签格式，并通过 `rawOperations` 在 `/data/extensions/regex_scripts` 追加正则，把标签替换成选定草图的 HTML（`placement: [2]`、`markdownOnly: true`），另加一条 `promptOnly: true` 的正则从模型历史中移除旧状态块。保存后再次校验。
 

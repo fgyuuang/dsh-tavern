@@ -22,6 +22,8 @@ export function createForegroundHandoff(options = {}) {
 
   async function prepare(input) {
     if (typeof turns.prepare !== 'function') throw new Error('Foreground Handoff 缺少 prepare adapter')
+    // A save being reconciled (#196) finishes that first; both write the story.
+    await options.waitReconcile?.(input.sessionId)
     // Task metadata and the opening check need the header and floor count only.
     const opening = store.openingStateForSession ? await store.openingStateForSession(input.sessionId) : null
     const chat = opening ? opening.chat : await store.chatForSession(input.sessionId)
@@ -29,10 +31,15 @@ export function createForegroundHandoff(options = {}) {
     if (chat !== undefined && activity.role === 'settlement' && (activity.phase === 'pending' || activity.phase === 'running')) {
       await queueBackground(chat.id)
     }
+    // Plugin tasks of the last turn (or one the player started) finish before the next turn.
+    if (chat !== undefined) await options.waitBackground?.(chat.id)
     // An unfinished prefilter is optional: sending cancels it instead of waiting.
     if (chat !== undefined) await options.cancelPrefilter?.(chat.id)
     // Optional interaction panels yield to the player's next story action.
     if (chat !== undefined) await options.cancelFollowup?.(chat.id)
+    // A failed turn is cleaned up after the failure, but that may not have happened (no live
+    // session then, or it failed). Its input must not reach this request beside the new one.
+    if (chat !== undefined) await options.clearFailedTurns?.(input.sessionId)
     // A greeting is already story text. Direct typing may bypass candidate
     // preparation, so project its keywords locally before the first body request.
     const onlyGreeting = opening ? opening.messageCount === 1 && opening.firstGreeting === true

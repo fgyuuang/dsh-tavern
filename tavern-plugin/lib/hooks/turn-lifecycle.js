@@ -1,4 +1,6 @@
 import { assistantResultForTurn } from '../domain/session-turn-result.js'
+import { inputEventForTurn } from '../domain/session-turn-input.js'
+import { roundAnchor } from '../domain/round-anchor.js'
 import { inputAttachments } from '../domain/player-input-content.js'
 import { prependSystemInstruction } from '../domain/system-append.js'
 import { sessionStablePrefixSections, withCurrentWorldbook } from '../domain/session-stable-prefix.js'
@@ -12,6 +14,7 @@ import { isSingleReplyMode, isWritingAgentExecution } from '../domain/generation
 import { collectInterruptedReplies, singleReplyText } from '../domain/interrupted-reply.js'
 
 export function registerTurnLifecycleHooks({
+  reconcileWhenIdle,
   backgroundAgentRunner,
   chatForSession,
   hookChatForSession,
@@ -114,7 +117,8 @@ export function registerTurnLifecycleHooks({
       userContent,
       assistantText: dreamMode ? draft.text : (isSingleReplyMode(chat)
         ? singleReplyText(chat, payload.turn, assistant?.text || '')
-        : (assistant === null ? '' : assistant.text))
+        : (assistant === null ? '' : assistant.text)),
+      nativeAnchor: roundAnchor(payload.turn, inputEventForTurn(session, payload.turn), assistant.event)
     })
     if (saved.reply) replaceAssistantReply(session, assistant, saved.reply.sessionText)
   })
@@ -134,6 +138,9 @@ export function registerTurnLifecycleHooks({
         .catch(error => console.error('dsh-tavern: 保留中断正文失败', String(error?.message || error)))
     }
     foregroundHandoff.end({ sessionId: session.id, turn: event.data && event.data.turn, reason })
+    // A turn whose record went missing (#196) is adopted before the player's next
+    // message, once the agent has gone idle; reconcile never blocks this hook.
+    setTimeout(() => { void reconcileWhenIdle?.(session.id) }, 0)
   })
 
   ctx.on('system-prompt/assemble', async function (_assembly, context, next) {

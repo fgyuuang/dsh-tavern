@@ -31,3 +31,27 @@ test('导出带上回退链上的全部历史状态，大快照只存一份，�
   assert.throws(() => readGameSave(buffer, { tavernVersion: '2.4.9' }), /更新版本的酒馆/)
   assert.throws(() => readGameSave(writeZipEntries([{ path: 'manifest.json', content: '{"format":"other"}' }])), /不是 DSH Tavern 存档包/)
 })
+
+test('存档包带上插件数据、媒体与其文件；旧存档包没有插件数据时读出 null', () => {
+  const current = state(2)
+  const session = { header: { id: 'session-a' }, inheritedEventCount: 0, events: [] }
+  const plugins = { data: { version: 1, owners: { p: { turns: [{ turn: 1, key: 'k1', data: { hp: 3 } }], game: { level: 2 } } } },
+    media: { version: 1, items: [{ id: 'm', owner: 'p', turn: 1, key: 'k1', kind: 'audio', attachment: { attachmentId: 'f1', name: 'bgm.mp3', bytes: 3 } }], issued: {} },
+    attachments: [{ attachmentId: 'f1', name: 'bgm.mp3', data: Buffer.from([7, 8, 9]) }] }
+  const read = readGameSave(buildGameSave({ chat: current, revisions: [], session, plugins, tavernVersion: '2.5.0', exportedAt: 1 }))
+  assert.equal(read.manifest.contents.plugins, true)
+  assert.deepEqual(read.plugins.data, plugins.data)
+  assert.deepEqual(read.plugins.media, plugins.media)
+  assert.equal(read.plugins.attachments[0].name, 'bgm.mp3')
+  assert.deepEqual([...read.plugins.attachments[0].data], [7, 8, 9])
+  assert.equal(readGameSave(buildGameSave({ chat: current, revisions: [], session, tavernVersion: '2.5.0', exportedAt: 1 })).plugins, null)
+})
+
+test('导出时跳过已清理的早期历史版本', async () => {
+  const current = { id: 'c', _storageRevision: 9, timeline: { checkpoints: [{ beforeRevision: 3 }, { beforeRevision: 7 }] } }
+  const revisions = await collectSaveRevisions(current, async (id, revision) => {
+    if (revision === 3) throw Object.assign(new Error('gone'), { code: 'DSH_TAVERN_REVISION_NOT_FOUND' })
+    return { id, _storageRevision: revision }
+  })
+  assert.deepEqual(revisions.map(item => item.revision), [7])
+})

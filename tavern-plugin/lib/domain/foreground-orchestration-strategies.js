@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { inputAttachments, projectPlayerContent } from './player-input-content.js'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { createEphemeralCompatibilityRequest, isCompatibilityConversationRequest } from './compatibility-request.js'
@@ -8,8 +8,29 @@ import { writingAgentInstruction } from './writing-agent-contract.js'
 import { dreamSikeAgentInstruction } from './dream-sike-mode.js'
 import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
 import { projectInterruptedReply } from './interrupted-reply.js'
+import { inputKind } from './session-turn-input.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
+// The card Agent resends its system prompt on every tool step and reads live
+// files anyway; a large card's reference material would dominate each request.
+export const CARD_REFERENCE_WORLDBOOK_LIMIT = 8000
+export const CARD_REFERENCE_SECTION_LIMIT = 8000
+
+function cardReferenceSection(section) {
+  const text = str(section.text)
+  if (section.name === 'tavern:constant-worldbook') {
+    const chars = Array.from(text.replace(/^【常驻世界书】\n?/, '').trim()).length
+    if (chars <= CARD_REFERENCE_WORLDBOOK_LIMIT) return section
+    return { name: section.name, text: '【常驻世界书】\n共约 ' + chars + ' 字，超过预载上限，未放入参考资料。需要时用 tavern_read_worldbook 按关键词或编号读取相关条目。' }
+  }
+  const chars = Array.from(text).length
+  if (chars <= CARD_REFERENCE_SECTION_LIMIT) return section
+  const [title, name] = text.split('\n')
+  if (section.name === 'tavern:character-card') {
+    return { name: section.name, text: title + '\n' + (/^名字: /.test(name || '') ? name + '\n' : '') + '人物卡设定共约 ' + chars + ' 字，超过预载上限，未放入参考资料。需要时用 tavern_read_card 按字段读取。' }
+  }
+  return { name: section.name, text: title + '\n共约 ' + chars + ' 字，超过预载上限，未放入参考资料。需要时用 tavern_read_card 读取 system_prompt 字段。' }
+}
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -22,9 +43,10 @@ function contentText(message) {
     .join('\n')
 }
 
+// A provider request carries the player's input or a regenerate attempt;
+// legacy replay inputs are resent as the player's own message and never appear here.
 function isTurnInput(message) {
-  const source = message && message.source
-  return source && (source.kind === 'user' || (source.kind === 'plugin' && source.plugin === 'dsh-tavern-regen'))
+  return ['player', 'regenerate'].includes(inputKind(message))
 }
 
 function userTextOf(messages) {
@@ -55,13 +77,11 @@ function replaceTurnInput(messages, text) {
 }
 
 function isRegenerationInput(message) {
-  const source = message && message.source
-  return source && source.kind === 'plugin' && source.plugin === 'dsh-tavern-regen'
+  return inputKind(message) === 'regenerate'
 }
 
 function isOriginalPlayerInput(message) {
-  const source = message && message.source
-  return message && message.role === 'user' && source && source.kind === 'user'
+  return Boolean(message && message.role === 'user' && inputKind(message) === 'player')
 }
 
 /**
@@ -295,6 +315,16 @@ export function createNativePlayOrchestrationStrategy(options) {
   const enteredFronts = new Map()
   // Front texts of the step being prepared, only to label the request evidence.
   const frontTexts = new Map()
+  // Per-session dice seed: drawn on a turn's first step, so every step of one turn rolls
+  // the same and a new turn or regeneration rolls again.
+  const presetSeeds = new Map()
+  function presetSeed(sessionId, turn, step) {
+    const current = presetSeeds.get(sessionId)
+    if (step > 1 && current && current.turn === turn) return current.seed
+    const seed = randomBytes(16).toString('hex')
+    presetSeeds.set(sessionId, { turn, seed })
+    return seed
+  }
 
   async function prepareStep(input) {
     const sessionId = input.sessionId
@@ -306,7 +336,8 @@ export function createNativePlayOrchestrationStrategy(options) {
     let agentMessages = visibleMessages
     const rawSnapshot = mode === 'story' || mode === 'script' ? await options.resolvePreset(input.chat) : null
     // Render the three phases together; the persisted preset and prior messages stay authoritative.
-    const snapshot = resolveRuntimePresetMacros(rawSnapshot, { charName: input.chat?.cardName, macroState: input.chat?.macroState, lastUserMessage: presetPlayerAction(input) }).snapshot
+    const randomSeed = rawSnapshot ? presetSeed(sessionId, Math.max(0, Number(payload.turn) || 0), Math.max(1, Number(payload.step) || 1)) : undefined
+    const snapshot = resolveRuntimePresetMacros(rawSnapshot, { charName: input.chat?.cardName, macroState: input.chat?.macroState, lastUserMessage: presetPlayerAction(input), randomSeed }).snapshot
     if (mode === 'story' || mode === 'script') {
       if (Number(payload.step) === 1 && typeof options.synchronizeTail === 'function') {
         await options.synchronizeTail({ sessionId, chat: input.chat, payload })
@@ -415,7 +446,7 @@ export function createNativePlayOrchestrationStrategy(options) {
       if (reference.length) {
         const note = typeof options.cardReferencePrompt === 'function' ? options.cardReferencePrompt().trim() : ''
         if (note) sections.push({ name: 'tavern:card-reference', text: note })
-        sections.push(...reference)
+        sections.push(...reference.map(cardReferenceSection))
       }
       const workspace = options.workspaceContext(input.cwd, input.workspaceProjection)
       if (workspace !== '') sections.push({ name: 'tavern:resource-workspace', text: workspace })
@@ -435,6 +466,9 @@ export function createNativePlayOrchestrationStrategy(options) {
     assembly.tools = assembly.tools.filter(function (schema) {
       return !options.controlledToolNames.has(schema.name) || visible.has(schema.name)
     })
+    // DSH may expose both editor generations; the legacy schema alone costs
+    // ~800 tokens on every card-Agent step and duplicates read/edit/write.
+    if (assembly.tools.some(schema => schema.name === 'edit')) assembly.tools = assembly.tools.filter(schema => schema.name !== 'str_replace_editor')
     return assembly
   }
 
@@ -456,7 +490,7 @@ export function createForegroundOrchestrationStrategies(options) {
       const saved = input.chat.regenRecovery
       if (saved?.phase === 'committed' || inputs.length !== 1 || !isRegenerationInput(inputs[0]) ||
           (saved?.id && inputs[0].source.regenerationId !== saved.id)) {
-        throw new Error('正文重新生成尚未完成，请先完成或恢复后再发送消息')
+        throw new Error('上一次正文重新生成尚未完成：请点「重新生成正文」完成或恢复它，再发送消息')
       }
     }
     return await select(input.chat).prepareStep(input)

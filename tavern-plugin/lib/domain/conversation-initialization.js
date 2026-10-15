@@ -65,6 +65,7 @@ export function createConversationInitialization(options) {
       userProfileContextSnapshot: '',
       webSearchEnabled: false,
       backgroundModelSelection: null,
+      imageModelSelection: null,
       macroState: { userName: '你', local: {}, global: {} },
       settleStatus: 'idle',
       settleError: null,
@@ -198,6 +199,7 @@ export function createConversationInitialization(options) {
     chat.backgroundModelSelection = groupOfMode(chat.mode) === 'play'
       ? (Object.hasOwn(selectedModels, 'backgroundModel') ? selectedModels.backgroundModel : normalizeBackgroundModel(currentSettings.defaultBackgroundModel)) : null
     if (groupOfMode(chat.mode) === 'play' && models !== undefined) chat.backgroundModelRevision = currentSettings.backgroundModelRevision || 0
+    chat.imageModelSelection = groupOfMode(chat.mode) === 'play' ? normalizeBackgroundModel(currentSettings.defaultImageModel) : null
     chat.disabledWritingSkills = groupOfMode(chat.mode) === 'play' ? [...(currentSettings.defaultDisabledWritingSkills || [])] : []
     chat.backgroundConfigVersion = 1
     chat.backgroundTasks = normalizeBackgroundTasks(groupOfMode(chat.mode) === 'play' ? defaults.backgroundTasks : {})

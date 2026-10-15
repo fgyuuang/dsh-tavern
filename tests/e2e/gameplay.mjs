@@ -5,6 +5,11 @@ import { createConversationState } from '../../tavern-plugin/lib/domain/conversa
 import { settlementPerformanceChecks, settlementPerformanceInitialVariables } from './settlement-performance.mjs'
 import {setupRealVariables,realVariableLookupChecks} from './real-variable-lookup.mjs'
 import { setupRealCharacterDesign, realCharacterDesignChecks } from './real-character-design.mjs'
+import { setupRealCardEdit, realCardEditChecks } from './real-card-edit.mjs'
+import { startSceneImageServer, sceneAddChecks } from './scene-add.mjs'
+import { regenAnomalyChecks, regenTemplateChecks } from './regen-anomalies.mjs'
+import { storageAuditChecks } from './storage-audit.mjs'
+import { brokenSaveChecks } from './broken-save.mjs'
 import { incrementalMvuChecks } from './mvu-incremental.mjs'
 import {openingUpdateChecks} from './opening-update.mjs'
 import { backgroundLifecycleChecks } from './background-lifecycle.mjs'
@@ -39,7 +44,12 @@ const cli = join(modules, '@deepseek-ai/dsh/lib/bin.js')
 const outputBase = resolve(process.env.TAVERN_E2E_OUTPUT || join(source, 'output/e2e-gameplay'))
 await mkdir(outputBase, { recursive: true })
 const output = await mkdtemp(join(outputBase, 'run-'))
-const root = await mkdtemp(join(tmpdir(), 'tavern-e2e-'))
+// A fixed home lets a saved profile-data snapshot (whose session paths embed the
+// home) be restored as is: TAVERN_E2E_HOME + TAVERN_E2E_RESTORE_DATA (a .tar.gz).
+const root = process.env.TAVERN_E2E_HOME
+  ? (await rm(process.env.TAVERN_E2E_HOME, { recursive: true, force: true }), await mkdir(process.env.TAVERN_E2E_HOME, { recursive: true }), process.env.TAVERN_E2E_HOME)
+  : await mkdtemp(join(tmpdir(), 'tavern-e2e-'))
+const restoredSave = process.env.TAVERN_E2E_RESTORE_DATA || ''
 const profile = join(root, 'profiles/tavern'), data = join(root, 'profile-data/tavern/data')
 const timeout = Number(process.env.TAVERN_E2E_TIMEOUT_MS) || 30000
 const report = { status: 'running', scope: 'real isolated DSH + Tavern + Chromium; fixed model only', steps: [] }
@@ -131,7 +141,8 @@ try {
     report.runtimeVersion = JSON.parse(await readFile(join(modules, '@deepseek-ai/dsh/package.json'), 'utf8')).version
     await mkdir(join(profile, 'node_modules'), { recursive: true })
     for (const [name, target] of Object.entries({
-      'dsh-tavern-plugin': join(source, 'tavern-plugin'),
+      // An older plugin build can produce a save its bugs damaged; the scenario then switches to this one.
+      'dsh-tavern-plugin': process.env.TAVERN_E2E_PLUGIN_SOURCE || join(source, 'tavern-plugin'),
       'dsh-tavern-remote': join(source, 'tavern-plugin/packages/dsh-tavern-remote'),
       'dsh-web-mobile': join(source, 'node_modules/dsh-web-mobile')
     })) await symlink(target, join(profile, 'node_modules', name))
@@ -160,16 +171,26 @@ try {
     // Deliberate continuous DOM updates: a real status card must receive new
     // variables even when it never reaches the frame's DOM-idle threshold.
     const status = '<div id="e2e-gold">金币：加载中</div><script>function refresh(){const v=getAllVariables();document.getElementById("e2e-gold").textContent="金币："+(v.stat_data?.gold??"未初始化")}refresh();setInterval(refresh,200)</script>'
+    // Storage audit: borrow a real large card's worldbook (its [initvar] entries give realistic MVU state).
+    const auditBook = process.env.TAVERN_E2E_AUDIT_CARD ? (raw => (raw.data || raw).character_book)(JSON.parse(await readFile(process.env.TAVERN_E2E_AUDIT_CARD, 'utf8')).raw || JSON.parse(await readFile(process.env.TAVERN_E2E_AUDIT_CARD, 'utf8'))) : null
     await writeFile(join(data, 'resources/cards/e2e.json'), JSON.stringify({ spec: 'chara_card_v2', spec_version: '2.0', data: {
       name: 'E2E 奖励验收', description: '固定验收角色', first_mes: (process.argv.includes('--text-colors') ? '她说：“欢迎光临。” *窗外下着雨。*' : '欢迎领取奖励。') + (process.argv.includes('--opening-update') ? '\n<initvar>{"gold":0,"old":1}</initvar>' : '') + '\n\n<StatusPlaceHolderImpl/>',
       mes_example: '', scenario: '', personality: '',
-      character_book: { name: '验收初始变量', entries: [{ id: 1, keys: [], comment: '[initvar]初始值', content: process.argv.includes('--settlement-performance') ? JSON.stringify(settlementPerformanceInitialVariables()) : 'gold: 0', enabled: true, constant: true, insertion_order: 1 }, ...(helperApiScenario ? [{ id: 2, keys: ['金币规则'], comment: '金币规则', content: '每次领取十枚金币。', enabled: true, insertion_order: 2 }] : [])] },
+      character_book: { name: '验收初始变量', entries: [{ id: 1, keys: [], comment: '[initvar]初始值', content: process.argv.includes('--settlement-performance') || process.argv.includes('--storage-audit') ? JSON.stringify(settlementPerformanceInitialVariables()) : 'gold: 0', enabled: true, constant: true, insertion_order: 1 }, ...(auditBook ? auditBook.entries.filter(entry => !/initvar/i.test(String(entry.comment || '') + String(entry.content || '').slice(0, 200))).map((entry, index) => ({ ...entry, id: 1000 + index })) : []), ...(helperApiScenario ? [{ id: 2, keys: ['金币规则'], comment: '金币规则', content: '每次领取十枚金币。', enabled: true, insertion_order: 2 }] : [])] },
       extensions: { mvu: {}, ...(helperApiScenario ? { TavernHelper_scripts: [{ type: 'script', value: { id: 'e2e-helper-api', name: 'E2E 助手接口', enabled: true, content: helperApiScript } }] } : {}), regex_scripts: [{ id: 'e2e-status', scriptName: '金币状态', findRegex: '<StatusPlaceHolderImpl/>',
-        replaceString: '```html\n' + status + '\n```', placement: [2], markdownOnly: true, disabled: false }, ...(displayScenario ? displayRegressionRules() : [])] }
+        replaceString: '```html\n' + status + '\n```', placement: [2], markdownOnly: true, disabled: false }, ...(displayScenario ? displayRegressionRules() : []),
+        // A permanent player-input rule: the saved input differs from what was typed.
+        ...(process.argv.includes('--regen-template') ? [{ id: 'e2e-input-rule', scriptName: '整理输入', findRegex: '/ZZ(\\d)/g', replaceString: '〔$1〕', placement: [1], disabled: false }] : [])] }
     } }))
   })
   if(process.argv.includes('--real-variables')) {report.scope='real isolated DSH + Chromium + configured live model';report.model=await setupRealVariables({root,profile,data,runtimeHome:join(homedir(),'.dsh-tavern')})}
+  if(process.argv.includes('--real-card-edit')) {report.scope='real isolated DSH + Chromium + configured live model';report.model=await setupRealCardEdit({root,profile,data,runtimeHome:join(homedir(),'.dsh-tavern')})}
   if(process.argv.includes('--real-character-design')) {report.scope='real isolated DSH + Chromium + configured live model';report.model=await setupRealCharacterDesign({root,profile,data,runtimeHome:join(homedir(),'.dsh-tavern')})}
+  if (restoredSave) await step('放入保存的存档快照', async () => {
+    await rm(join(root, 'profile-data'), { recursive: true, force: true })
+    const { execFileSync } = await import('node:child_process')
+    execFileSync('tar', ['-xzf', restoredSave, '-C', root])
+  })
   await step('启动真实 DSH 与酒馆', async () => {
     async function launchServer() {
       const logOffset = log.length
@@ -179,13 +200,16 @@ try {
         cwd: source, env: { ...env, DSH_HOME: root, DSH_CWD: root,
           TAVERN_E2E_COMPACTION_DIR: compactionScenario ? output : '',
           TAVERN_E2E_RECOVERY_DIR: recoveryScenario ? output : '',
-          TAVERN_E2E_PERFORMANCE_DIR: process.argv.includes('--settlement-performance') ? output : '',
-          TAVERN_PERF_HISTORY_READY: process.env.TAVERN_PERF_HISTORY_READY || '',
+          TAVERN_E2E_PERFORMANCE_DIR: process.argv.includes('--settlement-performance') || process.argv.includes('--storage-audit') ? output : '',
+          TAVERN_PERF_HISTORY_READY: process.env.TAVERN_PERF_HISTORY_READY || (process.argv.includes('--storage-audit') ? '1' : ''),
           TAVERN_PERF_BODY_REPEATS: process.env.TAVERN_PERF_BODY_REPEATS || '',
           TAVERN_E2E_BACKGROUND_DIR: (process.argv.includes('--background-lifecycle') || process.argv.includes('--background-failure')) ? output : '',
           TAVERN_E2E_REQUEST_AUDIT: join(output, 'preset-requests.jsonl'),
           TAVERN_E2E_MEMORY_AUDIT: process.argv.includes('--card-memory') ? join(output, 'memory-requests.jsonl') : '',
+          TAVERN_E2E_SCENE_AUDIT: process.argv.includes('--scene-add') ? join(output, 'scene-requests.jsonl') : '',
           TAVERN_E2E_LLM_MODULE: join(modules, '@deepseek-ai/dsh-llm/lib/index.js'),
+          // Server card scripts are the default; ordinary scenarios keep exercising the page path.
+          DSH_TAVERN_SERVER_SCRIPTS: process.argv.includes('--server-scripts') ? '1' : '0',
           TAVERN_E2E_WRONG_GOLD: process.env.TAVERN_E2E_WRONG_GOLD || '' }, stdio: ['ignore', 'pipe', 'pipe']
       })
       let spawnError
@@ -253,7 +277,14 @@ try {
     await page.goto(url, { waitUntil: 'domcontentloaded' })
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
   })
-  await step('通过界面选择角色卡并新开一局', async () => {
+  if (restoredSave) await step('打开存档中的这局游戏', async () => {
+    const history = page.locator('.dsh-tavern-history-group-toggle').filter({ hasText: 'E2E 奖励验收' })
+    await history.filter({ visible: true }).first().waitFor()
+    if (!await page.locator('.dsh-tavern-side-row-name').first().isVisible().catch(() => false)) await history.first().click()
+    await page.locator('.dsh-tavern-side-row-name').first().click()
+    await page.getByRole('textbox', { name: /发消息|Message/ }).waitFor()
+  })
+  else await step('通过界面选择角色卡并新开一局', async () => {
     await page.getByRole('button', { name: /选择人物卡.*新开游玩/ }).click()
     await page.getByText('E2E 奖励验收', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始新游戏', exact: true }).click()
@@ -415,10 +446,23 @@ try {
     })
   } else if (helperApiScenario) {
     await helperApiChecks({ page, step, savedChat, output, report })
+  } else if (process.argv.includes('--broken-save')) {
+    await brokenSaveChecks({ page, step, savedChat, output, report, root, data, profile, source, restartServer })
+  } else if (process.argv.includes('--regen-template')) {
+    await regenTemplateChecks({ page, step, savedChat, output, report, root })
+  } else if (process.argv.includes('--regen-anomalies')) {
+    await regenAnomalyChecks({ page, step, savedChat, output, report, serverLog: () => log })
+  } else if (process.argv.includes('--scene-add')) {
+    const images = await startSceneImageServer()
+    try { await sceneAddChecks({ page, step, output, report, images, savedChat }) } finally { await images.close() }
+  } else if (process.argv.includes('--real-card-edit')) {
+    await realCardEditChecks({page,step,root,data,output,report})
   } else if (process.argv.includes('--real-character-design')) {
     await realCharacterDesignChecks({page,step,savedChat,root,data,output,report})
   } else if (process.argv.includes('--real-variables')) {
     await realVariableLookupChecks({page,step,savedChat,root,output,report})
+  } else if (process.argv.includes('--storage-audit')) {
+    await storageAuditChecks({ page, step, savedChat, data, root, output, report })
   } else if (process.argv.includes('--opening-update')) {
     await openingUpdateChecks({page,step,savedChat,data,output,report,root})
   } else if (process.argv.includes('--background-failure')) {
@@ -452,7 +496,7 @@ try {
       const button=page.getByRole('button',{name:'导出 ▾',exact:true})
       await button.waitFor({timeout:5000})
       await button.click()
-      await page.getByRole('menuitem',{name:'故事正文（TXT）',exact:true}).waitFor({timeout:1000})
+      await page.getByRole('menuitem',{name:'故事正文',exact:true}).waitFor({timeout:1000})
       await page.keyboard.press('Escape')
       report.exportReadiness={visibleBeforeSessionView:true}
     }finally{release();await page.unrouteAll({behavior:'wait'})}
@@ -568,13 +612,12 @@ try {
   } else if (!process.argv.includes('--card-memory') && !process.argv.includes('--message-rendering-only') && !process.argv.includes('--sidebar-only') && !process.argv.includes('--card-update') && !process.argv.includes('--card-variables')) {
     await step('生成候选项并选择行动，再玩一轮', async () => {
       await page.getByRole('button', { name: '生成候选项', exact: true }).click()
-      await page.getByText('5 个候选项', { exact: true }).waitFor()
+      await page.getByText('5 个', { exact: true }).waitFor()
       assert.deepEqual(inspectSaved(await savedChat()), report.afterReload, '生成候选不能修改正文或金币')
       const candidates = page.locator('.dsh-tavern-candidate-question')
       if (await candidates.getByTitle('展开行动列表', { exact: true }).isVisible()) await candidates.getByTitle('展开行动列表', { exact: true }).click()
+      // Picking a candidate appends it to the input directly.
       await page.getByRole('button', { name: /再次领取奖励/ }).click()
-      assert.equal(await candidates.locator('.dsh-tavern-question-option').count(), 5)
-      await page.getByRole('button', { name: '追加到输入框', exact: true }).click()
       const composer = page.getByRole('textbox', { name: /发消息|Message/ })
       assert.equal(await composer.innerText(), '再次领取奖励')
       await composer.press('Enter')
@@ -585,7 +628,7 @@ try {
     })
     await step('重新生成最新正文', async () => {
       await page.getByRole('button', { name: '重新生成正文', exact: true }).click()
-      await page.getByPlaceholder('指导意见（可选）：例如“写得更长，侧重心理描写”').fill('雨夜重写')
+      await page.getByPlaceholder('指导意见（可选）').fill('雨夜重写')
       await page.getByRole('button', { name: '生成并替换正文', exact: true }).click()
       await page.getByText('雨夜里，你重新领取了奖励。', { exact: true }).filter({ visible: true }).first().waitFor()
       await page.frameLocator('.dsh-tavern-status-runtime iframe:not([aria-hidden="true"])').locator('#e2e-gold').filter({ hasText: /^金币：30$/ }).waitFor()
@@ -648,6 +691,94 @@ try {
   if (process.argv.includes('--card-update')) await cardUpdateChecks({page,step,savedChat,data,output,report})
   if (process.argv.includes('--sidebar') || process.argv.includes('--sidebar-only')) await sidebarUpgrade({ page, step, savedChat, output, report })
   }
+  if (process.argv.includes('--deferred-resettle')) await step('页面关闭时发起重新结算，重新打开页面后完成', async () => {
+    const origin = new URL(page.url()).origin
+    if (process.env.TAVERN_E2E_WARM_RETRY_FIRST === '1') {
+      // A completed retry first advances the story revision, as in the server scenario.
+      const before = await savedChat(), turn = before.messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+      assert.ok((await (await context.request.post(origin + '/api/dsh-tavern/retryMvuSettlement', { data: { sessionId: before.sessionId, turn: turn.turn, guidance: 'E2E 修正金币为四十' } })).json()).ok)
+      const warmStarted = Date.now()
+      while (Date.now() - warmStarted < 30000) {
+        const row = (await savedChat()).messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+        if (!row.mvu?.pending && row.mvu?.receipt?.diagnosticId !== turn.mvu?.receipt?.diagnosticId) break
+        await pause(250)
+      }
+    }
+    const chat = await savedChat()
+    const latest = chat.messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+    await page.goto('about:blank')
+    await pause(15000)
+    const result = await (await context.request.post(origin + '/api/dsh-tavern/retryMvuSettlement', { data: { sessionId: chat.sessionId, turn: latest.turn, guidance: 'E2E 修正金币为四十' } })).json()
+    assert.ok(result.ok, result.error)
+    await pause(5000)
+    const started = Date.now()
+    await page.goto(origin + '/', { waitUntil: 'domcontentloaded' })
+    const history = page.locator('.dsh-tavern-history-group-toggle').filter({ hasText: 'E2E 奖励验收' })
+    await history.filter({ visible: true }).first().waitFor()
+    if (!await page.locator('.dsh-tavern-side-row-name').first().isVisible().catch(() => false)) await history.first().click()
+    await page.locator('.dsh-tavern-side-row-name').first().click()
+    let settled
+    while (Date.now() - started < 60000) {
+      settled = (await savedChat()).messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+      if (!settled.mvu?.pending && settled.mvu?.receipt?.diagnosticId !== latest.mvu?.receipt?.diagnosticId) break
+      await pause(250)
+    }
+    report.deferredResettle = { ms: Date.now() - started, pending: settled.mvu?.pending === true, receipt: settled.mvu?.receipt?.status }
+    assert.ok(!settled.mvu?.pending, '重新打开页面后等待中的结算应完成')
+  })
+  if (process.argv.includes('--server-scripts')) await step('页面在前台时由页面执行；切到后台或关页后由服务端完成结算', async () => {
+    const claims = () => log.split('服务端卡脚本运行时领取事件').length - 1
+    const starts = () => log.split('服务端卡脚本运行时已启动').length - 1
+    assert.equal(claims(), 0, '页面在前台时不应由服务端执行')
+    assert.equal(starts(), 0, '页面在前台时不应启动服务端运行时')
+    const chat = await savedChat()
+    const latest = chat.messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+    const origin = new URL(page.url()).origin
+    const resettle = async (before, label) => {
+      const begun = Date.now(), claimedBefore = claims()
+      const result = await (await context.request.post(origin + '/api/dsh-tavern/retryMvuSettlement', { data: { sessionId: chat.sessionId, turn: latest.turn, guidance: 'E2E 修正金币为四十' } })).json()
+      assert.ok(result.ok, result.error)
+      let row
+      while (Date.now() - begun < 90000) {
+        row = (await savedChat()).messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+        if (claims() > claimedBefore && row.mvu?.receipt?.status === 'updated' && row.mvu?.receipt?.diagnosticId !== before?.receipt?.diagnosticId) break
+        await pause(250)
+      }
+      assert.ok(claims() > claimedBefore, label + '：应由服务端领取结算事件')
+      assert.equal(row.mvu.receipt.status, 'updated', label + '：应完成结算')
+      return { row, ms: Date.now() - begun }
+    }
+    // A hidden tab hands its game to the server once its last visible report ages out.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    const hiddenDeadline = Date.now() + 60000
+    while (starts() === 0 && Date.now() < hiddenDeadline) await pause(500)
+    assert.ok(starts() > 0, '页面切到后台后应启动服务端运行时')
+    await pause(30000)
+    const hidden = await resettle(latest.mvu, '页面在后台')
+    await page.goto('about:blank')
+    const closed = await resettle(hidden.row.mvu, '页面关闭')
+    report.serverScripts = { hiddenSettleMs: hidden.ms, closedSettleMs: closed.ms }
+    let settled = closed.row
+    // Nobody plays this game now: its runtime stops, and a waiting settlement starts it again.
+    const stopDeadline = Date.now() + 90000
+    while (!log.includes('服务端卡脚本运行时已停止') && Date.now() < stopDeadline) await pause(500)
+    assert.ok(log.includes('服务端卡脚本运行时已停止'), '无人游玩时服务端运行时应停止')
+    const startsBefore = log.split('服务端卡脚本运行时已启动').length, coldStarted = Date.now(), coldBefore = claims(), mvuBefore = settled.mvu
+    const cold = await (await context.request.post(origin + '/api/dsh-tavern/retryMvuSettlement', { data: { sessionId: chat.sessionId, turn: latest.turn, guidance: 'E2E 修正金币为四十' } })).json()
+    assert.ok(cold.ok, cold.error)
+    while (Date.now() - coldStarted < 60000) {
+      settled = (await savedChat()).messages.filter(message => message.role === 'assistant' && !message.greeting).at(-1)
+      if (claims() > coldBefore && settled.mvu?.receipt?.status === 'updated' && settled.mvu?.receipt?.diagnosticId !== mvuBefore?.receipt?.diagnosticId) break
+      await pause(250)
+    }
+    assert.ok(log.split('服务端卡脚本运行时已启动').length > startsBefore, '等待中的结算应重新拉起服务端运行时')
+    assert.ok(claims() > coldBefore, '冷启动后应由服务端执行结算')
+    report.serverScripts.coldSettleMs = Date.now() - coldStarted
+    await page.goto(origin + '/', { waitUntil: 'domcontentloaded' })
+  })
   if((process.argv.includes('--native-format')||process.argv.includes('--migrate-native')) && !process.argv.includes('--opening-only'))await step('服务重启后打开同一原生存档并核对当前变量',async()=>{
     const before=await savedChat()
     await restartServer()
@@ -667,6 +798,17 @@ try {
     assert.deepEqual(persistentMessages((await savedChat()).messages),persistentMessages(before.messages))
     await assertNativeStorage()
     report.nativeFormat.restart=true
+  })
+  // Every scenario ends with the story save agreeing with what the model sees (#196).
+  if (process.env.TAVERN_E2E_BROKEN_STOP !== '1' && !['--settlement-performance', '--display-regression', '--text-colors', '--opening-only'].some(flag => process.argv.includes(flag))) await step('存档与模型上下文一致', async () => {
+    const chat = await savedChat().catch(() => null)
+    if (!chat?.sessionId) return
+    const result = await page.evaluate(async sessionId => (await fetch('/api/dsh-tavern/storyAlignment', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) })).json(), chat.sessionId)
+    report.storyAlignment = result.alignment ?? result
+    assert.ok(result.ok !== false, '核对接口失败：' + JSON.stringify(result))
+    assert.ok(!result.alignment || result.alignment.aligned, '存档与模型上下文不一致：' + JSON.stringify(result.alignment))
+    // Rounds played in this run record where they entered the native session.
+    if (result.alignment) assert.ok(result.alignment.anchors.checked > 0 || !chat.messages.some(row => row.role === 'assistant' && !row.greeting), '新回合应记录原生锚点')
   })
   assert.deepEqual(errors, [], '整个验收不得出现未捕获浏览器异常')
   assert.doesNotMatch(log, /服务端模板进程异常|Unsupported or expired template RPC/, '验收期间模板子进程不得异常退出')

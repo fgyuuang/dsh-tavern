@@ -38,6 +38,7 @@ function TavernConversationModels(props) {
         config ? h(React.Fragment, null,
             row("foregroundModel", "本局前台模型", "准备、写作和草稿修订", config.foregroundModel, "conversation", "请选择模型"),
             row("backgroundModel", "本局后台模型", "变量结算与独立模块", config.backgroundModel, "conversation", "跟随前台"),
+            row("imageModel", "本局生图 Agent 模型", "整理插图方案与绘图提示词；留空沿用前台模型", config.imageModel, "conversation", "跟随前台"),
             h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || config.busy || !config.foregroundModel,
                 onClick: () => save({ foregroundModel: config.foregroundModel, backgroundModel: config.foregroundModel }) }, "前后台统一使用当前前台模型"),
             h("p", { className: "dsh-local-help" }, "平行事件、独立审稿、后续互动、变量结算共用本局后台：" + (backgroundModelLabel(config.effectiveBackgroundModel, config.modelCatalog) || "尚未配置")),
@@ -47,8 +48,9 @@ function TavernConversationModels(props) {
                 row("defaultForegroundModel", "新游戏默认前台模型", "留空采用 DSH 默认", config.defaults.defaultForegroundModel, "new-games", "使用 DSH 默认模型"),
                 row("defaultBackgroundModel", "新游戏默认后台模型", "留空跟随新游戏前台", config.defaults.defaultBackgroundModel, "new-games", "跟随前台"),
                 row("defaultWorkbenchModel", "新工作台默认模型", "人物卡创建与编辑", config.defaults.defaultWorkbenchModel, "new-games", "跟随前台"),
+                row("defaultImageModel", "新游戏默认生图 Agent 模型", "整理插图方案与绘图提示词", config.defaults.defaultImageModel, "new-games", "跟随前台"),
                 h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy || !config.foregroundModel,
-                    onClick: () => save(Object.fromEntries(["defaultForegroundModel", "defaultBackgroundModel", "defaultWorkbenchModel"].map(name => [name, config.foregroundModel])), "new-games") }, "新游戏与工作台统一使用当前前台模型"))) : h("p", { role: "status" }, "正在读取模型设置…"),
+                    onClick: () => save(Object.fromEntries(["defaultForegroundModel", "defaultBackgroundModel", "defaultWorkbenchModel", "defaultImageModel"].map(name => [name, config.foregroundModel])), "new-games") }, "新游戏与工作台统一使用当前前台模型"))) : h("p", { role: "status" }, "正在读取模型设置…"),
         error ? h("p", { role: "alert" }, error) : h("p", { role: "status" }, busy ? "正在保存模型设置…" : notice),
         error ? h("button", { type: "button", className: "dsh-tavern-btn", disabled: busy, onClick: load }, "刷新模型设置") : null);
 }

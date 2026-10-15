@@ -38,7 +38,7 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetC
             h("section", { className: "dsh-local-section" }, h("h3", null, "后台结算"),
                 toggle("variables", "变量结算", "MVU 卡建议开启；普通卡不执行此任务。", true), toggle("posture", "人物姿势结算", "总结本轮结束时人物的位置、动作和姿势。", true), toggle("variableFeedback", "变量回灌前台", "每轮把上一轮变化的变量最新值告诉前台，减少前后不一致。", true)),
             h("section", { className: "dsh-local-section" }, h("h3", null, "扩展功能"),
-                toggle("webSearchEnabled", "联网搜索", "允许新游戏的前台和后台按需搜索。"), toggle("sceneImagesEnabled", "开启场景生图", "允许手动为剧情配图；API 在下方统一配置。")),
+                toggle("webSearchEnabled", "联网搜索", "允许新游戏的前台和后台按需搜索。")),
             message ? h("p", { role: "status" }, message) : null);
     }
 
@@ -88,11 +88,11 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetC
     }
 
     function TavernSettingsSection() {
-        const [state, setState] = React.useState({ loading: true, busy: false, defaultForegroundModel: null, defaultBackgroundModel: null, defaultWorkbenchModel: null, notice: "", settings: null, modelCatalog: [], sceneImages: false, error: "" });
+        const [state, setState] = React.useState({ loading: true, busy: false, defaultForegroundModel: null, defaultBackgroundModel: null, defaultWorkbenchModel: null, defaultImageModel: null, sceneImages: false, notice: "", settings: null, modelCatalog: [], error: "" });
         React.useEffect(function () {
             let active = true;
             rpc("getTavernSettings").then(function (result) {
-                if (active) setState({ loading: false, busy: false, defaultForegroundModel: result.settings?.defaultForegroundModel || null, defaultBackgroundModel: result.settings?.defaultBackgroundModel || null, defaultWorkbenchModel: result.settings?.defaultWorkbenchModel || null, notice: "", settings: result.settings, modelCatalog: Array.isArray(result.modelCatalog) ? result.modelCatalog : [], sceneImages: Boolean(result.releaseCapabilities && result.releaseCapabilities.sceneImages), error: "" });
+                if (active) setState({ loading: false, busy: false, defaultForegroundModel: result.settings?.defaultForegroundModel || null, defaultBackgroundModel: result.settings?.defaultBackgroundModel || null, defaultWorkbenchModel: result.settings?.defaultWorkbenchModel || null, defaultImageModel: result.settings?.defaultImageModel || null, sceneImages: Boolean(result.releaseCapabilities && result.releaseCapabilities.sceneImages), notice: "", settings: result.settings, modelCatalog: Array.isArray(result.modelCatalog) ? result.modelCatalog : [], error: "" });
             }, function (error) {
                 if (active) setState(function (current) { return Object.assign({}, current, { loading: false, busy: false, error: String(error && error.message || error) }); });
             });
@@ -120,7 +120,8 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetC
             h("div", { className: "dsh-tavern-gs-card" },
             React.createElement(TavernDefaultModelSetting, { label: "默认前台模型", title: "前台模型", description: "写正文、扮演角色，直接决定剧情质量", fallback: "使用 DSH 默认模型", selection: state.defaultForegroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultForegroundModel", selection) }),
             React.createElement(TavernDefaultModelSetting, { label: "默认后台模型", title: "后台模型", description: "变量结算、世界书筛选、候选回复、手机消息等幕后任务", fallback: "跟随前台", selection: state.defaultBackgroundModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultBackgroundModel", selection) }),
-            React.createElement(TavernDefaultModelSetting, { label: "卡片工作台默认模型", title: "工作台模型", description: "卡片工作台里创建和修改人物卡", fallback: "跟随前台", selection: state.defaultWorkbenchModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultWorkbenchModel", selection) })),
+            React.createElement(TavernDefaultModelSetting, { label: "卡片工作台默认模型", title: "工作台模型", description: "卡片工作台里创建和修改人物卡", fallback: "跟随前台", selection: state.defaultWorkbenchModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultWorkbenchModel", selection) }),
+            state.sceneImages ? React.createElement(TavernDefaultModelSetting, { label: "生图 Agent 默认模型", title: "生图 Agent 模型", description: "为剧情插图整理画面、写绘图提示词；跟随前台时使用最低推理强度，出图更快", fallback: "跟随前台", selection: state.defaultImageModel, catalog: state.modelCatalog, disabled: state.loading || state.busy, onChange: selection => saveDefault("defaultImageModel", selection) }) : null),
             state.notice ? h("p", { className: "dsh-tavern-gs-notice", role: "status" }, state.notice) : null),
             group("新游戏默认", "开局时继承，开局后可在本局设置中单独修改。",
                 state.settings ? h(GlobalPlayDefaults, { settings: state.settings }) : null,
@@ -130,8 +131,7 @@ function createGlobalSettingsModule({ React, rpc, notifySettingsChanged, PresetC
                 h(CandidatePreferencesSettings)),
             group("高级", "",
                 h(PromptTemplateSettingsEntry),
-                h(ContextCompactionSettings),
-                state.sceneImages ? h(SceneImageSettings, null) : null),
+                h(ContextCompactionSettings)),
             state.error ? React.createElement("div", { className: "dsh-tavern-settings-error", role: "alert" }, "保存失败：" + state.error) : null
         );
     }

@@ -1,9 +1,11 @@
 import { captureChatHeader } from './chat-persistence.js'
+import { validAnchor } from './round-anchor.js'
 import { CARD_MEMORY_TOOLS } from '../../packages/dsh-tavern-card-memory/index.js'
 import { inputAttachments } from './player-input-content.js'
 import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { composeTavernRegexScripts } from './card-extension-reading.js'
 import { scriptPromptFrameInputs, consumeScriptPrompts } from './tavern-script-prompts.js'
+import { ledgerFrameInputs } from './story-ledger.js'
 import { projectBackgroundInput } from './runtime-content-projection.js'
 import { lastTavernHelperVariables } from './tavern-helper-context.js'
 import { bindSceneWorldbook } from './scene-worldbook.js'
@@ -12,6 +14,7 @@ import { diffJson } from './json-mutation.js'
 import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn, dreamSikeTurnIdentity, readyDreamSikeDraft } from './dream-sike-draft.js'
 import { rebindDreamSikePreparation } from './dream-sike-preparation.js'
 import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
+import { hasTavernCredit, withTavernCredit } from './card-credit.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -113,6 +116,28 @@ function rememberRuntimeInput(chat, turn, source, text) {
   for (const oldTurn of keys.slice(40)) delete chat.runtimeInputs[String(oldTurn)]
 }
 
+// The prompt-template projection of a turn's input changes the template variables before the
+// reply exists. Keep what they were, so a turn that fails (or is left behind by one) is undone
+// instead of carrying its input into the next turn.
+function stageTemplateInput(chat, turn, source, projected) {
+  if (chat.promptTemplateInput && chat.promptTemplateInput.turn !== turn) restoreTemplateInput(chat)
+  const before = chat.promptTemplateInput?.before || { variables: clone(chat.variables ?? null), initial: clone(chat.promptTemplateInitialVariables ?? null) }
+  chat.promptTemplateInput = { turn, source, message: projected.message, before }
+  chat.variables = projected.scopes.local
+  chat.promptTemplateInitialVariables = projected.scopes.initial
+}
+
+function restoreTemplateInput(chat) {
+  const before = chat.promptTemplateInput?.before
+  if (before) {
+    if (before.variables === null) delete chat.variables
+    else chat.variables = before.variables
+    if (before.initial === null) delete chat.promptTemplateInitialVariables
+    else chat.promptTemplateInitialVariables = before.initial
+  }
+  delete chat.promptTemplateInput
+}
+
 function runtimeInputFor(chat, turn, source) {
   const value = chat.runtimeInputs && chat.runtimeInputs[String(turn)]
   return value !== null && typeof value === 'object' && str(value.source) === source ? str(value.text) : null
@@ -161,7 +186,7 @@ function presetMiddleInstructions(snapshot) {
   })
 }
 
-export function foregroundFrameInputs(plan, sourceText, projectedText, presetSnapshot, chat) {
+export function foregroundFrameInputs(plan, sourceText, projectedText, presetSnapshot, chat, pluginSections = []) {
   const inputs = [{
     kind: 'foreground.user-input',
     sourceText,
@@ -171,6 +196,16 @@ export function foregroundFrameInputs(plan, sourceText, projectedText, presetSna
   const sections = Array.isArray(plan && plan.sections) && plan.sections.length > 0
     ? plan.sections
     : [{ kind: 'legacy-plan-text', required: true, text: str(plan && plan.text) }]
+  const plugins = Array.isArray(pluginSections) ? pluginSections : []
+  const pluginInput = section => ({
+    kind: section.worldbook ? 'foreground.active-worldbook' : 'foreground.current-state',
+    text: str(section.text),
+    required: false,
+    source: { stage: 'plugin', plugin: str(section.owner), name: str(section.name) }
+  })
+  // Plugin contributions sit before or after Tavern's own context: worldbook entries beside
+  // the recalled worldbook, other sections as current-turn state.
+  for (const section of plugins.filter(item => item.position === 'before')) inputs.push(pluginInput(section))
   for (const [index, section] of sections.entries()) {
     const sectionKind = str(section && section.kind)
     inputs.push({
@@ -180,6 +215,7 @@ export function foregroundFrameInputs(plan, sourceText, projectedText, presetSna
       source: { stage: 'context-plan', sectionKind, index }
     })
   }
+  for (const section of plugins.filter(item => item.position !== 'before')) inputs.push(pluginInput(section))
   if (usesOfficialMvu(chat)) {
     inputs.push({
       kind: 'foreground.writing-rules',
@@ -197,7 +233,7 @@ export function foregroundFrameInputs(plan, sourceText, projectedText, presetSna
       source: { stage: 'dream-sike-resume' }
     })
   }
-  return inputs.concat(presetMiddleInstructions(presetSnapshot), scriptPromptFrameInputs(chat))
+  return inputs.concat(ledgerFrameInputs(chat), presetMiddleInstructions(presetSnapshot), scriptPromptFrameInputs(chat))
 }
 
 function frameSource(chat, card, operation) {
@@ -361,13 +397,20 @@ export function createTurnOrchestrator(options) {
         : null
       const presetRegexScripts = await resolvePresetRegexScripts(chat)
       const regexScripts = composeTavernRegexScripts(extensions, presetRegexScripts)
-      runtimeUserText = projectBackgroundInput(runtimeUserText, regexScripts, 1).text
+      // As in SillyTavern, only permanent input rules change the stored player
+      // message; prompt-only rules (e.g. a preset wrapping the input in tags)
+      // reach the model and never the bubble, copy or saved history.
+      const promptOnly = regexScripts.filter(script => script?.promptOnly === true)
+      runtimeUserText = projectBackgroundInput(runtimeUserText, regexScripts.filter(script => script?.promptOnly !== true), 1).text
       if (typeof options.projectUserTemplate === 'function' && runtimeUserText !== '') {
         const projected = await options.projectUserTemplate({chat,card,turn,text:runtimeUserText})
         runtimeUserText = projected.message.text
-        chat.promptTemplateInput = {turn,source:userText,message:projected.message}
-        chat.variables = projected.scopes.local
-        chat.promptTemplateInitialVariables = projected.scopes.initial
+        stageTemplateInput(chat, turn, userText, projected)
+      }
+      const prompted = projectBackgroundInput(runtimeUserText, promptOnly, 1)
+      if (prompted.changed) {
+        // A replacement may carry macros; SillyTavern substitutes them in the prompt.
+        runtimeUserText = renderMacros !== null && prompted.text.includes('{{') ? renderMacros(prompted.text, chat) : prompted.text
       }
       rememberRuntimeInput(chat, turn, userText, runtimeUserText)
       chatChanged = true
@@ -428,8 +471,11 @@ export function createTurnOrchestrator(options) {
       chat.lastWorldBookRecall = clone(chat.preparedWorldBook)
       chat.worldBookError = foregroundWorldBook.error
     }
-    const sceneWorldbook = typeof options.captureSceneWorldbook === 'function' ? await options.captureSceneWorldbook(chat, card) : null
+    const sceneWorldbook = typeof options.captureSceneWorldbook === 'function' ? await options.captureSceneWorldbook(chat, card, undefined, turn) : null
     const plan = await planner.plan({ purpose: 'body', card, chat: templateWorldBook?.macroState ? { ...chat, macroState: templateWorldBook.macroState } : chat, userText: runtimeUserText, sessionId: input.sessionId, nativeTurn: turn, scriptReference, worldBookContext })
+    // Seam to the plugin layer; it never throws and drops a failing plugin's part.
+    const pluginSections = typeof options.pluginTurnContext === 'function'
+      ? await options.pluginTurnContext({ gameId: input.sessionId, turn, input: userText }).catch(() => []) : []
     const source = frameSource(chat, card, foregroundOperation)
     source.card.systemPromptText = plan.systemPromptText
     source.worldBook.scriptPromptRefs = Array.isArray(scriptWorldBook && scriptWorldBook.refs) ? clone(scriptWorldBook.refs) : []
@@ -444,7 +490,7 @@ export function createTurnOrchestrator(options) {
       turn,
       inputs: foregroundFrameInputs(plan, userText, runtimeUserText,
         Object.hasOwn(input, 'runtimePresetSnapshot') ? input.runtimePresetSnapshot
-          : resolveRuntimePresetMacros(chat.runtimePresetSnapshot, { charName: card.name, macroState: chat.macroState }).snapshot, chat),
+          : resolveRuntimePresetMacros(chat.runtimePresetSnapshot, { charName: card.name, macroState: chat.macroState }).snapshot, chat, pluginSections),
       source: { ...source, ...(sceneWorldbook ? { sceneWorldbook } : {}) }
     }
     let frame = frameBuilder.build(frameInput)
@@ -455,6 +501,8 @@ export function createTurnOrchestrator(options) {
       frame = frameBuilder.build({ ...frameInput, source: { ...source, worldBook: { ...source.worldBook, ...receipt } } })
     }
     consumeScriptPrompts(chat)
+    // The ledger is read once after a consolidation; this turn's frame keeps it for retries.
+    delete chat.ledgerInjection
     rememberFrame(chat, frame)
     chatChanged = true
     if (chatChanged) await savePreparation({ source: 'foreground.prepare' })
@@ -484,7 +532,7 @@ export function createTurnOrchestrator(options) {
     chat = begun.chat
     const operation = chat.timeline.operations[begun.value.operationId]
     if (operation && !Object.hasOwn(operation, 'sceneWorldbook') && typeof options.captureSceneWorldbook === 'function') {
-      operation.sceneWorldbook = await options.captureSceneWorldbook(chat, await store.readCard(cardPathOf(chat), chat))
+      operation.sceneWorldbook = await options.captureSceneWorldbook(chat, await store.readCard(cardPathOf(chat), chat), undefined, turn)
     }
     chat.foregroundError = null
     let projectedText = runtimeInputFor(chat, turn, userText)
@@ -493,9 +541,7 @@ export function createTurnOrchestrator(options) {
       if (typeof options.projectUserTemplate === 'function' && userText !== '') {
         const projected = await options.projectUserTemplate({chat,card:await store.readCard(cardPathOf(chat), chat),turn,text:userText})
         projectedText = projected.message.text
-        chat.promptTemplateInput = {turn,source:userText,message:projected.message}
-        chat.variables = projected.scopes.local
-        chat.promptTemplateInitialVariables = projected.scopes.initial
+        stageTemplateInput(chat, turn, userText, projected)
       }
       rememberRuntimeInput(chat, turn, userText, projectedText)
     }
@@ -514,8 +560,15 @@ export function createTurnOrchestrator(options) {
     // Like editing code: any card file can be targeted by path; the workbench's own
     // card is only the default.
     const target = str(input.path).trim() === '' ? '' : normalizeResourcePath(str(input.path).trim(), 'card')
+    // A card the Agent actually changed gets the Tavern credit once, in a follow-up save.
+    async function updateWithCredit(path) {
+      const change = await store.updateCard(path, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      if (!change.changed || hasTavernCredit(change.card?.creator_notes)) return change
+      await store.updateCard(path, { creator_notes: withTavernCredit(change.card?.creator_notes) }, { ts: now(), summary: '标注 DSH Tavern 合著' }, [])
+      return change
+    }
     if (target !== '' && target !== cardPath) {
-      const other = await store.updateCard(target, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      const other = await updateWithCredit(target)
       return { saved: true, mode: 'card', path: target, changed: other.changed, createsCard: false, changedFields: other.changedFields || [] }
     }
     let result
@@ -529,7 +582,7 @@ export function createTurnOrchestrator(options) {
       chat.cardPath = created.path; chat.cardName = created.card.name
       result = { changed: true, changedFields: change.changedFields }
     } else {
-      result = await store.updateCard(cardPath, fields, { ts: now(), summary: '卡片 Agent 直接保存' }, rawOperations)
+      result = await updateWithCredit(cardPath)
       chat.cardName = result.card.name
     }
     if (chat.pendingCardChanges) delete chat.pendingCardChanges[String(input.turn)]
@@ -750,9 +803,16 @@ export function createTurnOrchestrator(options) {
       return { saved: true, mode, changed, chatId: chat.id, cardName: savedCard.name }
     }
 
-    const operation = Object.values(timeline.inspect({ chat }).operations).find(function (item) {
+    let operation = Object.values(timeline.inspect({ chat }).operations).find(function (item) {
       return item.kind === 'body' && item.status === 'running' && Number(item.turn) === turn
     })
+    // Adopting a round the save missed (#196): its own operation is long gone,
+    // so record it the way a fresh turn would have begun.
+    if (operation === undefined && input.adopt === true) {
+      const begun = timeline.apply({ chat, intent: { kind: 'body.begin', turn, userText } })
+      chat = begun.chat
+      operation = chat.timeline.operations[begun.value.operationId]
+    }
     if (operation === undefined) throw new Error('找不到本轮正文 operation，请重新生成本轮正文')
     if (isWritingAgentExecution(chat)) {
       const ready = readDreamSikeDraft(chat)
@@ -808,18 +868,27 @@ export function createTurnOrchestrator(options) {
           projectionWarnings: Array.isArray(reply.warnings) ? clone(reply.warnings) : [],
           ts: now(),
           native: true,
-          turn: turn
+          turn: turn,
+          // Where this round entered the native session; see round-anchor.js.
+          ...(validAnchor(input.nativeAnchor) && input.nativeAnchor.turn === turn ? { nativeAnchor: { ...input.nativeAnchor } } : {})
         }
+        // An adopted round (#196) is recorded long after it ran: it keeps the
+        // variables it started from and is not settled now, which would wait on
+        // the turn that is about to start. Later rounds settle as usual.
+        const adopted = input.adopt === true
         if (usesOfficialMvu(draft)) Object.assign(assistantMessage, {
           swipeId: 0,
           swipes: [str(reply.projectionText)],
           variables: [clone(previousMvuVariables || {})],
-          mvu: { pending: true, modified: false, diagnostics: [], events: [] }
+          mvu: adopted ? { pending: false, modified: false, diagnostics: [{ message: '这一轮补记自模型上下文，当时的变量变化未结算' }], events: [] }
+            : { pending: true, modified: false, diagnostics: [], events: [] }
         })
         bindSceneWorldbook(assistantMessage, rememberedFrame(chat, operation.id)?.source?.sceneWorldbook || operation.sceneWorldbook)
         draft.messages.push(assistantMessage)
-        draft.settleStatus = 'pending'
-        draft.settleError = null
+        if (!adopted) {
+          draft.settleStatus = 'pending'
+          draft.settleError = null
+        }
         draft.foregroundError = null
         if (draft.interruptedReplyResume?.nextTurn === turn) {
           const resumedTurn = draft.interruptedReplyResume.failedTurn
@@ -875,6 +944,10 @@ export function createTurnOrchestrator(options) {
           changed = true
         }
       }
+      if (chat.promptTemplateInput?.turn === turn) {
+        restoreTemplateInput(chat)
+        changed = true
+      }
       if ((chat.mode || 'story') === 'card' && chat.workspace && chat.workspace.prepared && Number(chat.workspace.prepared.nativeTurn) === turn) {
         chat.workspace.prepared = null
         changed = true
@@ -903,7 +976,7 @@ export function createTurnOrchestrator(options) {
     const draftTools = isWritingAgentExecution(chat)
       ? ['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft', 'tavern_memory'] : []
     if (mode === 'script') return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', ...draftTools, ...webTools]
-    if (mode === 'card') return [...CARD_MEMORY_TOOLS, 'web_search', shellToolName, ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response']
+    if (mode === 'card') return [...CARD_MEMORY_TOOLS, 'web_search', shellToolName, ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_search_card', 'tavern_replace_card_text', 'tavern_mvu_overview', 'tavern_apply_mvu', 'tavern_read_play_chat', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response']
     return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_recall_history', 'worldbook_search', ...draftTools, ...webTools]
   }
 

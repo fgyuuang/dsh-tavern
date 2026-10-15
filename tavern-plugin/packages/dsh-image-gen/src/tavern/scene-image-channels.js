@@ -1,19 +1,19 @@
-import { novelaiSettings, novelaiRequest, novelaiArtists, novelaiEndpoints, NOVELAI_MODELS, NOVELAI_BASE_SECTIONS, NOVELAI_QUALITY_PRESETS, NOVELAI_UC_PRESETS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES } from './scene-image-novelai.js'
+import { novelaiSettings, novelaiRequest, novelaiChatRequest, novelaiArtists, novelaiEndpoints, NOVELAI_MODELS, NOVELAI_BASE_SECTIONS, NOVELAI_QUALITY_PRESETS, NOVELAI_UC_PRESETS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES } from './scene-image-novelai.js'
 import { comfyWorkflow } from './scene-image-comfy-workflow.js'
 import { imageReferenceCapability } from './scene-image-reference.js'
 
 // Protocol presets are versioned here, not inferred by issuing paid probes.
 const channels = [
   { id: 'dsh-image-gen', label: 'dsh-image-gen（内置插件）', model: '', pluginProvider: '', aspectRatio: '', size: '', fields: ['model', 'pluginProvider', 'aspectRatio', 'size'], hint: '随 Tavern 安装，无需另装插件。请到设置 → 插件 → Image generation 配置渠道、模型和 Key；此处无需重复填写。目前 Tavern 接入文生图，不含 ComfyUI 或参考图。' },
-  { id: 'comfyui', label: 'ComfyUI', baseURL: '', authType: 'none', username: '', fields: ['baseURL', 'authType', 'username'], hint: '使用维护者已部署的服务与工作流。导入 API 工作流或维护者准备的映射文件；不会安装模型、节点或清空共享队列。本机地址指 Tavern 服务器。' },
-  { id: 'novelai', label: 'NovelAI / 同协议第三方', baseURL: 'https://image.novelai.net', model: 'nai-diffusion-5-full', size: '832x1216', fields: ['baseURL', 'model', 'size'], hint: '默认使用官方 V5 Full。第三方必须支持相同的 /ai/generate-image 协议与 ZIP 图片响应，不是 OpenAI 兼容地址。' },
-  { id: 'openai', label: 'OpenAI / Images 兼容中转', baseURL: 'https://api.openai.com/v1', model: 'gpt-image-2', size: '1024x1024', fields: ['baseURL', 'model', 'size'], hint: '官方可使用默认地址与模型；兼容中转请填写自己的地址和模型。' },
-  { id: 'gemini', label: 'Google Gemini 原生', baseURL: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-3.1-flash-image', size: '1K', aspectRatio: '1:1', fields: ['baseURL', 'model', 'size', 'aspectRatio'], hint: '使用 Interactions API，不是聊天兼容地址。' },
-  { id: 'banana', label: 'Banana / Gemini 聊天兼容中转', baseURL: '', model: '', size: '1K', fields: ['baseURL', 'model', 'size'], hint: '填写支持 chat/completions 生图的中转地址与模型；不自动猜测接口。' },
-  { id: 'grok', label: 'Grok Images', baseURL: 'https://api.x.ai/v1', model: 'grok-imagine-image-2.0', size: '1k', aspectRatio: '1:1', fields: ['baseURL', 'model', 'size', 'aspectRatio'], hint: '使用 Images 接口；图片分辨率为 1k 或 2k。' },
-  { id: 'seedream', label: 'Seedream / 火山方舟', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedream-5-0-260128', size: '2K', fields: ['baseURL', 'model', 'size'], hint: '可填账号可用的模型或接入点；关闭组图，每次只请求一张。' },
-  { id: 'qwen', label: '百炼 Qwen-Image', baseURL: 'https://dashscope.aliyuncs.com/api/v1', model: 'qwen-image-3.0', size: '1024*1024', fields: ['baseURL', 'model', 'size'], hint: '默认北京地址。其他地域或工作空间请填写控制台提供的 API 根地址，密钥须属于相同地域。' },
-  { id: 'webui', label: 'SD WebUI / Forge', baseURL: '', size: '512x512', authType: 'none', username: '', fields: ['baseURL', 'size', 'authType', 'username'], hint: '使用已开启 API 的 WebUI / Forge 服务，沿用服务端模型与默认采样参数。本机地址指 Tavern 服务器，不是访问页面的手机；不会安装模型或修改服务端全局设置。' }
+  { id: 'comfyui', label: 'ComfyUI（自建）', baseURL: '', authType: 'none', username: '', fields: ['baseURL', 'authType', 'username'], hint: '使用维护者已部署的服务与工作流。导入 API 工作流或维护者准备的映射文件；不会安装模型、节点或清空共享队列。本机地址指 Tavern 服务器。' },
+  { id: 'novelai', label: 'NovelAI（官方或自定义渠道）', baseURL: 'https://image.novelai.net', model: 'nai-diffusion-5-full', size: '832x1216', fields: ['baseURL', 'model', 'size'], hint: '默认连 NovelAI 官方，使用 V5 Full。用自定义渠道时新建一个接入点，填它的地址和 Key：接口和官方一样的选「官方格式」，用对话接口出图的选「对话格式」。' },
+  { id: 'openai', label: 'OpenAI（gpt-image 及兼容接口）', baseURL: 'https://api.openai.com/v1', model: 'gpt-image-2', size: '1024x1024', fields: ['baseURL', 'model', 'size'], hint: '官方可直接用默认地址与模型；自定义渠道请填写自己的地址和模型。' },
+  { id: 'gemini', label: 'Google Gemini（官方）', baseURL: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-3.1-flash-image', size: '1K', aspectRatio: '1:1', fields: ['baseURL', 'model', 'size', 'aspectRatio'], hint: '使用 Interactions API，不是聊天兼容地址。' },
+  { id: 'banana', retired: true, label: 'Gemini 兼容接口（Nano Banana 等）', baseURL: '', model: '', size: '1K', fields: ['baseURL', 'model', 'size'], hint: 'Gemini 图片模型（Nano Banana 等）的兼容接口选这个，地址填到 /v1，模型名照该服务的模型列表填写。NovelAI 的自定义渠道请选「NovelAI（官方或自定义渠道）」。' },
+  { id: 'grok', label: 'Grok（xAI）', baseURL: 'https://api.x.ai/v1', model: 'grok-imagine-image-2.0', size: '1k', aspectRatio: '1:1', fields: ['baseURL', 'model', 'size', 'aspectRatio'], hint: '使用 Images 接口；图片分辨率为 1k 或 2k。' },
+  { id: 'seedream', label: 'Seedream（火山方舟）', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedream-5-0-260128', size: '2K', fields: ['baseURL', 'model', 'size'], hint: '可填账号可用的模型或接入点；关闭组图，每次只请求一张。' },
+  { id: 'qwen', label: 'Qwen-Image（阿里百炼）', baseURL: 'https://dashscope.aliyuncs.com/api/v1', model: 'qwen-image-3.0', size: '1024*1024', fields: ['baseURL', 'model', 'size'], hint: '默认北京地址。其他地域或工作空间请填写控制台提供的 API 根地址，密钥须属于相同地域。' },
+  { id: 'webui', label: 'SD WebUI / Forge（自建）', baseURL: '', size: '512x512', authType: 'none', username: '', fields: ['baseURL', 'size', 'authType', 'username'], hint: '使用已开启 API 的 WebUI / Forge 服务，沿用服务端模型与默认采样参数。本机地址指 Tavern 服务器，不是访问页面的手机；不会安装模型或修改服务端全局设置。' }
 ]
 // Advanced controls are optional strings, like the existing form fields.
 export const IMAGE_ADVANCED_FIELDS = ['negativePrompt', 'steps', 'guidance']
@@ -37,7 +37,8 @@ for (const channel of channels) {
   channel.fields = [...channel.fields, ...advanced]
 }
 // Keep the old sentinel readable for stored records, never offer it as a provider.
-export const SCENE_IMAGE_CHANNELS = channels.filter(channel => channel.id !== 'dsh-image-gen').map(({ id, label, fields, hint, model }) => ({ id, label, fields, hint, models: id === 'novelai' ? NOVELAI_MODELS : model ? [model] : [], canListModels: ['openai', 'banana', 'gemini', 'grok', 'seedream'].includes(id) }))
+// A retired channel keeps working for those who already use it, but is no longer offered.
+export const SCENE_IMAGE_CHANNELS = channels.filter(channel => channel.id !== 'dsh-image-gen').map(({ id, label, fields, hint, model, retired }) => ({ id, label, fields, hint, ...(retired ? { retired: true } : {}), models: id === 'novelai' ? NOVELAI_MODELS : model ? [model] : [], canListModels: ['openai', 'banana', 'gemini', 'grok', 'seedream'].includes(id) }))
 export function sceneImageChannel(id = 'openai') {
   const channel = channels.find(item => item.id === id)
   if (!channel) throw new Error('未知或尚未接入的生图渠道')
@@ -166,7 +167,11 @@ export function imageChannelRequest(input) {
   const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + input.apiKey }
   const prompt = input.prompt
   let path = 'images/generations', body
-  if (config.provider === 'novelai') {
+  if (config.provider === 'novelai' && config.protocol === 'chat') {
+    // A bare host serves the OpenAI-style API under /v1.
+    path = new URL(config.baseURL).pathname.replace(/\/+$/, '') ? 'chat/completions' : 'v1/chat/completions'
+    body = novelaiChatRequest(input, config)
+  } else if (config.provider === 'novelai') {
     path = 'ai/generate-image'
     body = novelaiRequest(input, config)
   } else if (config.provider === 'webui') {
@@ -216,6 +221,14 @@ export function channelImageResult(provider = 'openai', payload) {
     const parts = payload?.output?.choices?.[0]?.message?.content
     const image = Array.isArray(parts) ? parts.find(part => typeof part?.image === 'string') : undefined
     return image ? { url: image.image } : undefined
+  }
+  if (provider === 'novelai') {
+    // Conversation generation: the reply text holds a Markdown image or a bare link.
+    const text = String(payload?.choices?.[0]?.message?.content ?? '')
+    const url = text.match(/!\[[^\]]*\]\(((?:https?:\/\/|data:image\/[^;]+;base64,)[^\s)]+)\)/)?.[1] || text.match(/https?:\/\/[^\s)\]"'<>]+/)?.[0]
+    if (url) return { url }
+    const error = new Error(text.trim() ? '该接口没有返回图片链接：' + text.trim().slice(0, 200) : '该接口没有返回图片链接')
+    throw error
   }
   if (provider === 'banana') {
     const message = payload?.choices?.[0]?.message
