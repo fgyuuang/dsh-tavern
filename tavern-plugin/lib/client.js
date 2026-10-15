@@ -4601,8 +4601,38 @@ function tavernModelRefusalNotice(text) {
 		    worldbook = copy(result.worldbook);
 		    return copy(worldbook.entries);
 		  };
+		  function worldbookNames() { return worldbook && worldbook.name ? [worldbook.name] : []; }
+		  async function getLegacyWorldbookEntries(name) {
+		    return (await window.getWorldbook(name)).map(entry => ({ uid: entry.uid, comment: entry.name, enabled: entry.enabled }));
+		  }
+		  async function setLegacyWorldbookEntries(name, patches) {
+		    if (!Array.isArray(patches)) throw new TypeError('世界书条目必须是数组');
+		    const updated = await window.updateWorldbookWith(name, function (entries) {
+		      const current = new Map(entries.map(entry => [String(entry.uid), entry]));
+		      const byUid = new Map();
+		      for (const patch of patches) {
+		        const key = String(patch && patch.uid);
+		        const entry = current.get(key);
+		        if (!entry || byUid.has(key)) throw new Error('世界书条目编号无效或重复: ' + key);
+		        if (Object.keys(patch).some(field => !['uid', 'comment', 'enabled'].includes(field)) || patch.comment !== entry.name || typeof patch.enabled !== 'boolean') {
+		          throw new Error('开场兼容层只支持启用或禁用世界书条目');
+		        }
+		        byUid.set(key, patch);
+		      }
+		      if (byUid.size !== current.size) throw new Error('开场兼容层要求提交完整世界书条目表');
+		      return entries.map(entry => Object.assign({}, entry, { enabled: byUid.get(String(entry.uid)).enabled }));
+		    });
+		    return updated.map(entry => ({ uid: entry.uid, comment: entry.name, enabled: entry.enabled }));
+		  }
+		  const legacyWorldbookApi = {
+		    getWorldbookNames: worldbookNames, getLorebookNames: worldbookNames,
+		    getWorldbookEntries: getLegacyWorldbookEntries, getLorebookEntries: getLegacyWorldbookEntries, getWorldInfoEntries: getLegacyWorldbookEntries,
+		    setWorldbookEntries: setLegacyWorldbookEntries, setLorebookEntries: setLegacyWorldbookEntries, setWorldInfoEntries: setLegacyWorldbookEntries,
+		    replaceWorldbookEntries: setLegacyWorldbookEntries, replaceLorebookEntries: setLegacyWorldbookEntries, replaceWorldInfoEntries: setLegacyWorldbookEntries
+		  };
+		  Object.assign(window, legacyWorldbookApi);
 		  window.TavernHelper = Object.assign({}, original && original.helper, { triggerSlash: window.triggerSlash, generateRaw: window.generateRaw, getCharWorldbookNames: window.getCharWorldbookNames,
-		    getWorldbook: window.getWorldbook, updateWorldbookWith: window.updateWorldbookWith });
+		    getWorldbook: window.getWorldbook, updateWorldbookWith: window.updateWorldbookWith }, legacyWorldbookApi);
 		  const chat = [{ is_user: false, name: preview.characterName || '', mes: swipes[selected], swipe_id: selected, swipes: swipes.slice() }];
 		  let savedIndex = selected;
 		  const swipe = { to: async function (_chatId, direction, options = {}) {
