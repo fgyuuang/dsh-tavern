@@ -5,6 +5,7 @@ const chat=state=>({id:'game',mode:'story',_storageRevision:1,messages:[{turn:1,
 test('默认目录分页且不泄露值，层级读取、null与缺失分开',()=>{
  const c=chat({角色:{体力:73,备注:null},...Object.fromEntries(Array.from({length:80},(_,i)=>['字段'+i,i])),$meta:{secret:true}})
  const first=readVariables(c);assert.equal(first.entries.length,20);assert.equal(first.entries[0].value,undefined)
+ assert.deepEqual(readVariables(c,{cursor:''}),first)
  const paths=[...first.entries.map(x=>x.path)];let cursor=first.nextCursor
  while(cursor){const page=readVariables(c,{cursor});paths.push(...page.entries.map(x=>x.path));cursor=page.nextCursor}
  assert.equal(paths.length,81);assert.equal(new Set(paths).size,81)
@@ -19,7 +20,7 @@ test('搜索扫描有界且分页不丢结果，游标隔离快照、会话与�
  assert.equal(first.entries.length,0);assert.ok(first.nextCursor)
  const next=readVariables(c,{action:'search',query:'3000',cursor:first.nextCursor})
  assert.deepEqual(next.entries,[{path:'/字段3000',type:'number'}])
- for(const changed of [{...c,id:'other'},{...c,_storageRevision:2}])assert.throws(()=>readVariables(changed,{action:'search',query:'3000',cursor:first.nextCursor}),/游标/)
+ for(const changed of [{...c,id:'other'},{...c,messages:[{turn:1,variables:[{stat_data:{值:'已变化'}}]}]}])assert.throws(()=>readVariables(changed,{action:'search',query:'3000',cursor:first.nextCursor}),/游标/)
  assert.throws(()=>readVariables(c,{cursor:first.nextCursor}),/游标/)
 })
 test('大文本、对象值和目录响应有总量限制，当前分支与结算状态正确',()=>{

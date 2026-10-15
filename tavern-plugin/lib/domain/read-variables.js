@@ -20,10 +20,12 @@ export function readVariables(chat,args={}) {
     if(object(value?.stat_data)){snapshot=value.stat_data;turn=message.turn;break}
   }
   if(!snapshot)return {available:false,message:'当前会话尚无已保存的变量快照',settlement:chat.settleStatus||'idle'}
-  const revision=digest([chat.id,chat._storageRevision,snapshot])
+  // Draft/progress writes also advance _storageRevision; they must not expire a
+  // cursor when the selected branch's variable snapshot itself is unchanged.
+  const revision=digest([chat.id,chat.timeline?.branchId,turn,snapshot])
   const identity=digest([revision,action,path,query])
   let offset=0
-  if(args.cursor!==undefined){
+  if(args.cursor!==undefined&&args.cursor!==''){
     try{if(typeof args.cursor!=='string'||args.cursor.length>400)throw Error();const value=JSON.parse(Buffer.from(args.cursor,'base64url').toString());if(value.identity!==identity||!Number.isSafeInteger(value.offset)||value.offset<0)throw Error();offset=value.offset}catch{throw Error('游标无效或变量已变化，请从当前路径重新查询')}
   }
   const cursor=offset=>Buffer.from(JSON.stringify({identity,offset})).toString('base64url')
