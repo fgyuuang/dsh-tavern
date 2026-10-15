@@ -9,6 +9,7 @@ import { dreamSikeAgentInstruction } from './dream-sike-mode.js'
 import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
 import { isInterruptedReplyResume, projectInterruptedReply } from './interrupted-reply.js'
 import { inputKind } from './session-turn-input.js'
+import { confirmWritingRuleDelivery } from './writing-context-delivery.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 // The card Agent resends its system prompt on every tool step and reads live
@@ -476,7 +477,11 @@ export function createNativePlayOrchestrationStrategy(options) {
     return assembly
   }
 
-  return Object.freeze({ kind: 'native-play', prepareStep, projectRequest, completeRequest, clearRequestState, assembleSystemPrompt })
+  function authorRuleDelivery(request) {
+    const staged = stagedRequests.get(str(request.sessionId))
+    return staged ? confirmWritingRuleDelivery(request, staged.snapshot, staged) : null
+  }
+  return Object.freeze({ kind: 'native-play', prepareStep, projectRequest, completeRequest, clearRequestState, assembleSystemPrompt, authorRuleDelivery })
 }
 
 export function createForegroundOrchestrationStrategies(options) {
@@ -522,5 +527,5 @@ export function createForegroundOrchestrationStrategies(options) {
     return await select(input.chat).assembleSystemPrompt(assembly, input)
   }
 
-  return Object.freeze({ prepareStep, projectRequest, completeRequest, clearRequestState, endTurn, assembleSystemPrompt })
+  return Object.freeze({ prepareStep, projectRequest, completeRequest, clearRequestState, endTurn, assembleSystemPrompt, authorRuleDelivery: nativePlay.authorRuleDelivery })
 }

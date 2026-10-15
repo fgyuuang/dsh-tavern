@@ -11,6 +11,7 @@ import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from '../domain/d
 import { dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { exhaustedModelQuota } from '../domain/model-error-presentation.js'
 import { normalizeDreamSikeExecutionPolicy } from '../domain/dream-sike-execution-policy.js'
+import { rulePageDelivered } from '../domain/writing-context-delivery.js'
 
 const output = {
   schema: {
@@ -304,7 +305,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       ruleLimit: integerInput('每页最多规则条数，整数；默认及最大 50，内容总额最多 20000 字符；首次读取优先一次取得全部已选作者规则'),
       includeMaterials: { type: 'boolean', description: '默认 true；连续读取规则续页时可 false，避免重复整套材料与准备回执。压缩、重启或需要补查事实时使用 true。' },
       includeDraft: { type: 'boolean', description: '默认 true；只续读规则时设 false。读取草稿时设 true，并用 draftOffset 续读。' },
-      includeRules: { type: 'boolean', description: '默认 true；仅读取草稿时设 false，避免再次注入规则第一页。' },
+      includeRules: { type: 'boolean', description: '默认自动：作者规则已逐字进入本次模型请求时只返回索引；true 强制重读完整规则原文，false 仅读取材料或草稿。' },
       finishResearch: { type: 'boolean', description: '默认 true；已明确需要第二次补查时传 false，最多保留本局设置所允许的剩余查询请求。' }
     }, output, isConcurrencySafe: () => false,
     async execute(args, exec) {
@@ -316,8 +317,30 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
       const queryPolicy = executionPolicyFor(resolved.chat, resolved.identity, usage)
       const draft = await write(exec, (chat, identity) => {
         const material = turnReport(chat, identity, input)
+        const proof = requestCoordinates?.get(identity.sessionId)?.authorRuleDelivery
+        let servedRules = material.presetRules.rules
+        // Native prompt injection already carries the selected author text. Do
+        // not resend it as a second tool payload when exact byte delivery is proven.
+        if (args.includeRules === undefined && rulePageDelivered(material.presetRules, proof, identity, exec.agent?.phase?.step)) {
+          const pages = [material.presetRules]
+          for (let count = 0; pages.at(-1).hasMore && count < 30; count++) {
+            const previous = pages.at(-1)
+            const page = readDreamSikeAgentRules(chat, { offset: previous.nextOffset, contentOffset: previous.nextContentOffset,
+              limit: input.ruleLimit, maxChars: AUTHOR_RULE_READ_CHARS,
+              context: { charName: chat.cardName, macroState: chat.macroState, lastUserMessage: str(chat.timeline.operations[identity.operationId].userText) } })
+            if (!rulePageDelivered(page, proof, identity, exec.agent?.phase?.step)) break
+            pages.push(page)
+          }
+          if (!pages.at(-1).hasMore) {
+            servedRules = pages.flatMap(page => page.rules)
+            material.presetRules = { ...material.presetRules, hasMore: false, nextOffset: pages.at(-1).nextOffset, nextContentOffset: 0,
+              rules: servedRules.map(({ content, ...rule }) => ({ ...rule, deliveredCharacters: content.length, delivery: 'current-model-request' })),
+              delivery: 'current-model-request', omittedCharacters: servedRules.reduce((sum, rule) => sum + rule.content.length, 0) }
+            material.next = '本次模型请求已完整注入以下作者规则原文，本工具只返回可核对索引；直接按已收到的原文执行，不为索引再次读取。需要主动重读时显式 includeRules=true。' + material.next.slice(material.next.indexOf('。') + 1)
+          }
+        }
         recordDreamSikeTurnRead(chat, identity, Date.now(), {
-          materialRefs: material.materialRefs, rules: material.presetRules.rules,
+          materialRefs: material.materialRefs, rules: servedRules,
           profileDigest: material.presetRules.profileDigest || material.presetRules.digest,
           // Do not mark research complete while selected author rules still have
           // another page; the next query request must read that page first.
@@ -327,7 +350,10 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
         if (input.includeMaterials !== false) material.preparation = dreamSikePreparationView(chat, identity)
         report = JSON.stringify(material)
       }, 'turn.read')
-      return { report, draft }
+      // The report contains one bounded draft page. Returning the full draft
+      // beside it defeated includeDraft=false and repeated long prose every read.
+      const { text: _text, ...metadata } = draft || {}
+      return { report, draft: draft ? metadata : null }
     }
   }))
 

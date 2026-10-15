@@ -10,9 +10,11 @@ test('规则续页不重发材料与草稿，草稿续读不重发规则，完�
     timeline: { branchId: 'b', revision: 4, operations: { op: { id: 'op', kind: 'body', status: 'running', turn: 2, basedOn: { branchId: 'b', revision: 4 }, userText: '玩家行动。'.repeat(250) } } } }
   chat.dreamSikeDraft = { chatId: 'c', sessionId: 's', branchId: 'b', operationId: 'op', turn: 2, storyRevision: 4, text: '草稿。'.repeat(2200), version: 1, status: 'draft', revisionCount: 0 }
   const tools = new Map(), exec = { agent: { session: { id: 's' }, phase: { turn: 2 } } }
-  registerDreamSikeTools({ tools: { register(tool) { tools.set(tool.name, tool) } }, chatForSession: async () => chat, updateChat: async () => { throw Error('只读材料不应改写') }, activeTurnOf: () => 2 })
+  const withoutReceipt = value => { const { dreamSikePreparation, preparation, ...rest } = value; return rest }
+  registerDreamSikeTools({ tools: { register(tool) { tools.set(tool.name, tool) } }, chatForSession: async () => chat,
+    updateChat: async (_id, change) => { const before = JSON.stringify(withoutReceipt(chat)); const saved = change(chat); assert.equal(JSON.stringify(withoutReceipt(saved)), before, '读取只保存实际送达回执，不改正文、变量或任务'); return saved }, activeTurnOf: () => 2 })
   const read = async args => JSON.parse((await tools.get('sike_read_turn').execute(args, exec)).report)
-  const before = JSON.stringify(chat)
+  const before = JSON.stringify(withoutReceipt(chat))
   const full = await read({ ruleOffset: 1 }), compact = await read({ ruleOffset: 1, includeMaterials: false, includeDraft: false })
   assert.deepEqual(compact.presetRules.rules, full.presetRules.rules)
   assert.equal(compact.playerAction, undefined); assert.equal(compact.worldBook, undefined); assert.equal(compact.state, undefined)
@@ -22,6 +24,6 @@ test('规则续页不重发材料与草稿，草稿续读不重发规则，完�
   assert.equal(draftOnly.draft.text, full.draft.text)
   assert.deepEqual(draftOnly.presetRules.rules, [])
   const restored = await read({ ruleOffset: 1, includeMaterials: true, includeRules: true, includeDraft: true })
-  assert.deepEqual(restored, full)
-  assert.equal(JSON.stringify(chat), before)
+  assert.deepEqual(withoutReceipt(restored), withoutReceipt(full))
+  assert.equal(JSON.stringify(withoutReceipt(chat)), before)
 })

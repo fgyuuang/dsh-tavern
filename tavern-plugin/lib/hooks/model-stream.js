@@ -194,6 +194,9 @@ export function registerModelStreamHooks({
       let failure = null
       let usage = null
       try {
+        if (isWritingAgentExecution(chat) && !backgroundContext && options.purpose === undefined) {
+          requestCoordinates.set(sessionId, { ...requestCoordinates.get(sessionId), authorRuleDelivery: foregroundStrategies.authorRuleDelivery?.(options) || null })
+        }
         const stream = next()
         for await (const chunk of stream) {
           if (chunk && chunk.type === 'text-delta') responseText += str(chunk.text)

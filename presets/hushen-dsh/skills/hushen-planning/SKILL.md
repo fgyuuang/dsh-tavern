@@ -5,6 +5,8 @@ description: 按本局狐神抚原作者的两阶段要求和选定规划方式�
 
 # 写前材料与原作者方法
 
+当 `presetRules.delivery` 是 `current-model-request` 时，作者规则已逐字注入当前模型请求，工具只返回核验索引，直接复用已收到的原文。不要为索引重复读取整份规则；需要主动核验、补读或恢复缺失材料时，显式使用 `includeRules: true`。
+
 先调用 `sike_read_turn`，读取 `presetRules` 中的完整已选原文；存在续页时按返回位置继续。这里说明工具方法，不另造文风或替换原作者规则。
 
 依照原文的 `stage_1_base_requirements` 和 `stage_2_pre_output_check`，核对角色、视角、转述与玩家控制边界、节奏、文风、篇幅及输出格式。已选多角色、导演、自然或自定义规划方法仍以作者原文为准，在内部完成；不把完整推理写入正文或工具参数。

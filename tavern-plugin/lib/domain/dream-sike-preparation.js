@@ -17,7 +17,7 @@ export function needsDreamSikePreparation(chat) {
     && dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.entries.some(entry => ['agent-planning', 'native-private-planning'].includes(entry.action)) === true
 }
 
-/** A receipt of materials actually served by the read tool, not inferred reasoning. */
+/** Evidence of text actually delivered by the read tool or current model request, never inferred reasoning. */
 export function recordDreamSikeTurnRead(chat, identity, now = Date.now(), served = {}) {
   const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)
   const current = chat.dreamSikePreparation
