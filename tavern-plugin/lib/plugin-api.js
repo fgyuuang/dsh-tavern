@@ -229,6 +229,12 @@ export function createTavernPluginApi(deps) {
     apiVersion: TAVERN_PLUGIN_API_VERSION,
     // Optional, separately versioned extension supplied by maintained builds.
     writingPresets: deps.writingPresets || null,
+    projectAgents: deps.projectAgents || null,
+    registerWritingPreset(input) {
+      if (!deps.writingPresetCatalog) throw new Error('当前宿主没有写作预设插件引擎')
+      const owner = ownerOf(this)
+      return owned(this, () => deps.writingPresetCatalog.register({ ...input, owner }), 'tavern.registerWritingPreset()')
+    },
 
     onTurnSettled(handler) {
       if (typeof handler !== 'function') throw new TypeError('onTurnSettled 需要一个函数')

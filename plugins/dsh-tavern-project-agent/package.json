@@ -1,0 +1,9 @@
+{
+  "name": "dsh-tavern-project-agent",
+  "version": "0.1.0",
+  "description": "独立项目 Agent 工作区，接入 DSH 原生标准、PTC、极简与创造模式",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.mjs", "./client": "./client.js" },
+  "dsh": { "client": { "platform": "web", "inject": ["dsh-tavern-plugin"] } }
+}

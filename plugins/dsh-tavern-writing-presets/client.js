@@ -86,7 +86,7 @@ function TavernComposerPreset(props) {
         open ? ReactDom.createPortal(h("section", { ref: menu, id: identity, role: "dialog", tabIndex: -1, "aria-label": "本局预设与回复方式", className: "dsh-composer-preset-menu", style: position },
             h("header", null, h("strong", null, "本局预设"), h("button", { type: "button", className: "dsh-tavern-btn", "aria-label": "关闭预设菜单", onClick: () => { setOpen(false); trigger.current?.focus(); } }, "关闭")),
             h("label", null, "Agent 预设", h("select", { "aria-label": "输入区 Agent 预设", disabled, value: data?.presetId || "tavern", onChange: event => change("applyPlayPreset", { presetId: event.target.value }) },
-                (data?.presets || []).map(item => h("option", { key: item.id, value: item.id }, item.name)))),
+                (data?.presets || []).map(item => h("option", { key: item.id, value: item.id, disabled: item.available === false }, item.name + (item.available === false ? ' · 插件未启用' : item.provider?.kind === 'plugin' ? ' · 插件' : ''))))),
             h("label", null, "酒馆预设 / 作者规则", h("select", { "aria-label": "输入区酒馆预设", disabled, value: data?.source?.id || "", onChange: event => change("applyConversationPreset", { path: event.target.value }) },
                 h("option", { value: "" }, "不使用外部预设"),
                 data?.source?.id && !data.sources.some(item => item.path === data.source.id) ? h("option", { value: data.source.id }, data.source.name) : null,

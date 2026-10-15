@@ -87,6 +87,7 @@ export function registerRequestHooks({
     const decision = await next()
     if (decision.kind === 'reject') return decision
     const chat = await chatForSession(sessionId)
+    if (!chat) return decision
     checkDreamSikeProgress(payload, chat)
     if (chat) await synchronizeTemplateHistory(payload.agent.session, chat, session => sessionStore.flush(session))
     if (chat) await synchronizeBodyEdits(payload.agent.session, chat, session => sessionStore.flush(session), persistClearedBodyEdits)

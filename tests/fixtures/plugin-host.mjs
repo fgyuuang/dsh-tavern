@@ -30,6 +30,12 @@ export async function createPluginHost({ withTools = false } = {}) {
       on: name => events.add(name),
       provide: (name, value) => services.set(name, value)
     })
+    for (const path of ['dsh-tavern-dream-sike', 'dsh-tavern-hushen']) {
+      const plugin = await import('../../plugins/' + path + '/index.mjs')
+      const service = Object.create(services.get('tavern'))
+      service.ctx = { fiber: { name: path }, effect(register) { const stop = register(); if (typeof stop === 'function') disposers.push(stop); return stop } }
+      await plugin.apply({ tavern: service })
+    }
     await new Promise(resolve => setImmediate(resolve))
   } catch (error) { await dispose(); throw error }
   return {

@@ -56,6 +56,7 @@ export function registerTurnLifecycleHooks({
     const requestId = requestIdForTurn(session, payload.turn)
     const assistant = assistantResultForTurn(session, payload.turn)
     const chat = await chatForSession(sessionId)
+    if (!chat) return
     const dreamMode = isWritingAgentExecution(chat) && ['story', 'script'].includes(chat.mode || 'story')
     const draft = dreamMode ? readDreamSikeDraft(chat) : null
     if (dreamMode && draft?.status === 'committed' && draft.turn === payload.turn
@@ -149,6 +150,11 @@ export function registerTurnLifecycleHooks({
     if (agent === undefined || agent.session === undefined) return assembly
     if (backgroundAgentRunner.owns(agent.session.id)) return assembly
     const chat = await hookChatForSession(agent.session.id)
+    if (!chat) {
+      // Native project Agents keep their own persona, instructions and tool set.
+      assembly.tools = assembly.tools.filter(tool => !/^(?:tavern_|sike_)/.test(tool.name) && !['worldbook_search', 'character_design_finish'].includes(tool.name))
+      return assembly
+    }
     if (isSingleReplyMode(chat)) {
       return foregroundStrategies.assembleSystemPrompt(assembly, { sessionId: agent.session.id, chat })
     }

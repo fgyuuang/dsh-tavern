@@ -1,0 +1,8 @@
+{
+  "name": "dsh-tavern-dream-sike",
+  "version": "0.1.0",
+  "description": "梦境思客DSH Agent 预设插件，沿用已迁移的原作者规则、设置与 Skills",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.mjs" }
+}

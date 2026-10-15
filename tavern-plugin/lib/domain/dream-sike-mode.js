@@ -53,13 +53,13 @@ export function playPresetInteractionProfile(presetId, generationMode) {
 }
 
 /** The imported ST preset is a separate resource, represented by runtimePresetSnapshot. */
-export function listPlayPresets({ chat, settings, legacyPresetTitle } = {}) {
+export function listPlayPresets({ chat, settings, legacyPresetTitle, providers } = {}) {
   const selected = normalizePlayPresetId(object(chat).playPresetId)
   const fallback = normalizePlayPresetId(object(settings).defaultPlayPresetId)
   const originalTitle = selected === BASE_PLAY_PRESET ? legacyPresetTitle
     : object(chat).playPresetConfigurations?.[BASE_PLAY_PRESET]?.runtimePresetSnapshot?.presetName
   const originalName = typeof originalTitle === 'string' ? originalTitle.trim() : ''
-  return [
+  const result = [
     {
       id: BASE_PLAY_PRESET,
       name: 'DSH 原版',
@@ -89,6 +89,12 @@ export function listPlayPresets({ chat, settings, legacyPresetTitle } = {}) {
       isDefault: fallback === HUSHEN_AGENT_PRESET
     }
   ]
+  if (!providers) return result
+  return result.map(row => {
+    const provider = providers.find(entry => entry.id === row.id)
+    return { ...row, ...(provider ? { name: provider.name, description: provider.description } : {}),
+      available: row.id === BASE_PLAY_PRESET || Boolean(provider), provider: provider ? { kind: 'plugin', name: provider.owner } : { kind: row.id === BASE_PLAY_PRESET ? 'builtin' : 'legacy' } }
+  })
 }
 
 /**

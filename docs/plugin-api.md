@@ -2,6 +2,10 @@
 
 接口版本：**2**
 
+维护版还提供可选的项目扩展：`tavern.projectAgents.version === 1` 管理独立原生 Session 登记与项目文档初始化；`tavernUi.registerSidebarWorkspace({id,label,component,sessions})` 注册独立左侧工作区，`sessions` 是返回原生 Session 编号数组的 `getSnapshot/subscribe` store。注册与订阅随插件卸载撤销。
+
+`tavern.registerWritingPreset({id,name,description})` 注册共享写作引擎支持的预设提供者。当前稳定 ID 为 `dream-sike-dsh`、`hushen-dsh`；重复提供者被拒绝。卸载后新游戏与新切换停止使用该提供者，已有游戏快照和作者设置保留。不要把此接口理解为任意宿主模块替换接口。
+
 维护分支另提供可选的 `tavern.writingPresets` 与 `tavernUi.writingPresets` 扩展（各自 `version: 1`）：
 宿主侧 `request(method, args)` 只接受预设选择、作者设置、执行策略及中断恢复的操作；`getSession` 只返回菜单需要的模式和预设信息。
 浏览器侧 `openSettings(gameId)` 打开完整作者设置。插件应先检查扩展版本；未提供时保持原界面。

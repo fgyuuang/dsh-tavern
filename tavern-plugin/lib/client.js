@@ -212,6 +212,7 @@ window.__ModuleLoader__.load({
 			return view?.playPresetId === "hushen-dsh" ? "狐神抚" : "梦境思客";
 		}
 		function groupOfMode(mode) {
+			if (mode === 'agent') return 'agent';
 			return isPlayMode(mode || "story") ? "play" : "card";
 		}
 		function playModeOfCard(card) {
@@ -10776,6 +10777,7 @@ function bindTavernFontZoom(node, win) {
 			const messageActions = [];
 			const composerActions = [];
 			const workbenchPanels = [];
+			const sidebarWorkspaces = [];
 			const panels = new Map();
 			const startGroups = [];
 			const listeners = new Set();
@@ -10815,6 +10817,17 @@ function bindTavernFontZoom(node, win) {
 			const service = {
 				ctx: undefined,
 				apiVersion: 2,
+				registerSidebarWorkspace(input) {
+					if (!input || !/^[a-z][a-z0-9-]{0,39}$/.test(input.id) || ['play', 'card'].includes(input.id)) throw new TypeError('扩展工作区需要独立 ID');
+					if (typeof input.label !== 'string' || !input.label.trim() || input.label.length > 20 || typeof input.component !== 'function') throw new TypeError('扩展工作区需要名称和 React component');
+					if (typeof input.sessions?.getSnapshot !== 'function' || typeof input.sessions?.subscribe !== 'function') throw new TypeError('扩展工作区需要 Session 编号 store');
+					const entry = { id: input.id, label: input.label, component: input.component, sessions: input.sessions, owner: ownerOf(this) };
+					return owned(this, function () {
+						if (sidebarWorkspaces.some(row => row.id === entry.id)) throw new Error('扩展工作区 ID 已注册');
+						const dispose = addTo(sidebarWorkspaces, entry), stop = entry.sessions.subscribe(changed);
+						return () => { stop(); dispose(); };
+					}, 'tavernUi.registerSidebarWorkspace()');
+				},
                 writingPresets: Object.freeze({ version: 1,
                     async openSettings(gameId) {
                         if (typeof gameId !== "string" || !gameId || !host) throw new TypeError("请先打开一局游戏");
@@ -10994,6 +11007,7 @@ function bindTavernFontZoom(node, win) {
 				markers: function () { return markers.slice(); },
 				messageActions: function () { return messageActions.slice(); },
 				composerActions: function () { return composerActions.slice(); },
+				sidebarWorkspaces: function () { return sidebarWorkspaces.slice(); },
                 workbenchPanels: function () { return workbenchPanels.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)); },
 				startGroups: function () { return startGroups.map(function (group) { return { title: group.title, tabs: group.tabs.slice() }; }); }
 			};
@@ -13077,7 +13091,12 @@ function DreamSikeLiveTextPreview(props) {
 					}, function () { return React.createElement(TavernScriptRuntime, { owner: scriptOwner }); }); });
 				}, "dsh-tavern: conversation script lifecycle");
 				input.ctx.effect(function () {
-					return input.slots.inject("conversation.chat.node", function () { return input.slots.register({
+					let releases = [];
+                    function sync() {
+                        const current = input.ctx.sessions.list.getSnapshot().current;
+                        if (tavernSessionModes.values[current] === 'agent') { releases.splice(0).forEach(stop => stop()); return; }
+                        if (releases.length) return;
+					releases.push(input.slots.inject("conversation.chat.node", function () { return input.slots.register({
 						name: "conversation.chat.node",
 						key: "assistant-step",
 						priority: -1
@@ -13085,15 +13104,17 @@ function DreamSikeLiveTextPreview(props) {
 						// Hide only our model-facing seed; keep it in Session history and requests.
 						if (props.node.data.finalNode && /^tavern-seed-trajectory:v1:.+:2$/.test(String(props.node.data.finalNode.messageId || ""))) return null;
 						return React.createElement(TavernAssistantNodeView, Object.assign({}, props, { executeSlash: executeSlash }));
-					}); });
-				}, "dsh-tavern: inline assistant renderer");
-				input.ctx.effect(function () {
-					return input.slots.inject("conversation.chat.node", function () { return input.slots.register({
+					}); }));
+					releases.push(input.slots.inject("conversation.chat.node", function () { return input.slots.register({
 						name: "conversation.chat.node",
 						key: "user",
 						priority: -1
-					}, TavernUserNodeView); });
-				}, "dsh-tavern: raw user message renderer");
+					}, TavernUserNodeView); }));
+                    }
+                    const stop = input.ctx.sessions.list.subscribe(sync);
+                    tavernSessionModes.listeners.add(sync); sync();
+                    return () => { stop(); tavernSessionModes.listeners.delete(sync); releases.splice(0).forEach(dispose => dispose()); };
+				}, "dsh-tavern: scoped story renderers; native Agent sessions use DSH renderers");
 				input.ctx.effect(function () {
 					return input.slots.inject("conversation.chat.assistant-actions", function () { return input.slots.register({
 						name: "conversation.chat.assistant-actions", id: "dsh-tavern-fork", order: 20,
@@ -13610,6 +13631,8 @@ function TavernOpeningInput(props) {
 		            React.createElement('button', { type: 'button', className: 'dsh-tavern-btn', onClick: function () { hostCompatibilityNotice.dismiss(info); setDismissed(true); } }, '此版本不再提示')) : null);
 		}
 		function TavernSidebar(props) {
+            const workspaceVersion = useTavernUiExtensions();
+            const extraWorkspaces = tavernUiExtensions.sidebarWorkspaces();
             const askConfirm = useTavernConfirm(props.sessionId || props.scope?.sessionId);
 			const collapsed = props.collapsed;
 			const current = props.useSessions(function (state) { return state.current; });
@@ -13882,12 +13905,17 @@ function TavernOpeningInput(props) {
 			}, [current, currentSummary && currentSummary.blank]);
 			React.useEffect(function () {
 				if (!current || lastModeSession.current === current) return;
+				const extra = extraWorkspaces.find(entry => entry.sessions.getSnapshot().includes(current));
+				if (extra) { lastModeSession.current = current; setUiMode(extra.id); return; }
 				const item = history.filter(function (entry) { return entry.sessionId === current; })[0];
 				if (!item) return;
 				lastModeSession.current = current;
 				setUiMode(groupOfMode(item.mode));
 				if (isPlayMode(item.mode)) setRequestMode(compatibilityAvailable && item.requestMode === "sillytavern" ? "sillytavern" : "dsh");
-			}, [current, history, compatibilityAvailable]);
+			}, [current, history, compatibilityAvailable, workspaceVersion]);
+            React.useEffect(function () {
+                if (!['play', 'card'].includes(uiMode) && !extraWorkspaces.some(entry => entry.id === uiMode)) setUiMode('play');
+            }, [uiMode, workspaceVersion]);
 			React.useEffect(function () {
 				if (!openingPicker || !openingPicker.card || openingPicker.preparing) return;
 				let stopped = false;
@@ -14343,6 +14371,7 @@ function TavernOpeningInput(props) {
                 if (mainOpening) props.hideOpening();
 				playPrewarmRef.current.cancel();
 				setUiMode(nextMode); setPicking(false); setMenuSession(null);
+                if (extraWorkspaces.some(entry => entry.id === nextMode)) return;
 				const first = history.filter(function (item) {
 					if (groupOfMode(item.mode) !== nextMode) return false;
 					if (nextMode !== "play") return true;
@@ -14820,12 +14849,19 @@ function TavernOpeningInput(props) {
 				: h("div", { className: "dsh-tavern-update-actions" },
 					h("button", { className: "dsh-tavern-update-button", disabled: checkingOrRunning || updateStatus.phase === "restart-required" || updateStatus.phase === "installed-restart-required", onClick: checkUpdate }, updateStatus.phase === "checking" ? "正在检查…" : (updateStatus.phase === "running" ? "正在更新…" : (updateStatus.phase === "cancelling" ? "正在取消…" : (updateStatus.phase === "blocked" ? "等待安全停止" : (updateStatus.phase === "installed-restart-required" ? "请手动重启" : (updateStatus.phase === "restart-required" ? "重启 Desktop 后可用" : "检查更新")))))),
 					cancelSupported ? h("button", { className: "dsh-tavern-update-button", disabled: updateStatus.phase === "cancelling", onClick: cancelUpdate }, updateStatus.phase === "cancelling" ? "正在取消…" : "取消更新") : null);
+			const modeTabs = h('div', { className: 'dsh-tavern-mode-switch' },
+                h('button', { className: uiMode === 'play' ? 'active' : '', disabled: busy, onClick: () => switchPlayRequestMode('dsh') }, '游玩'),
+                h('button', { className: uiMode === 'card' ? 'active' : '', disabled: busy, onClick: () => switchMode('card') }, '卡片'),
+                ...extraWorkspaces.map(entry => h('button', { key: entry.id, className: uiMode === entry.id ? 'active' : '', disabled: busy, onClick: () => switchMode(entry.id) }, entry.label)));
+            const extraWorkspace = extraWorkspaces.find(entry => entry.id === uiMode);
+            if (extraWorkspace) return h(React.Fragment, null, collapsedSidebar,
+                h('div', { className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
+                    h('div', { className: 'dsh-tavern-side-head' }, h('strong', null, 'DSH Tavern'), props.embedded ? null : h('button', { className: 'dsh-tavern-side-icon', onClick: props.toggleSidebar, 'aria-label': '收起侧栏' }, '◧')),
+                    modeTabs, h(extraWorkspace.component, { currentSessionId: current, visible: !collapsed,
+                        onSessionsChanged: () => refresh(['sessions']), onOpen: () => { if (mainOpening) props.hideOpening(); setPicking(false); } })));
 			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },
 				h("div", { className: "dsh-tavern-side-head" }, h("div", { className: "dsh-tavern-side-brand dsh-tavern-lockup", role: "img", "aria-label": "DSH Tavern" }), props.embedded ? null : h("button", { className: "dsh-tavern-side-icon", title: "收起侧栏", onClick: props.toggleSidebar }, "◧")),
-				h("div", { className: "dsh-tavern-mode-switch" + (compatibilityAvailable ? " compatibility-enabled" : "") },
-					h("button", { className: uiMode === "play" && requestMode === "dsh" ? "active" : "", disabled: busy, onClick: function () { switchPlayRequestMode("dsh"); } }, "游玩"),
-					h("button", { className: uiMode === "card" ? "active" : "", disabled: busy, onClick: function () { switchMode("card"); } }, "卡片")
-				),
+                modeTabs,
 				h("button", { className: "dsh-tavern-side-new", disabled: busy, onClick: function () { openPicker(); } }, uiMode === "play" ? (openingPicker ? "继续开局 · " + openingPicker.card.name : requestMode === "sillytavern" ? "＋ 选择人物卡 · 新开silly 对话" : "＋ 选择人物卡 · 新开游玩") : "＋ 新建卡片工作台对话"),
 				uiMode === "play" && requestMode === "sillytavern" ? h("div", { className: "dsh-tavern-compatibility-notice" },
 					h("strong", null, "silly 模式"),
@@ -15803,7 +15839,8 @@ function TavernOpeningInput(props) {
                         h("label", { className: "dsh-local-field" }, "编辑 Agent 预设", h("select", { "aria-label": "编辑全局 Agent 预设", className: "dsh-tavern-settings-select", disabled: !catalog || busy, value: presetId, onChange: event => setPresetId(event.target.value) },
                             (catalog?.presets || []).map(item => h("option", { key: item.id, value: item.id }, item.name + (item.id === catalog.defaultPlayPresetId ? " · 全局默认" : ""))))),
                         h("p", { className: "dsh-local-help" }, selected?.description),
-                        h("button", { type: "button", className: "dsh-tavern-question-primary", disabled: disabled || presetId === catalog?.defaultPlayPresetId, onClick: makeDefault }, presetId === catalog?.defaultPlayPresetId ? "当前全局默认" : "设为全局默认 Agent 预设"),
+                        selected?.provider ? h('p', { className: 'dsh-local-help' }, selected.provider.kind === 'plugin' ? '预设插件：' + selected.provider.name : selected.provider.kind === 'legacy' ? '对应预设插件未启用；已有配置可继续编辑。' : 'DSH Tavern 内置玩法') : null,
+                        h("button", { type: "button", className: "dsh-tavern-question-primary", disabled: disabled || selected?.available === false || presetId === catalog?.defaultPlayPresetId, onClick: makeDefault }, presetId === catalog?.defaultPlayPresetId ? "当前全局默认" : "设为全局默认 Agent 预设"),
                         h("label", { className: "dsh-local-field" }, "默认回复方式", h("select", { "aria-label": "Agent 默认回复方式", className: "dsh-tavern-settings-select", disabled, value: data?.generationMode || "agent", onChange: event => save({ generationMode: event.target.value }) },
                             h("option", { value: "agent" }, "DSH Agent"), h("option", { value: "sillytavern-once" }, "原版酒馆 · 单次回复"))),
                         ["dream-sike-dsh", "hushen-dsh"].includes(presetId) ? h("div", null, [["queryRequests", "默认写前查询次数", [1, 2]], ["revisionRequests", "默认正文修订次数", [0, 1, 2]]].map(([key, title, values]) => h("label", { key, className: "dsh-local-field" }, title,
@@ -21430,7 +21467,7 @@ const contextCacheFeature = createContextCacheFeatureModule();
                 open ? ReactDom.createPortal(h("section", { ref: menu, id: identity, role: "dialog", tabIndex: -1, "aria-label": "本局预设与回复方式", className: "dsh-composer-preset-menu", style: position },
                     h("header", null, h("strong", null, "本局预设"), h("button", { type: "button", className: "dsh-tavern-btn", "aria-label": "关闭预设菜单", onClick: () => { setOpen(false); trigger.current?.focus(); } }, "关闭")),
                     h("label", null, "Agent 预设", h("select", { "aria-label": "输入区 Agent 预设", disabled, value: data?.presetId || "tavern", onChange: event => change("applyPlayPreset", { presetId: event.target.value }) },
-                        (data?.presets || []).map(item => h("option", { key: item.id, value: item.id }, item.name)))),
+                        (data?.presets || []).map(item => h("option", { key: item.id, value: item.id, disabled: item.available === false }, item.name + (item.available === false ? ' · 插件未启用' : item.provider?.kind === 'plugin' ? ' · 插件' : ''))))),
                     h("label", null, "酒馆预设 / 作者规则", h("select", { "aria-label": "输入区酒馆预设", disabled, value: data?.source?.id || "", onChange: event => change("applyConversationPreset", { path: event.target.value }) },
                         h("option", { value: "" }, "不使用外部预设"),
                         data?.source?.id && !data.sources.some(item => item.path === data.source.id) ? h("option", { value: data.source.id }, data.source.name) : null,

@@ -9,6 +9,7 @@
 			const messageActions = [];
 			const composerActions = [];
 			const workbenchPanels = [];
+			const sidebarWorkspaces = [];
 			const panels = new Map();
 			const startGroups = [];
 			const listeners = new Set();
@@ -48,6 +49,17 @@
 			const service = {
 				ctx: undefined,
 				apiVersion: 2,
+				registerSidebarWorkspace(input) {
+					if (!input || !/^[a-z][a-z0-9-]{0,39}$/.test(input.id) || ['play', 'card'].includes(input.id)) throw new TypeError('扩展工作区需要独立 ID');
+					if (typeof input.label !== 'string' || !input.label.trim() || input.label.length > 20 || typeof input.component !== 'function') throw new TypeError('扩展工作区需要名称和 React component');
+					if (typeof input.sessions?.getSnapshot !== 'function' || typeof input.sessions?.subscribe !== 'function') throw new TypeError('扩展工作区需要 Session 编号 store');
+					const entry = { id: input.id, label: input.label, component: input.component, sessions: input.sessions, owner: ownerOf(this) };
+					return owned(this, function () {
+						if (sidebarWorkspaces.some(row => row.id === entry.id)) throw new Error('扩展工作区 ID 已注册');
+						const dispose = addTo(sidebarWorkspaces, entry), stop = entry.sessions.subscribe(changed);
+						return () => { stop(); dispose(); };
+					}, 'tavernUi.registerSidebarWorkspace()');
+				},
                 writingPresets: Object.freeze({ version: 1,
                     async openSettings(gameId) {
                         if (typeof gameId !== "string" || !gameId || !host) throw new TypeError("请先打开一局游戏");
@@ -227,6 +239,7 @@
 				markers: function () { return markers.slice(); },
 				messageActions: function () { return messageActions.slice(); },
 				composerActions: function () { return composerActions.slice(); },
+				sidebarWorkspaces: function () { return sidebarWorkspaces.slice(); },
                 workbenchPanels: function () { return workbenchPanels.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)); },
 				startGroups: function () { return startGroups.map(function (group) { return { title: group.title, tabs: group.tabs.slice() }; }); }
 			};

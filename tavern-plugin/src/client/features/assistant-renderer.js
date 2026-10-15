@@ -892,7 +892,12 @@
 					}, function () { return React.createElement(TavernScriptRuntime, { owner: scriptOwner }); }); });
 				}, "dsh-tavern: conversation script lifecycle");
 				input.ctx.effect(function () {
-					return input.slots.inject("conversation.chat.node", function () { return input.slots.register({
+					let releases = [];
+                    function sync() {
+                        const current = input.ctx.sessions.list.getSnapshot().current;
+                        if (tavernSessionModes.values[current] === 'agent') { releases.splice(0).forEach(stop => stop()); return; }
+                        if (releases.length) return;
+					releases.push(input.slots.inject("conversation.chat.node", function () { return input.slots.register({
 						name: "conversation.chat.node",
 						key: "assistant-step",
 						priority: -1
@@ -900,15 +905,17 @@
 						// Hide only our model-facing seed; keep it in Session history and requests.
 						if (props.node.data.finalNode && /^tavern-seed-trajectory:v1:.+:2$/.test(String(props.node.data.finalNode.messageId || ""))) return null;
 						return React.createElement(TavernAssistantNodeView, Object.assign({}, props, { executeSlash: executeSlash }));
-					}); });
-				}, "dsh-tavern: inline assistant renderer");
-				input.ctx.effect(function () {
-					return input.slots.inject("conversation.chat.node", function () { return input.slots.register({
+					}); }));
+					releases.push(input.slots.inject("conversation.chat.node", function () { return input.slots.register({
 						name: "conversation.chat.node",
 						key: "user",
 						priority: -1
-					}, TavernUserNodeView); });
-				}, "dsh-tavern: raw user message renderer");
+					}, TavernUserNodeView); }));
+                    }
+                    const stop = input.ctx.sessions.list.subscribe(sync);
+                    tavernSessionModes.listeners.add(sync); sync();
+                    return () => { stop(); tavernSessionModes.listeners.delete(sync); releases.splice(0).forEach(dispose => dispose()); };
+				}, "dsh-tavern: scoped story renderers; native Agent sessions use DSH renderers");
 				input.ctx.effect(function () {
 					return input.slots.inject("conversation.chat.assistant-actions", function () { return input.slots.register({
 						name: "conversation.chat.assistant-actions", id: "dsh-tavern-fork", order: 20,

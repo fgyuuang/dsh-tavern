@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
 			return view?.playPresetId === "hushen-dsh" ? "狐神抚" : "梦境思客";
 		}
 		function groupOfMode(mode) {
+			if (mode === 'agent') return 'agent';
 			return isPlayMode(mode || "story") ? "play" : "card";
 		}
 		function playModeOfCard(card) {

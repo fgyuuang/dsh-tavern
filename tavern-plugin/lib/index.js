@@ -204,6 +204,8 @@ import { createTavernStaticResourceCache } from './domain/tavern-static-resource
 import { SILLYTAVERN_CSS_COMPAT_URLS } from './domain/sillytavern-css-compatibility.js'
 import { createRoundHistory } from './domain/round-history.js'
 import { collectInterruptedReplies, readInterruptedReply, interruptedReplyPreview } from './domain/interrupted-reply.js'
+import { createProjectAgentWorkspace } from './domain/project-agent-workspace.js'
+import { createWritingPresetCatalog } from './domain/writing-preset-catalog.js'
 import { createResourceWorkspaceProjection } from './domain/resource-workspace-projection.js'
 import { projectAgentContent, projectAgentMessageText, projectRuntimeReply } from './domain/runtime-content-projection.js'
 import { createScriptContinuity } from './domain/script-continuity.js'
@@ -528,6 +530,7 @@ export async function apply(ctx) {
   const agentPresetsProxy = ctx.get('agentPresets')
   if (agentPresetsProxy === undefined) throw new Error('dsh-tavern: 缺少 agentPresets 服务')
   const agentPresets = agentPresetsProxy[Symbol.for('cordis.original')] || agentPresetsProxy
+  const writingPresetCatalog = createWritingPresetCatalog()
   const presetSourceDir = fileURLToPath(new URL('../../presets/', import.meta.url))
   if (!agentPresets.resolvedRoots.some(function (root) { return root.path === presetSourceDir })) {
     agentPresets.resolvedRoots.unshift({ path: presetSourceDir, trust: 'user' })
@@ -2174,6 +2177,7 @@ export async function apply(ctx) {
     return result.sort(function (left, right) { return Number(left.turn) - Number(right.turn) })
   }
   async function startChat(cardPath, sessionId, mode, openingId, userName, requestMode, preparationId, cardTask, playPresetId, models, generationMode) {
+    if (groupOfMode(mode || 'story') === 'play' && !(sessionId && await chatForSession(sessionId))) writingPresetCatalog.assertAvailable(normalizePlayPresetId(playPresetId || (await readTavernSettings()).defaultPlayPresetId))
     // Plain greetings have no interactive preview draft, but need the same
     // game-local worldbook snapshot as scripted openings.
     if (!preparationId && groupOfMode(mode || 'story') === 'play') {
@@ -2765,8 +2769,12 @@ export async function apply(ctx) {
       turn: Number(chat?.messages?.at(-1)?.turn) || 0, system: prompt, messages: recent, tools, maxToolCalls: 16,
       onToolCall: request => call(request.name, typeof request.arguments === 'string' ? JSON.parse(request.arguments || '{}') : request.arguments) })
   }
+  const projectAgents = createProjectAgentWorkspace({ dataRoot, store: profileData,
+    readSession: id => sessionStore.get(id) || agentRegistry.get(id)?.session, readChat: chatForSession })
   const pluginApi = createTavernPluginApi({
     ctx,
+    projectAgents,
+    writingPresetCatalog,
     writingPresets: createWritingPresetExtension({ dispatch,
       readView: async sessionId => {
         const chat = await chatHeaderForSession(sessionId, ['mode', 'playPresetId', 'generationMode', 'runtimePresetSnapshot.presetPath', 'runtimePresetSnapshot.presetName'])
@@ -4285,7 +4293,7 @@ export async function apply(ctx) {
         const chat = sessionId ? await chatForSession(sessionId) : null
         const settings = await readTavernSettings()
         return {
-          presets: listPlayPresets({ chat, settings, legacyPresetTitle: chat?.runtimePresetSnapshot?.presetName }),
+          presets: listPlayPresets({ chat, settings, legacyPresetTitle: chat?.runtimePresetSnapshot?.presetName, providers: writingPresetCatalog.list() }),
           currentPlayPresetId: chat ? normalizePlayPresetId(chat.playPresetId) : null,
           defaultPlayPresetId: normalizePlayPresetId(settings.defaultPlayPresetId),
           generationModes: Object.fromEntries(['tavern', 'dream-sike-dsh', 'hushen-dsh'].map(id => [id, globalAgentPresetDefaults(tavernSettingsDocument, id).generationMode]))
@@ -4295,6 +4303,7 @@ export async function apply(ctx) {
         const sessionId = str(args?.sessionId)
         const chat = await chatForSession(sessionId)
         if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
+        if (args?.presetId !== chat.playPresetId) writingPresetCatalog.assertAvailable(args?.presetId)
         const foregroundIdle = agentRegistry.get(sessionId)?.phase?.kind !== 'running'
         const backgroundIdle = !(await sessionActivity(sessionId))?.busy && !tavernScriptDispatch.status(sessionId).busy
           && !['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) && !chat.regenInProgress
@@ -4640,7 +4649,7 @@ export async function apply(ctx) {
       case 'listSessions': {
         const settings = await readTavernSettings()
         await conversationRegistry.backfillForks({ limit: 50 })
-        return { sessions: await cardProjects.projectSessions((await listTavernSessions()).filter(chat => chat.requestMode !== 'sillytavern')), capabilities: { compatibilityMode: false, trustedCardMode: settings.trustedCardMode } }
+        return { sessions: [...await cardProjects.projectSessions((await listTavernSessions()).filter(chat => chat.requestMode !== 'sillytavern')), ...await projectAgents.list()], capabilities: { compatibilityMode: false, trustedCardMode: settings.trustedCardMode } }
       }
       case 'getGameMemory': {
         const chat = await chatHeaderForSession(str(args?.sessionId), ['gameMemory', 'playPresetId', 'timeline.branchId', 'timeline.revision'])

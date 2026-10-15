@@ -2,13 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { registerRequestHooks } from '../tavern-plugin/lib/hooks/request.js'
 
-function preStep() {
+function preStep(chat) {
   const handlers = {}
   const prepared = []
   registerRequestHooks({
     backgroundAgentRunner: { owns: () => false },
     cardMemory: { appendRecall: async ({ decision }) => decision },
-    chatForSession: async () => undefined,
+    chatForSession: async () => chat,
     ctx: { on: (name, handler) => { handlers[name] = handler } },
     foregroundStrategies: { prepareStep: async input => { prepared.push(input.sessionId); return { ...input.decision, status: true } } },
     requestCoordinates: new Map(),
@@ -26,7 +26,13 @@ test('child agent sessions get no Tavern turn frame or status', async () => {
 })
 
 test('top-level sessions still go through foreground preparation', async () => {
-  const hook = preStep()
+  const hook = preStep({ mode: 'card', messages: [] })
   assert.equal((await hook.run({})).status, true)
   assert.deepEqual(hook.prepared, ['s1'])
+})
+
+test('independent native sessions keep their own preparation and context', async () => {
+  const hook = preStep()
+  assert.deepEqual(await hook.run({ agentPreset: 'standard' }), { kind: 'enter', messages: [] })
+  assert.deepEqual(hook.prepared, [])
 })
