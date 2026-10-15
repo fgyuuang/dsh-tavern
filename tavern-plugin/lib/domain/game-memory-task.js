@@ -1,4 +1,4 @@
-import { isDreamSikeAgentExecution } from './generation-mode.js'
+import { isWritingAgentExecution } from './generation-mode.js'
 
 export const GAME_MEMORY_READ_TOOL = Object.freeze({
   name: 'tavern_memory',
@@ -27,7 +27,7 @@ export const GAME_MEMORY_SUBMIT_TOOL = Object.freeze({
 })
 
 export function gameMemoryEnabled(chat) {
-  return isDreamSikeAgentExecution(chat)
+  return isWritingAgentExecution(chat)
 }
 
 export async function readGameMemory(workspace, chat, args = {}) {

@@ -154,7 +154,7 @@ function TavernPresetSettings(props) {
                 const key = source.id + ":" + input.id;
                 const value = Object.prototype.hasOwnProperty.call(variableDrafts, key) ? variableDrafts[key] : String(input.value == null ? "" : input.value);
                 return h("div", { key: input.id, className: "dsh-agent-preset-variable", "data-source-variable": input.id },
-                    h("label", null, input.label, h("input", { type: "text", value, maxLength: 10000,
+                    h("label", null, input.label, h(input.multiline ? "textarea" : "input", { type: input.multiline ? undefined : "text", rows: input.multiline ? 6 : undefined, value, maxLength: input.maxLength || 10000,
                         "aria-label": source.label + "：" + input.label,
                         disabled: busy || hasDrafts || input.available === false,
                         onChange: event => setVariableDrafts(current => ({ ...current, [key]: event.target.value })) })),
@@ -183,6 +183,25 @@ function TavernPresetSettings(props) {
         }
         return result;
     }
+    function helperCapabilities() {
+        const capability = settings.agentPreset?.capabilities;
+        if (!capability || !(capability.nativeCapabilities?.length || capability.modules?.length)) return null;
+        const short = text => String(text || "").slice(0, 240);
+        function table(items, label) {
+            return h("div", { style: { overflowX: "auto" } }, h("table", { "aria-label": label, style: { width: "100%", borderCollapse: "collapse", textAlign: "left" } },
+                h("thead", null, h("tr", null, h("th", { scope: "col" }, "能力"), h("th", { scope: "col" }, "接入状态"), h("th", { scope: "col" }, "说明"))),
+                h("tbody", null, items.map(item => h("tr", { key: item.id, "data-capability": item.id, "data-compatibility": item.compatibility?.status || "unknown" },
+                    h("th", { scope: "row", style: { padding: "8px", verticalAlign: "top" } }, item.name || item.id),
+                    h("td", { style: { padding: "8px", verticalAlign: "top" } }, short(item.compatibility?.label || "待确认")),
+                    h("td", { style: { padding: "8px", verticalAlign: "top" } }, short(item.compatibility?.reason)))))));
+        }
+        return h("details", { className: "dsh-agent-preset-advanced", "data-helper-capabilities": "true" },
+            h("summary", null, "原助手能力接入"),
+            h("p", { className: "dsh-tavern-settings-desc" }, "原文设置、原生执行与旧控制器分别记录。已保存选项不代表原助手的数据库或自动任务已经运行。"),
+            capability.nativeCapabilities?.length ? table(capability.nativeCapabilities, "原助手原生能力接入状态") : null,
+            capability.modules?.length ? h("details", null, h("summary", null, "原提示词槽登记（" + capability.modules.length + "）"),
+                table(capability.modules, "原助手提示词槽接入状态")) : null);
+    }
     function workbench() {
         const workflow = stages(), current = workflow.find(stage => stage.id === stageId) || workflow[0];
         const agentEnabled = settings.agentPreset?.enabled === true;
@@ -198,9 +217,10 @@ function TavernPresetSettings(props) {
         const tabPrefix = "dsh-preset-" + props.sessionId;
         return h(React.Fragment, null,
             h("header", { className: "dsh-agent-preset-header" },
-                h("div", null, h("h3", null, agentEnabled ? settings.agentPreset?.title || "梦境思客DSH" : settings.presetName || "梦境思客"),
+                h("div", null, h("h3", null, agentEnabled ? settings.agentPreset?.title || "写作 Agent" : settings.presetName || "原预设"),
                     h("p", null, agentEnabled ? "保留原作者规则，按 Agent 执行阶段配置" : "保留原作者规则，配置原酒馆预设选项")),
                 h("span", { className: "dsh-agent-preset-badge" }, agentEnabled ? "Agent 模式" : "原酒馆模式")),
+            helperCapabilities(),
             h("div", { className: "dsh-agent-preset-toolbar" },
                 h("input", { type: "search", value: query, placeholder: "查找预设功能…", "aria-label": "搜索预设功能", onChange: event => setQuery(event.target.value) }),
                 h("button", { type: "button", className: "dsh-agent-preset-link", onClick: event => openSource(event) }, "来源与原文")),

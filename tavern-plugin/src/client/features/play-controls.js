@@ -553,7 +553,7 @@
                 return view;
             }
             const view = current();
-            if (view.playPresetId === "dream-sike-dsh" && view.generationMode !== "sillytavern-once") {
+            if (isWritingAgentView(view)) {
                 const response = await rpc("getDraftView", { sessionId }, sessionId);
                 current();
                 const draft = response.draft;
@@ -578,7 +578,7 @@
             const turn = Number(view?.replayFailedTurn) || 0;
             if (props.running || !view?.canReplayFailedTurn || turn < 1) return null;
             const draft = view.dreamSikeDraftState;
-            const hasDraft = view.playPresetId === "dream-sike-dsh" && view.generationMode !== "sillytavern-once" && draft?.turn === turn && ["draft", "ready"].includes(draft.status);
+            const hasDraft = isWritingAgentView(view) && draft?.turn === turn && ["draft", "ready"].includes(draft.status);
             async function resume() {
                 if (pending.current) return;
                 pending.current = true; setBusy(true); setError("");
@@ -902,7 +902,7 @@
             const playPresets = data?.playPresets || [];
             const selectedPlayPreset = playPresets.find(p => p.id === data?.currentPlayPresetId);
             const defaultPlayPreset = playPresets.find(p => p.id === data?.defaultPlayPresetId);
-            const dreamPreset = data?.currentPlayPresetId === "dream-sike-dsh";
+            const dreamPreset = isWritingAgentPresetId(data?.currentPlayPresetId);
             const singleReply = data?.generationMode === "sillytavern-once";
             return h("div", { className: "dsh-local-field" },
                 h("label", null, "回复方式（本局）", h("select", { className: "dsh-tavern-settings-select", "aria-label": "本局回复方式", value: data?.generationMode || "agent", disabled: busy || !data, onChange: event => changeGenerationMode(event.target.value) },
@@ -986,12 +986,12 @@
             const h = React.createElement;
             const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
             const live = useLiveTavernView(owner, "dream-settings", [["playPresetId"]]);
-            return h("aside", { className: "dsh-tavern-status dsh-sike-settings-workspace", "aria-label": "梦境思客创作设置" },
+            return h("aside", { className: "dsh-tavern-status dsh-sike-settings-workspace", "aria-label": writingAgentTitle(live.view) + "创作设置" },
                 h("header", { className: "dsh-tavern-status-head" }, h("div", null,
-                    h("strong", null, "梦境思客 · 创作设置"),
+                    h("strong", null, writingAgentTitle(live.view) + " · 创作设置"),
                     h("p", { className: "dsh-tavern-settings-desc" }, "本局的角色、文风与写作流程；修改从下一回合生效。"))),
-                live.view?.playPresetId === "dream-sike-dsh" ? h(TavernPresetSettings, { key: owner, sessionId: owner }) :
-                    h("p", { className: "dsh-tavern-empty" }, "当前未使用梦境思客 Agent 预设。请在本局设置中选择预设。"));
+                isWritingAgentPresetId(live.view?.playPresetId) ? h(TavernPresetSettings, { key: owner, sessionId: owner }) :
+                    h("p", { className: "dsh-tavern-empty" }, "当前未使用独立写作 Agent 预设。请在本局设置中选择梦境思客DSH或狐神抚DSH。"));
         }
 
         function TavernConversationSettingsAction(props) {
@@ -1056,7 +1056,7 @@
         function TavernConversationExecutionPolicy(props) {
             const h = React.createElement;
             const modeView = useLiveTavernView(props.sessionId, "dream-execution-policy-mode", [["playPresetId"], ["generationMode"]]);
-            const dreamPreset = modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
+            const dreamPreset = isWritingAgentView(modeView.view);
             const [record, setRecord] = React.useState(null), [saving, setSaving] = React.useState(false);
             const [error, setError] = React.useState(""), [notice, setNotice] = React.useState("");
             React.useEffect(function () {
@@ -1176,10 +1176,10 @@
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
             return h(React.Fragment, null,
               h(DreamSikeLiveTextPreview, { ...props, maxWidth: composerWidth }),
-              h("section", { className: "dsh-sike-interaction-dock", "aria-label": "梦境思客 Agent 工作台", "data-mobile-expanded": String(mobileToolsOpen),
+              h("section", { className: "dsh-sike-interaction-dock", "aria-label": (props.agentTitle || "写作 Agent") + " 工作台", "data-mobile-expanded": String(mobileToolsOpen),
                 style: composerWidth > 0 ? { maxWidth: composerWidth + "px", marginInline: "auto", boxSizing: "border-box" } : undefined },
                 h("div", { className: "dsh-sike-interaction-identity" },
-                    h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, "梦境思客")),
+                    h("div", null, h("span", { className: "dsh-sike-interaction-eyebrow" }, "独立 Agent 预设"), h("strong", null, props.agentTitle || "写作 Agent")),
                     props.running ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { className: "dsh-sike-interaction-state", role: "status" }, idleLabel),
                     h("button", { type: "button", className: "dsh-sike-workbench-entry", title: "打开创作、正文、记忆与本局工具", onClick: () => (props.openWorkbench || props.openAgentSettings)(props.sessionId) }, "工作台"),
                     h("button", { type: "button", className: "dsh-sike-mobile-tools-toggle", "aria-expanded": mobileToolsOpen, "aria-controls": toolsId, "aria-label": mobileToolsOpen ? "收起创作工具" : "展开创作工具", onClick: () => setMobileToolsOpen(value => !value) }, mobileToolsOpen ? "收起 ▴" : "工具 ▾")),
@@ -1187,7 +1187,7 @@
                   h("div", { className: "dsh-sike-interaction-actions" },
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openAgentSettings(props.sessionId) }, "创作设置"),
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => props.openDraft(props.sessionId) }, "正文工作窗"),
-                    props.messageId ? h(CandidateAction, { ...props, agentDock: true }) : null,
+                    props.messageId && props.playPresetId !== "hushen-dsh" ? h(CandidateAction, { ...props, agentDock: true }) : null,
                     h(TavernMoreActions, props)),
                   props.children)));
         }
@@ -1203,8 +1203,8 @@
 			const h = React.createElement;
 			if (!sessionMode) return null;
 			if (address) return isPlayMode(sessionMode) ? h("div", { className: "dsh-tavern-dock-actions" }, h(TavernStopBackgroundAction, { sessionId: ownerSessionId })) : null;
-            if (isPlayMode(sessionMode) && live.view?.playPresetId === "dream-sike-dsh" && live.view?.generationMode !== "sillytavern-once") {
-                return h(DreamSikeInteractionDock, { ...props, key: props.sessionId, messageId: latestMessageId, running },
+            if (isPlayMode(sessionMode) && isWritingAgentView(live.view)) {
+                return h(DreamSikeInteractionDock, { ...props, key: props.sessionId, playPresetId: live.view?.playPresetId, agentTitle: writingAgentTitle(live.view), messageId: latestMessageId, running },
                     h("div", { className: "dsh-sike-interaction-extensions" },
                         !running && !live.view.canClearIncompleteReply && live.view.releaseCapabilities?.sceneImages ? h(SceneImageAction, { key: props.sessionId + ":" + imageTurn, sessionId: props.sessionId, turn: imageTurn, running }) : null,
                         !live.view.canClearIncompleteReply ? h(TavernPluginComposerActions, { sessionId: props.sessionId, turn: imageTurn, running }) : null,
@@ -1565,7 +1565,7 @@
                 component: props => React.createElement(TavernConversationSettingsTab, { sessionId: props.scope.sessionId, sessions: ctx.sessions })
             }), "dsh-tavern: conversation settings tab");
             ctx.effect(() => ctx.betterSidebar.registerTab({
-                id: "dsh-tavern:dream-sike-settings", title: "梦境思客创作设置", order: 9, single: true,
+                id: "dsh-tavern:dream-sike-settings", title: "Agent 创作设置", order: 9, single: true,
                 component: props => React.createElement(DreamSikeSettingsTab, { sessionId: props.scope.sessionId, sessions: ctx.sessions })
             }), "dsh-tavern: independent Dream Sike settings");
             // Replace shipped host chrome that is noise in the Tavern profile.

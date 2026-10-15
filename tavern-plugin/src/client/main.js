@@ -16,6 +16,15 @@ window.__ModuleLoader__.load({
 		function isPlayMode(mode) {
 			return mode === "story" || mode === "script";
 		}
+		function isWritingAgentPresetId(presetId) {
+			return presetId === "dream-sike-dsh" || presetId === "hushen-dsh";
+		}
+		function isWritingAgentView(view) {
+			return isWritingAgentPresetId(view?.playPresetId) && view?.generationMode !== "sillytavern-once";
+		}
+		function writingAgentTitle(view) {
+			return view?.playPresetId === "hushen-dsh" ? "狐神抚" : "梦境思客";
+		}
 		function groupOfMode(mode) {
 			return isPlayMode(mode || "story") ? "play" : "card";
 		}

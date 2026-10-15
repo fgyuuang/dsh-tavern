@@ -3,10 +3,10 @@ import {
   dreamSikeDraftView, dreamSikeTurnIdentity,
   submitDreamSikeDraft, reviseDreamSikeDraft, finishDreamSikeDraftSubmission, readyDreamSikeDraft
 } from '../domain/dream-sike-draft.js'
-import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, needsDreamSikeEditorialReview } from '../domain/dream-sike-contract.js'
+import { DREAM_SIKE_REVIEW_AXES } from '../domain/dream-sike-contract.js'
+import { writingAgentContractView as dreamSikeContractView, needsWritingAgentEditorialReview as needsDreamSikeEditorialReview, readWritingAgentRules as readDreamSikeAgentRules } from '../domain/writing-agent-contract.js'
 import { dreamSikePreparationView, needsDreamSikePreparation, prepareDreamSikeTurn, recordDreamSikeTurnRead } from '../domain/dream-sike-preparation.js'
-import { readDreamSikeAgentRules } from '../domain/dream-sike-agent-profile.js'
-import { isDreamSikeAgentExecution } from '../domain/generation-mode.js'
+import { isWritingAgentExecution } from '../domain/generation-mode.js'
 import { draftModuleReceiptCurrent, dreamSikeDraftModulePlan } from '../domain/dream-sike-draft-modules.js'
 import { dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { exhaustedModelQuota } from '../domain/model-error-presentation.js'
@@ -122,7 +122,7 @@ function turnReport(chat, identity, args = {}) {
     throw new Error('草稿读取位置已超出当前正文，请从 0 重新读取')
   }
   const draftEnd = Math.min((currentDraft?.text.length || 0), draftOffset + DRAFT_READ_CHARS)
-  const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+  const contract = dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)
   const presetRules = readDreamSikeAgentRules(chat, {
     offset: args.ruleOffset ?? 0, limit: args.ruleLimit ?? 50,
     contentOffset: args.ruleContentOffset ?? 0, maxChars: AUTHOR_RULE_READ_CHARS,
@@ -177,6 +177,19 @@ function turnReport(chat, identity, args = {}) {
         ? '按已选作者完整规则核对材料、人物、格式、文风和叙事者方法；需要依据时仅在查询阶段检索。资料完整时 finishResearch=true 结束查询；若已明确缺少剧情关键资料且查询额度尚有剩余，finishResearch=false 保留一次补查。查询结束后一次 sike_put_draft({text,review,brief?}) 提交正文、六维审阅及可选简报，宿主同次检查并确认；有问题才在额度内批量局部修订。平行事件等附加内容留给正文与结算后，不提前输出，不展开私有推理。'
         : '当前为 ' + (contract?.outputMode || '普通') + ' 输出模式，按该模式的作者原文执行，不要求剧情六项准备或六维剧情审稿；仍须建立、检查并确认唯一回复。')
   }
+  if (chat.playPresetId === 'hushen-dsh') {
+    report.materialAreas = {
+      stage_1_base_requirements: { rules: 'presetRules', source: '本局选中原文的角色、文风、格式、节奏与附加规则。' },
+      All_Context: { card: chat.cardPath || '', worldBook: 'worldBook', state: 'state', history: 'recent',
+        furtherReading: '缺少事实时在查询阶段使用 worldbook_search / tavern_memory / tavern_recall_history。' },
+      User_Prefs: { rules: 'presetRules', source: '只使用本局当前启用的用户偏好原文，不带入源文件旧局注入。' },
+      stage_2_pre_output_check: { rules: 'presetRules', source: '按原作者转述/抢话边界、字数、格式、选定规划方式执行；原文有层次时保留其层次。' },
+      fox_extra: { rules: 'presetRules', memory: 'tavern_memory', source: '当前分支原生资料工具取代旧脚本的临时槽；未迁移模块不能伪装已执行。' },
+      User_latest_request: { field: 'playerAction', reference: 'action:' + identity.operationId }
+    }
+    report.next = (presetRules.hasMore ? '原作者规则尚有续页，按 nextOffset / nextContentOffset 继续读取。' : '当前页已到所选原作者规则末尾。')
+      + '按狐神抚原文核对本轮材料、人物各自可知信息、转述与控制边界、文风、字数和正文格式。查询完成后，用一次 sike_put_draft({text,review,brief?}) 提交完整草稿及六维可观察审阅；有具体缺陷才批量修订。狐策、留言、时间栏和已选前端沿用本局原文格式，不输出梦境思客标签，不输出私有思考封装，不写变量协议。'
+  }
   if (args.includeMaterials === false) {
     for (const field of ['playerAction', 'posture', 'recent', 'worldBook', 'state']) delete report[field]
     report.materialsOmitted = true
@@ -200,13 +213,13 @@ function turnReport(chat, identity, args = {}) {
 /** Register foreground tools. The host owns canonical story/MVU commits. */
 export function registerDreamSikeTools({ tools, chatForSession, updateChat, activeTurnOf, publish, draftModules, executionUsageForChat, requestCoordinates }) {
   if (!tools || typeof tools.register !== 'function' || typeof chatForSession !== 'function'
-    || typeof updateChat !== 'function' || typeof activeTurnOf !== 'function') throw new Error('缺少梦境思客DSH工具依赖')
+    || typeof updateChat !== 'function' || typeof activeTurnOf !== 'function') throw new Error('缺少剧情 Agent工具依赖')
 
   async function resolve(exec) {
     const sessionId = str(exec?.agent?.session?.id)
     const turn = activeTurnOf(exec)
     const chat = await chatForSession(sessionId)
-    if (!isDreamSikeAgentExecution(chat)) throw new Error('当前回复方式未启用梦境思客 Agent 工具')
+    if (!isWritingAgentExecution(chat)) throw new Error('当前回复方式未启用梦境思客 Agent 工具')
     return { chat, identity: dreamSikeTurnIdentity(chat, sessionId, turn) }
   }
 

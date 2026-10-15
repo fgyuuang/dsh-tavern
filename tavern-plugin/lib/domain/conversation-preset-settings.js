@@ -3,6 +3,10 @@ import { nativeRegexScriptsOf } from './preset-reading.js'
 import { compileDreamSikeContract } from './dream-sike-contract.js'
 import { dreamSikeSourceSettings, applyDreamSikeSourceAction } from './dream-sike-source-settings.js'
 import { buildDreamSikeAgentProfile } from './dream-sike-agent-profile.js'
+import { compileHushenContract } from './hushen-contract.js'
+import { isHushenSource, HUSHEN_DYNAMIC_IDS } from './hushen-source.js'
+import { buildHushenAgentProfile } from './hushen-agent-profile.js'
+import { hushenSourceSettings, applyHushenSourceAction } from './hushen-source-settings.js'
 
 const phases = ['front', 'middle', 'back']
 function regexCatalog(snapshot) {
@@ -32,18 +36,20 @@ export function conversationPresetSettings(snapshot, mode = 'tavern') {
   const inspection = { ...snapshot, front: { entries: allEntries.map(({ entry }) => ({ ...entry, id: entry.entryKey,
     enabled: true, source: { identifier: entry.identifier } })) }, middle: { entries: [] }, back: { entries: [] } }
   delete inspection.agentContract
-  const actions = new Map((compileDreamSikeContract(inspection)?.agentContract?.entries || []).map(entry => [entry.id, entry.action]))
+  const fox = isHushenSource(snapshot)
+  const agentMode = ['dream-sike-dsh', 'hushen-dsh'].includes(mode)
+  const actions = new Map(((fox ? compileHushenContract : compileDreamSikeContract)(inspection)?.agentContract?.entries || []).map(entry => [entry.id, entry.action]))
   const regexActive = new Set((snapshot.regexScripts || []).filter(script => script.enabled !== false).map(script => script.regexKey || script.id))
-  const sourceSettings = dreamSikeSourceSettings(snapshot, mode)
+  const sourceSettings = (fox ? hushenSourceSettings : dreamSikeSourceSettings)(snapshot, mode)
   return {
     presetName: snapshot.presetName, digest: snapshot.digest,
     sourceSettings: sourceSettings.groups.length ? sourceSettings : null,
-    agentPreset: sourceSettings.groups.length ? buildDreamSikeAgentProfile(snapshot, mode) : null,
+    agentPreset: sourceSettings.groups.length ? (fox ? buildHushenAgentProfile : buildDreamSikeAgentProfile)(snapshot, mode, { sourceSettings }) : null,
     entries: orderedEntries(snapshot).filter(({ entry }) => entry && entry.marker !== true && entry.injectable === true).map(({ phase, entry }) => ({
       key: entry.entryKey, name: entry.name || entry.entryKey, phase, role: entry.role,
       enabled: active.has(entry.entryKey), content: active.get(entry.entryKey)?.content ?? entry.content ?? '',
-      editableContent: mode !== 'dream-sike-dsh' || actions.get(entry.entryKey) === 'preserved',
-      execution: mode !== 'dream-sike-dsh' || actions.get(entry.entryKey) === 'preserved' ? '写作规则原文注入' : '原执行协议由 Agent 适配；可切换启用状态，修改协议请使用预设库'
+      editableContent: !agentMode || actions.get(entry.entryKey) === 'preserved',
+      execution: !agentMode || actions.get(entry.entryKey) === 'preserved' ? '写作规则原文注入' : '原执行协议由 Agent 适配；可切换启用状态，修改协议请使用预设库'
     })),
     regexScripts: regexCatalog(snapshot).map(script => ({
       key: script.regexKey || script.id, name: script.name || script.scriptName || script.id,
@@ -52,7 +58,7 @@ export function conversationPresetSettings(snapshot, mode = 'tavern') {
     })),
     helperScripts: (snapshot.compatibilityPresetDocument?.extensions?.tavern_helper?.scripts || []).filter(script => script.type === 'script').map(script => ({
       name: script.name, configured: script.enabled !== false && script.disabled !== true && script.data?.enabled !== false,
-      execution: mode === 'dream-sike-dsh' ? '由 Agent 模式接管；旧预设脚本不启动' : '兼容脚本，是否成功运行需查看执行记录'
+      execution: agentMode ? '由 Agent 模式接管；旧预设脚本不启动，未迁移能力见兼容清单' : '兼容脚本，是否成功运行需查看执行记录'
     }))
   }
 }
@@ -63,7 +69,7 @@ export function updateConversationPresetSettings(snapshot, changes, expectedDige
   let sourcePatch = null
   if (changes?.sourceAction !== undefined) {
     if ((changes.entries?.length || changes.regexScripts?.length)) throw new Error('原设置选项不能与高级编辑同时保存')
-    sourcePatch = applyDreamSikeSourceAction(snapshot, changes.sourceAction, mode)
+    sourcePatch = (isHushenSource(snapshot) ? applyHushenSourceAction : applyDreamSikeSourceAction)(snapshot, changes.sourceAction, mode)
     changes = { entries: sourcePatch.entries || [], regexScripts: [] }
   }
   if (!changes || !Array.isArray(changes.entries) || !Array.isArray(changes.regexScripts)
@@ -82,12 +88,17 @@ export function updateConversationPresetSettings(snapshot, changes, expectedDige
     for (const change of changes[kind]) {
       if (!change || !known.has(change.key) || seen.has(change.key) || typeof change.enabled !== 'boolean') throw new Error('预设设置包含未知或重复项目')
       if (change.content !== undefined && (kind !== 'entries' || typeof change.content !== 'string' || change.content.length > 100000)) throw new Error('提示内容格式无效')
-      if (change.content !== undefined && known.get(change.key).editableContent === false && change.content !== known.get(change.key).content) throw new Error('该执行协议由 Agent 适配，请使用预设库维护')
+      if (change.content !== undefined && !sourcePatch && known.get(change.key).editableContent === false && change.content !== known.get(change.key).content) throw new Error('该执行协议由 Agent 适配，请使用预设库维护')
       seen.add(change.key)
       if (kind === 'entries') {
         const entry = next.compatibilityPreset.entries.find(entry => entry.entryKey === change.key)
         entry.enabled = change.enabled
         if (change.content !== undefined) entry.content = change.content
+        if (change.content !== undefined && isHushenSource(next) && HUSHEN_DYNAMIC_IDS.includes(entry.identifier)) {
+          // An exported injection slot may contain another game's material.
+          // Only explicit edits to this game's copy opt that slot into writing.
+          next.hushenCurrentGameMaterialIds = [...new Set([...(next.hushenCurrentGameMaterialIds || []), entry.identifier])]
+        }
         // Keep the per-game source copy coherent for the original group resolver.
         // The resource library and other games are never written here.
         const raw = next.compatibilityPresetDocument?.prompts?.[entry.sourcePromptIndex]
@@ -121,6 +132,6 @@ export function updateConversationPresetSettings(snapshot, changes, expectedDige
   delete next.agentContract
   next.digest = createHash('sha256').update(JSON.stringify({ front: next.front, middle: next.middle, back: next.back,
     regexScripts: next.regexScripts, compatibilityPreset: next.compatibilityPreset, compatibilityPresetDocument: next.compatibilityPresetDocument,
-    sourceMacroOverrides: next.sourceMacroOverrides })).digest('hex')
+    sourceMacroOverrides: next.sourceMacroOverrides, hushenCurrentGameMaterialIds: next.hushenCurrentGameMaterialIds })).digest('hex')
   return next
 }

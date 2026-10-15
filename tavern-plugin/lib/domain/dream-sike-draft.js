@@ -1,9 +1,10 @@
-import { DREAM_SIKE_REVIEW_AXES, dreamSikeContractView, inspectDreamSikeContractDraft, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
+import { DREAM_SIKE_REVIEW_AXES } from './dream-sike-contract.js'
+import { writingAgentContractView as dreamSikeContractView, inspectWritingAgentContractDraft as inspectDreamSikeContractDraft, needsWritingAgentEditorialReview as needsDreamSikeEditorialReview } from './writing-agent-contract.js'
 import { assertDreamSikePreparation, dreamSikePreparationView, prepareDreamSikeWriting } from './dream-sike-preparation.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
 import { draftModuleBase } from './dream-sike-draft-modules.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
-import { isDreamSikeAgentExecution } from './generation-mode.js'
+import { isWritingAgentExecution } from './generation-mode.js'
 
 const MAX_DRAFT_CHARS = 100_000
 const MAX_FIND_CHARS = 4_000
@@ -39,8 +40,8 @@ function currentBodyOperation(chat, turn) {
 
 /** Resolve the only turn a foreground tool is allowed to affect. */
 export function dreamSikeTurnIdentity(chat, sessionId, turn) {
-  if (!isDreamSikeAgentExecution(chat)) throw new Error('梦境思客DSH工具仅用于已启用的游玩对话')
-  if (!str(sessionId) || !Number.isSafeInteger(turn) || turn < 1) throw new Error('梦境思客DSH工具需要正在运行的前台回合')
+  if (!isWritingAgentExecution(chat)) throw new Error('剧情 Agent工具仅用于已启用的游玩对话')
+  if (!str(sessionId) || !Number.isSafeInteger(turn) || turn < 1) throw new Error('剧情 Agent工具需要正在运行的前台回合')
   const foregroundSession = str(chat.timeline?.participants?.foreground?.sessionId)
   if (str(chat.sessionId) !== sessionId && foregroundSession !== sessionId) throw new Error('草稿会话与当前对话不一致')
   const operation = currentBodyOperation(chat, turn)
@@ -90,7 +91,7 @@ export function dreamSikeDraftStatus(chat) {
 export function planDreamSikeDraftResume(chat, { failedTurn, expectedOperationId, expectedVersion }) {
   const draft = readDreamSikeDraft(chat)
   const timeline = object(chat?.timeline)
-  if (!isDreamSikeAgentExecution(chat)) throw new Error('当前游戏未启用梦境思客DSH')
+  if (!isWritingAgentExecution(chat)) throw new Error('当前游戏未启用剧情 Agent')
   if (!draft || !['draft', 'ready'].includes(draft.status)) throw new Error('没有可继续处理的正文草稿')
   if (!Number.isSafeInteger(failedTurn) || failedTurn < 1 || draft.turn !== failedTurn
     || draft.operationId !== expectedOperationId || draft.version !== expectedVersion) throw new Error('草稿版本或失败回合已变化，请重新读取工作窗')
@@ -241,7 +242,7 @@ export function dreamSikeExecutionTrace(session, draft) {
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
   assertDraftText(text)
   assertDreamSikePreparation(chat, identity)
-  if (dreamSikeContractView(chat.runtimePresetSnapshot)?.followupModules?.some(module => module.id === '807eefad-93ca-490c-a629-1d51038e3626')) text = draftModuleBase(text, 'parallel')
+  if (dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.followupModules?.some(module => module.id === '807eefad-93ca-490c-a629-1d51038e3626')) text = draftModuleBase(text, 'parallel')
   assertDraftText(text)
   const previous = readDreamSikeDraft(chat)
   if (sameIdentity(previous, identity)) {
@@ -391,7 +392,7 @@ export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   if (review === undefined && draft.inlineReview?.version === draft.version) review = draft.inlineReview.review
   draft.checks = { version: draft.version, issues, checkedAt: now }
   if (needsDreamSikeEditorialReview(chat)) {
-    const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+    const contract = dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)
     const editorial = inspectEditorialReview(review)
     const policy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
     const rounds = Number(draft.revisionCount) || 0
@@ -425,7 +426,7 @@ export function readyDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   if (!draft.checks || draft.checks.version !== draft.version) throw new Error('请先检查当前版本草稿')
   if (needsDreamSikeEditorialReview(chat)) {
     const editorial = draft.checks.editorial
-    const contract = dreamSikeContractView(chat.runtimePresetSnapshot)
+    const contract = dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)
     if (!editorial || !editorial.passed || editorial.version !== draft.version) throw new Error('请先完成当前版本的六维正文审阅，并修订已发现的问题')
     if (editorial.contractDigest !== str(contract?.digest)) throw new Error('预设规则已变化，请依据当前契约重新检查草稿')
   }

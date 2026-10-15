@@ -87,6 +87,17 @@ export function resolveRuntimePresetMacros(snapshot, options = {}) {
     local: Object.assign({}, options.macroState?.local && typeof options.macroState.local === 'object' ? options.macroState.local : {}, snapshot?.sourceMacroOverrides?.local || {}),
     global: Object.assign({}, options.macroState?.global && typeof options.macroState.global === 'object' ? options.macroState.global : {}, snapshot?.sourceMacroOverrides?.global || {})
   }
+  // Author macro namespaces are re-evaluated from the selected source each turn.
+  // Preserve card/worldbook variables; only clear explicitly compiled author keys.
+  for (const [scope, resetField] of [['local', 'macroResetKeys'], ['global', 'macroResetGlobalKeys']]) {
+    const keys = snapshot?.agentContract?.[resetField]
+    if (!Array.isArray(keys)) continue
+    for (const key of keys) {
+      if (typeof key === 'string' && key.length > 0 && key.length <= 200
+        && !['__proto__', 'prototype', 'constructor'].includes(key)) delete macroState[scope][key]
+    }
+    Object.assign(macroState[scope], snapshot?.sourceMacroOverrides?.[scope] || {})
+  }
   if (snapshot === null || typeof snapshot !== 'object') return { snapshot: null, macroState, diagnostics: [] }
   const rawPhases = snapshot.front || snapshot.middle || snapshot.back
     ? {
@@ -433,9 +444,27 @@ export function createRuntimePresetModule(options = {}) {
   // Resolve by source identifiers as well as name; never silently adopt another
   // author's globally selected preset or change that global selection.
   async function fullSnapshotForPlayPreset(playPresetId) {
-    if (playPresetId !== 'dream-sike-dsh') {
+    if (!['dream-sike-dsh', 'hushen-dsh'].includes(playPresetId)) {
       const prepared = await claimPreparedFullSnapshot()
       return prepared === undefined ? await fullSnapshot() : prepared
+    }
+    if (playPresetId === 'hushen-dsh') {
+      const candidates = []
+      for (const path of await listPaths()) {
+        if (!/狐神[抚撫]/i.test(path)) continue
+        const source = await readPreset(path)
+        const identifiers = new Set((source?.entries || []).map(entry => entry.identifier))
+        if (source?.valid === true && source.recognized === true
+          && identifiers.has('a00fb1fe-9907-4709-b230-43ae0d236529')
+          && identifiers.has('jailbreak')
+          && identifiers.has('7a3c853f-88ff-48ff-8c6a-020d9bbeb3d8')) candidates.push(path)
+      }
+      const exact = candidates.filter(path => /(?:^|[/\\])\[主预设\] V19\.7\.3 狐神抚 · 毓忻\.json$/i.test(path))
+      const choices = exact.length ? exact : candidates
+      if (choices.length !== 1) throw new Error(choices.length
+        ? '狐神抚 Agent 找到多份作者规则，请仅保留一份明确命名为“[主预设] V19.7.3 狐神抚 · 毓忻.json”的来源。'
+        : '狐神抚 Agent 缺少原作者规则，请先导入“[主预设] V19.7.3 狐神抚 · 毓忻.json”。')
+      return await fullSnapshot(choices[0])
     }
     const candidates = []
     for (const path of await listPaths()) {

@@ -42,7 +42,7 @@
 				const sessionId = props.sessionId;
 				const mode = useTavernSessionMode(sessionId);
 				const modeView = useLiveTavernView(sessionId, "dream-sike-window-mode", [["playPresetId"], ["generationMode"]]);
-				const dreamMode = modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
+				const dreamMode = isWritingAgentView(modeView.view);
 				const [draft, setDraft] = React.useState(null);
 				const [executionTrace, setExecutionTrace] = React.useState([]);
 				const [execution, setExecution] = React.useState(null);
@@ -222,7 +222,7 @@
 						h("div", null, h("div", { className: "dsh-tavern-status-title" }, "正文工作窗"), h("div", { className: "dsh-tavern-question-sub" }, "当前回合的草稿与 Agent 执行进度")),
 						h("span", { className: "dsh-sike-draft-phase", role: "status" }, draft ? draftPhaseLabel(draft) : executionTrace.length ? "处理中" : "尚未开始"),
 						!props.embedded ? h("button", { type: "button", className: "dsh-tavern-btn", onClick: closeWindow, "aria-label": "关闭正文工作窗" }, "关闭") : null),
-				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用梦境思客DSH。") :
+				!isPlayMode(mode) || !dreamMode ? h("div", { className: "dsh-tavern-empty" }, "本局未启用写作 Agent，正文工作窗适用于梦境思客DSH与狐神抚DSH。") :
 					h("div", { className: "dsh-sike-draft-body" },
 						error ? h("div", { className: "dsh-card-error", role: "alert" }, "读取工作窗失败：" + error) : null,
 						renderExecutionUsage(),
@@ -258,7 +258,7 @@
 				const owner = props.sessions.subagentAddress(props.sessionId)?.parentSessionId || props.sessionId;
 				const mode = useTavernSessionMode(owner);
 				const modeView = useLiveTavernView(owner, "dream-sike-action-mode", [["playPresetId"], ["generationMode"]]);
-				const dreamMode = isPlayMode(mode) && modeView.view?.playPresetId === "dream-sike-dsh" && modeView.view?.generationMode !== "sillytavern-once";
+				const dreamMode = isPlayMode(mode) && isWritingAgentView(modeView.view);
 				React.useEffect(function () {
 					if (!dreamMode || !wantsDraftWindow(owner)) return;
 					let active = true;
@@ -274,6 +274,7 @@
 					React.createElement("span", { className: "dsh-tavern-header-action-label" }, "正文工作窗"));
 			}
 			function DreamSikeMainTurnStatus(props) {
+				const live = useLiveTavernView(props.sessionId, "writing-agent-turn-title", [["playPresetId"]]);
 				const [phase, setPhase] = React.useState("读取资料");
 				React.useEffect(function () {
 					let active = true, pending = false;
@@ -289,7 +290,7 @@
 					void refresh();
 					return function () { active = false; window.clearInterval(timer); };
 				}, [props.sessionId]);
-				return React.createElement("div", { className: "dsh-sike-main-status", role: "status" }, "梦境思客DSH · " + phase);
+				return React.createElement("div", { className: "dsh-sike-main-status", role: "status" }, writingAgentTitle(live.view) + "DSH · " + phase);
 			}
 			function register(input) {
 				const ctx = input.ctx;

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { dreamSikeToolPhase } from './dream-sike-tool-phase.js'
 import { sessionEvents } from './session-events.js'
-import { isDreamSikeAgentExecution } from './generation-mode.js'
+import { isWritingAgentExecution } from './generation-mode.js'
 
 const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value
@@ -57,7 +57,7 @@ export function createDreamSikeLoopGuard() {
   const observations = new WeakMap()
   return (payload, chat) => {
     const agent = payload.agent, step = Number(payload.step) - 1, turn = Number(payload.turn)
-    if (!agent || !isDreamSikeAgentExecution(chat) || step < 1) { if (agent) observations.delete(agent); return }
+    if (!agent || !isWritingAgentExecution(chat) || step < 1) { if (agent) observations.delete(agent); return }
     const phase = dreamSikeToolPhase(chat, agent.session?.id, turn)
     if (!phase || phase.name === 'ready') { observations.delete(agent); return }
     const state = stableState(chat, phase), signature = stepSignature(recentEvents(agent.session), turn, step, state)
@@ -67,6 +67,6 @@ export function createDreamSikeLoopGuard() {
     const repeated = previous?.turn === turn && previous.step === step - 1 && previous.state === state && previous.signature === signature
     const count = repeated ? previous.count + 1 : 1
     observations.set(agent, { turn, step, state, signature, count })
-    if (count >= 3) throw Object.assign(new Error('梦境思客DSH连续三个步骤重复相同工具请求和结果，写作状态没有推进；草稿已保留，请使用“继续本回合”继续处理。'), { code: 'DREAM_SIKE_NO_PROGRESS' })
+    if (count >= 3) throw Object.assign(new Error('剧情 Agent连续三个步骤重复相同工具请求和结果，写作状态没有推进；草稿已保留，请使用“继续本回合”继续处理。'), { code: 'DREAM_SIKE_NO_PROGRESS' })
   }
 }

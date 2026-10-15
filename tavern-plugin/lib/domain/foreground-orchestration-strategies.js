@@ -4,8 +4,9 @@ import { resolveRuntimePresetMacros } from './runtime-presets.js'
 import { createEphemeralCompatibilityRequest, isCompatibilityConversationRequest } from './compatibility-request.js'
 import { projectRuntimePresetRequest } from './runtime-preset-lifecycle.js'
 import { markRequestHandled, requestHandledBy } from './request-lineage.js'
-import { DREAM_SIKE_AGENT_PRESET, dreamSikeAgentInstruction } from './dream-sike-mode.js'
-import { isSingleReplyMode } from './generation-mode.js'
+import { writingAgentInstruction } from './writing-agent-contract.js'
+import { dreamSikeAgentInstruction } from './dream-sike-mode.js'
+import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
 
 const CARD_REFERENCE_SECTIONS = new Set(['tavern:character-card', 'tavern:card-system-prompt', 'tavern:constant-worldbook'])
 
@@ -418,7 +419,9 @@ export function createNativePlayOrchestrationStrategy(options) {
     }
     if (mode === 'story' || mode === 'script') {
       const raw = await options.resolvePreset(input.chat)
-      if (input.chat?.playPresetId === DREAM_SIKE_AGENT_PRESET) sections.unshift({ name: 'tavern:dream-sike-agent', text: dreamSikeAgentInstruction(raw) })
+      if (isWritingAgentExecution(input.chat)) sections.unshift(input.chat.playPresetId === 'dream-sike-dsh'
+        ? { name: 'tavern:dream-sike-agent', text: dreamSikeAgentInstruction(raw) }
+        : { name: 'tavern:writing-agent', text: writingAgentInstruction(raw, input.chat.playPresetId) })
       const front = presetFrontSections(resolveRuntimePresetMacros(raw, { charName: input.chat?.cardName, macroState: input.chat?.macroState, lastUserMessage: presetPlayerAction(input) }).snapshot)
       sections.unshift(...front)
       frontTexts.set(input.sessionId, front.map(section => section.text))

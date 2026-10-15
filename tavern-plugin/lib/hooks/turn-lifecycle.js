@@ -8,7 +8,7 @@ import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '
 import { randomUUID } from 'node:crypto'
 import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { dreamSikeExecutionStageForPhase } from '../domain/dream-sike-execution-usage.js'
-import { isSingleReplyMode, isDreamSikeAgentExecution } from '../domain/generation-mode.js'
+import { isSingleReplyMode, isWritingAgentExecution } from '../domain/generation-mode.js'
 
 export function registerTurnLifecycleHooks({
   backgroundAgentRunner,
@@ -51,7 +51,7 @@ export function registerTurnLifecycleHooks({
     const requestId = requestIdForTurn(session, payload.turn)
     const assistant = assistantResultForTurn(session, payload.turn)
     const chat = await chatForSession(sessionId)
-    const dreamMode = isDreamSikeAgentExecution(chat) && ['story', 'script'].includes(chat.mode || 'story')
+    const dreamMode = isWritingAgentExecution(chat) && ['story', 'script'].includes(chat.mode || 'story')
     const draft = dreamMode ? readDreamSikeDraft(chat) : null
     if (dreamMode && draft?.status === 'committed' && draft.turn === payload.turn
       && draft.sessionId === sessionId && draft.branchId === chat.timeline?.branchId && chat.nativeCommits?.[String(payload.turn)]) return

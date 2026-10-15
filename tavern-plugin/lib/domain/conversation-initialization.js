@@ -170,7 +170,7 @@ export function createConversationInitialization(options) {
     const chat = newChat(card, chatMode || 'story', effectiveRequestMode)
     chat.playPresetId = selectedPlayPresetId
     chat.generationMode = groupOfMode(chatMode) === 'play' ? normalizeGenerationMode(generationMode) : 'agent'
-    if (selectedPlayPresetId === 'dream-sike-dsh') {
+    if (['dream-sike-dsh', 'hushen-dsh'].includes(selectedPlayPresetId)) {
       chat.dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy(defaults.dreamSikeExecutionPolicy)
     }
     chat.bypassPlanId = runtimePresetSnapshot && runtimePresetSnapshot.planId || ''

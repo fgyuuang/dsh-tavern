@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
 import { compileDreamSikeContract, DREAM_SIKE_CONTRACT_INSTRUCTION } from './dream-sike-contract.js'
+import { compileWritingAgentContract } from './writing-agent-contract.js'
 import { normalizeGenerationMode, SINGLE_REPLY_GENERATION_MODE } from './generation-mode.js'
 
 export const BASE_PLAY_PRESET = 'tavern'
 export const DREAM_SIKE_AGENT_PRESET = 'dream-sike-dsh'
+export const HUSHEN_AGENT_PRESET = 'hushen-dsh'
 const AGENT_ROLE = '你是梦境思客DSH剧情 Agent。尊重人物卡、世界书、已提交历史与玩家意愿；只在当前回合内推进情节，按本局选定的角色控制与输入处理范围行动，下一回合仍由玩家继续。原作者选定的写作规则、人物分析与叙事步骤定义本局玩法；先读取实际规则与相关资料，以原生工具完成构思、草稿、检查、修订和确认。只提交一次确认后的正文。变量和持久记忆由提交后的后台 Agent 结算；通过 tavern_memory 按需读取，核心设定和当前变量仍须核对。'
 export const DREAM_SIKE_AGENT_INSTRUCTION = AGENT_ROLE + '\n\n' + DREAM_SIKE_CONTRACT_INSTRUCTION
 
@@ -12,7 +14,7 @@ export function dreamSikeAgentInstruction(snapshot) {
   return AGENT_ROLE + '\n\n' + (compileDreamSikeContract(snapshot)?.agentContract?.instruction || DREAM_SIKE_CONTRACT_INSTRUCTION)
 }
 
-const PLAY_PRESETS = new Set([BASE_PLAY_PRESET, DREAM_SIKE_AGENT_PRESET])
+const PLAY_PRESETS = new Set([BASE_PLAY_PRESET, DREAM_SIKE_AGENT_PRESET, HUSHEN_AGENT_PRESET])
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -33,6 +35,11 @@ export function playPresetInteractionProfile(presetId, generationMode) {
     id: SINGLE_REPLY_GENERATION_MODE, title: '原版酒馆 · 单次回复',
     workflow: 'source-prompt-reply-local-effects', candidateMode: 'manual',
     draftWorkspace: false, authorSettings: true, backgroundSettlement: false
+  }
+  if (normalizePlayPresetId(presetId) === HUSHEN_AGENT_PRESET) return {
+    id: 'hushen-workbench', title: '狐神抚创作台',
+    workflow: 'read-plan-draft-review-commit', candidateMode: 'source',
+    draftWorkspace: true, authorSettings: true, backgroundSettlement: true
   }
   return normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET ? {
     id: 'dream-sike-workbench', title: '梦境思客创作台',
@@ -71,6 +78,15 @@ export function listPlayPresets({ chat, settings, legacyPresetTitle } = {}) {
       nativeAgentPreset: DREAM_SIKE_AGENT_PRESET,
       selected: selected === DREAM_SIKE_AGENT_PRESET,
       isDefault: fallback === DREAM_SIKE_AGENT_PRESET
+    },
+    {
+      id: HUSHEN_AGENT_PRESET,
+      name: '狐神抚DSH',
+      description: '沿用狐神抚作者规则，以原生工具检索、构思、写稿、修订和结算。',
+      interactionProfile: playPresetInteractionProfile(HUSHEN_AGENT_PRESET),
+      nativeAgentPreset: HUSHEN_AGENT_PRESET,
+      selected: selected === HUSHEN_AGENT_PRESET,
+      isDefault: fallback === HUSHEN_AGENT_PRESET
     }
   ]
 }
@@ -136,13 +152,14 @@ export function setDefaultPlayPreset(settings, presetId) {
 /** Preserve selected writing rules and migrate only known execution protocols. */
 export function projectPlayPresetSnapshot(snapshot, presetId, generationMode) {
   if (normalizeGenerationMode(generationMode) === SINGLE_REPLY_GENERATION_MODE) return snapshot
-  if (normalizePlayPresetId(presetId) !== DREAM_SIKE_AGENT_PRESET || !snapshot || typeof snapshot !== 'object') return snapshot
-  return compileDreamSikeContract(snapshot)
+  if (presetId === HUSHEN_AGENT_PRESET && !snapshot) throw new Error('狐神抚 Agent 需要原作者规则来源；请先选择狐神抚原预设。')
+  if (![DREAM_SIKE_AGENT_PRESET, HUSHEN_AGENT_PRESET].includes(normalizePlayPresetId(presetId)) || !snapshot || typeof snapshot !== 'object') return snapshot
+  return compileWritingAgentContract(snapshot, presetId)
 }
 
 /** Preset-owned Tavern Helper scripts run only in the original mode. */
 export function resolvePresetHelperScripts(snapshot, presetId, generationMode) {
-  if (normalizePlayPresetId(presetId) === DREAM_SIKE_AGENT_PRESET && normalizeGenerationMode(generationMode) !== SINGLE_REPLY_GENERATION_MODE) return []
+  if ([DREAM_SIKE_AGENT_PRESET, HUSHEN_AGENT_PRESET].includes(normalizePlayPresetId(presetId)) && normalizeGenerationMode(generationMode) !== SINGLE_REPLY_GENERATION_MODE) return []
   const document = object(snapshot?.compatibilityPresetDocument)
   const extensions = object(document.extensions)
   const helper = object(extensions.tavern_helper)
@@ -175,7 +192,7 @@ export function resolvePlayPresetRuntime(chat) {
     generationMode: normalizeGenerationMode(source.generationMode),
     interactionProfile: playPresetInteractionProfile(presetId, source.generationMode),
     runtimePresetSnapshot: projectPlayPresetSnapshot(source.runtimePresetSnapshot, presetId, source.generationMode),
-    helperScriptPolicy: presetId === DREAM_SIKE_AGENT_PRESET && normalizeGenerationMode(source.generationMode) !== SINGLE_REPLY_GENERATION_MODE ? 'card-and-agent' : 'card-and-legacy-preset',
+    helperScriptPolicy: [DREAM_SIKE_AGENT_PRESET, HUSHEN_AGENT_PRESET].includes(presetId) && normalizeGenerationMode(source.generationMode) !== SINGLE_REPLY_GENERATION_MODE ? 'card-and-agent' : 'card-and-legacy-preset',
     presetHelperScripts: resolvePresetHelperScripts(source.runtimePresetSnapshot, presetId, source.generationMode),
     legacyPresetPath: typeof source.runtimePresetPath === 'string' ? source.runtimePresetPath : ''
   }

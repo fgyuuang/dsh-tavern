@@ -15,8 +15,9 @@ import { createCardProjects } from './domain/card-projects.js'
 import { createGameMemoryTask, gameMemoryEnabled, readGameMemory, GAME_MEMORY_READ_TOOL, GAME_MEMORY_SUBMIT_TOOL } from './domain/game-memory-task.js'
 import { dreamSikeDraftView, dreamSikeDraftStatus, dreamSikeDraftWorkTarget, dreamSikeExecutionTrace } from './domain/dream-sike-draft.js'
 import { DREAM_SIKE_AGENT_PRESET, normalizePlayPresetId, listPlayPresets, selectPlayPreset, projectPlayPresetSnapshot, resolvePresetHelperScripts, playPresetInteractionProfile } from './domain/dream-sike-mode.js'
-import { normalizeGenerationMode, isSingleReplyMode, isDreamSikeAgentExecution, selectGenerationMode } from './domain/generation-mode.js'
+import { normalizeGenerationMode, isSingleReplyMode, isDreamSikeAgentExecution, isWritingAgentExecution, selectGenerationMode } from './domain/generation-mode.js'
 import { createSingleReplySettlement } from './domain/single-reply-settlement.js'
+import { writingAgentSettlementRules } from './domain/writing-agent-contract.js'
 import { registerUserProfileTools } from './tools/user-profile.js'
 import { registerSkillTools } from './tools/skills.js'
 import { registerCardReadingTools } from './tools/card-reading.js'
@@ -448,7 +449,7 @@ export async function apply(ctx) {
     directory: dataRoot + '/skills',
     builtInDirectory: sourceRoot + '/presets/tavern/skills',
     backgroundDirectory: sourceRoot + '/presets/tavern-background/skills',
-    extraBuiltInDirectories: [sourceRoot + '/presets/dream-sike-dsh/skills']
+    extraBuiltInDirectories: [sourceRoot + '/presets/dream-sike-dsh/skills', sourceRoot + '/presets/hushen-dsh/skills']
   })
 
   async function skillRoleFor(agent) {
@@ -463,6 +464,7 @@ export async function apply(ctx) {
     const chat = await chatHeaderForSession(agent?.session?.id, ['disabledWritingSkills', 'playPresetId', 'generationMode'])
     if (isSingleReplyMode(chat)) return false
     if (skill.name.startsWith('dream-sike-') && !isDreamSikeAgentExecution(chat)) return false
+    if (skill.name.startsWith('hushen-') && (!isWritingAgentExecution(chat) || chat.playPresetId !== 'hushen-dsh')) return false
     return !(chat?.disabledWritingSkills || []).map(canonicalTavernSkillName).includes(skill.name)
   }
   let invalidateTavernSkills = () => {}
@@ -476,7 +478,8 @@ export async function apply(ctx) {
     const providers = [
       new FileSystemSkillProvider(ctx, control, { providerName: 'tavern-interactive-files', includeDefaultRoots: false, customSkillDirs: [dataRoot + '/skills'], bundledSkillDir: sourceRoot + '/presets/tavern/skills' }),
       new FileSystemSkillProvider(ctx, control, { providerName: 'tavern-background-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/tavern-background/skills' }),
-      new FileSystemSkillProvider(ctx, control, { providerName: 'dream-sike-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/dream-sike-dsh/skills' })
+      new FileSystemSkillProvider(ctx, control, { providerName: 'dream-sike-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/dream-sike-dsh/skills' }),
+      new FileSystemSkillProvider(ctx, control, { providerName: 'hushen-files', includeDefaultRoots: false, bundledSkillDir: sourceRoot + '/presets/hushen-dsh/skills' })
     ]
     ctx.effect(() => tavernSkills.subscribe(control.invalidate))
     ctx.effect(() => () => Promise.all(providers.map(provider => provider.dispose())))
@@ -1848,6 +1851,7 @@ export async function apply(ctx) {
       const presetRegexScripts = Array.isArray(activePresetSnapshot && activePresetSnapshot.regexScripts) ? activePresetSnapshot.regexScripts : []
       replyDisplay = await requestPerformance.stage('historyProjection', () => incrementalReplyView.project(persistedProjection ? chat : { ...chat, _storageRevision: undefined }, {
         charName: chat.cardName, macroState: chat.macroState,
+        hushenAgent: chat.playPresetId === 'hushen-dsh' && isWritingAgentExecution(chat),
         regexScripts: composeTavernRegexScripts(cardExtensions, presetRegexScripts),
         presetRegexScripts,
         placement: 2, isMarkdown: true, isEdit: false, depth: 0
@@ -2120,6 +2124,7 @@ export async function apply(ctx) {
       const presetRegexScripts = Array.isArray(activePresetSnapshot && activePresetSnapshot.regexScripts) ? activePresetSnapshot.regexScripts : []
       let replyDisplay = await requestPerformance.stage('historyProjection', () => incrementalReplyView.project(chat, {
         charName: chat.cardName, macroState: chat.macroState,
+        hushenAgent: chat.playPresetId === 'hushen-dsh' && isWritingAgentExecution(chat),
         regexScripts: composeTavernRegexScripts(cardExtensions, presetRegexScripts),
         presetRegexScripts,
         placement: 2, isMarkdown: true, isEdit: false, depth: 0
@@ -2415,7 +2420,7 @@ export async function apply(ctx) {
   const worldbookPrefilter = createWorldbookPrefilter({
     async run(chatId, signal) {
       const chat = await storyContext({ chatId })
-      if (!chat || isSingleReplyMode(chat) || !['story', 'script'].includes(chat.mode || 'story') || chat.requestMode === 'sillytavern' || chat.regenInProgress) return
+      if (!chat || isSingleReplyMode(chat) || chat.playPresetId === 'hushen-dsh' || !['story', 'script'].includes(chat.mode || 'story') || chat.requestMode === 'sillytavern' || chat.regenInProgress) return
       const latest = chat.messages?.at(-1)
       if (latest?.role !== 'assistant' || latest.greeting === true || backgroundTasks.activity(chat).busy) return
       if (backgroundModelSelection(chat) === null) return
@@ -2756,10 +2761,10 @@ export async function apply(ctx) {
     async version(sessionId){
       const [chat,globals,settings]=await Promise.all([
         chatHeaderForSession(sessionId,['id','sessionId','mode','requestMode','_storageRevision','settleStatus','regenInProgress',
-          'cardDefinitionSnapshot.name','openingWorldbookSnapshot.version','generationMode']),
+          'cardDefinitionSnapshot.name','openingWorldbookSnapshot.version','generationMode','playPresetId']),
         profileData.version('prompt-template-variables.json'),profileData.version('tavern-extension-settings.json')
       ])
-      if(!chat || isSingleReplyMode(chat) || !['story','script'].includes(chat.mode) || chat.requestMode==='sillytavern' || chat.regenInProgress || ['pending','running'].includes(chat.settleStatus)
+      if(!chat || isSingleReplyMode(chat) || chat.playPresetId==='hushen-dsh' || !['story','script'].includes(chat.mode) || chat.requestMode==='sillytavern' || chat.regenInProgress || ['pending','running'].includes(chat.settleStatus)
         || !chat.cardDefinitionSnapshot || chat.openingWorldbookSnapshot?.version!==1)return null
       return {revision:chat._storageRevision,resources:JSON.stringify([globals,settings,modelSelection(sessionId)?.model||''])}
     },
@@ -3139,7 +3144,7 @@ export async function apply(ctx) {
             if (selection === null) throw new Error('没有可用的模型配置，请先在当前会话的模型选择器中选择模型')
             mvuResult = await mvuSettlement.settleVariables({
               ...settlementInput,
-              system: backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '',
+              system: (backgroundTasksSettings.posture ? runtimePrompt('posture-settlement') : '') + writingAgentSettlementRules(snapshot),
               selection,
               persistentSessionId: backgroundSessionId,
               signal
@@ -3922,6 +3927,7 @@ export async function apply(ctx) {
           selection = selectPlayPreset(chat, args.presetId, { ...readiness,
             initialRuntimePresetSnapshot: await runtimePresets.fullSnapshotForPlayPreset(args.presetId) })
         }
+        projectPlayPresetSnapshot(selection.patch.runtimePresetSnapshot, args.presetId, chat.generationMode)
         const saved = await updateChat(chat.id, current => {
           if (current.id !== selection.expectedChatId || current._storageRevision !== selection.expectedStorageRevision
             || agentRegistry.get(sessionId)?.phase?.kind === 'running'
@@ -3958,6 +3964,7 @@ export async function apply(ctx) {
           && !['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) && !chat.regenInProgress
         const selection = selectGenerationMode(chat, args?.generationMode, { foregroundIdle, backgroundIdle, replayIdle: !replayFailedTurnActive(chat.id) })
         if (!selection.changed) return { generationMode: selection.generationMode, changed: false, nextTurn: true }
+        projectPlayPresetSnapshot(chat.runtimePresetSnapshot, chat.playPresetId, selection.generationMode)
         const saved = await updateChat(chat.id, current => {
           if (current.id !== selection.expectedChatId || current._storageRevision !== selection.expectedStorageRevision
             || agentRegistry.get(sessionId)?.phase?.kind === 'running' || backgroundTasks.activity(current).busy
@@ -3974,7 +3981,7 @@ export async function apply(ctx) {
       case 'getDreamSikeExecutionPolicy': {
         const sessionId = str(args?.sessionId)
         const chat = await chatForSession(sessionId)
-        if (!chat || groupOfMode(chat.mode) !== 'play' || chat.playPresetId !== DREAM_SIKE_AGENT_PRESET) throw new Error('请先在本局设置中选择梦境思客DSH')
+        if (!chat || groupOfMode(chat.mode) !== 'play' || !isWritingAgentExecution(chat)) throw new Error('请先在本局设置中选择剧情 Agent 预设')
         const busy = agentRegistry.get(sessionId)?.phase?.kind === 'running'
           || backgroundTasks.activity(chat).busy || tavernScriptDispatch.status(sessionId).busy
           || ['pending', 'running', 'waiting-runtime'].includes(chat.settleStatus) || chat.regenInProgress
@@ -3984,11 +3991,11 @@ export async function apply(ctx) {
       case 'setDreamSikeExecutionPolicy': {
         const sessionId = str(args?.sessionId)
         const chat = await chatForSession(sessionId)
-        if (!chat || groupOfMode(chat.mode) !== 'play' || chat.playPresetId !== DREAM_SIKE_AGENT_PRESET) throw new Error('请先在本局设置中选择梦境思客DSH')
+        if (!chat || groupOfMode(chat.mode) !== 'play' || !isWritingAgentExecution(chat)) throw new Error('请先在本局设置中选择剧情 Agent 预设')
         if (!Object.hasOwn(args || {}, 'policy')) throw new Error('缺少梦境思客执行策略')
         const policy = normalizeDreamSikeExecutionPolicy(args.policy)
         const assertIdle = current => {
-          if (current.playPresetId !== DREAM_SIKE_AGENT_PRESET || agentRegistry.get(sessionId)?.phase?.kind === 'running'
+          if (!isWritingAgentExecution(current) || agentRegistry.get(sessionId)?.phase?.kind === 'running'
             || backgroundTasks.activity(current).busy || tavernScriptDispatch.status(sessionId).busy
             || ['pending', 'running', 'waiting-runtime'].includes(current.settleStatus) || current.regenInProgress
             || replayFailedTurnActive(current.id)) throw new Error('请等待当前回合完成后再修改执行预算')
@@ -4039,6 +4046,7 @@ export async function apply(ctx) {
         if (typeof args.path !== 'string') throw new Error('请选择预设')
         if ((await sessionActivity(sessionId))?.busy || tavernScriptDispatch.status(sessionId).busy || agentRegistry.get(sessionId)?.phase?.kind === 'running') throw new Error('请等待当前生成和后台任务完成后再应用预设')
         const snapshot = args.path === '' ? null : await runtimePresets.fullSnapshot(args.path)
+        projectPlayPresetSnapshot(snapshot, chat.playPresetId, chat.generationMode)
         const saved = await updateChat(chat.id, current => {
           if (current._storageRevision !== chat._storageRevision) throw new Error('当前游戏已变化，请刷新后重试')
           current.runtimePresetSnapshot = snapshot
@@ -4065,7 +4073,8 @@ export async function apply(ctx) {
       case 'getDefaultWritingSkills': {
         const settings = await readTavernSettings()
         return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')
-          && (settings.defaultPlayPresetId === DREAM_SIKE_AGENT_PRESET || !skill.name.startsWith('dream-sike-')))
+          && (settings.defaultPlayPresetId === DREAM_SIKE_AGENT_PRESET || !skill.name.startsWith('dream-sike-'))
+          && (settings.defaultPlayPresetId === 'hushen-dsh' || !skill.name.startsWith('hushen-')))
           .map(skill => ({ name: skill.name, description: skill.description, enabled: !settings.defaultDisabledWritingSkills.includes(skill.name) })) }
       }
       case 'setDefaultWritingSkill': {
@@ -4078,7 +4087,8 @@ export async function apply(ctx) {
         const chat = await chatHeaderForSession(str(args?.sessionId), ['disabledWritingSkills', 'playPresetId', 'generationMode'])
         if (!chat || groupOfMode(chat.mode) !== 'play') throw new Error('请先打开游玩会话')
         return { skills: (await tavernSkills.list()).filter(skill => skill.agents.includes('foreground')
-          && !isSingleReplyMode(chat) && (isDreamSikeAgentExecution(chat) || !skill.name.startsWith('dream-sike-')))
+          && !isSingleReplyMode(chat) && (isDreamSikeAgentExecution(chat) || !skill.name.startsWith('dream-sike-'))
+          && (chat.playPresetId === 'hushen-dsh' || !skill.name.startsWith('hushen-')))
           .map(skill => ({ name: skill.name, description: skill.description, enabled: !(chat.disabledWritingSkills || []).map(canonicalTavernSkillName).includes(skill.name) })) }
       }
       case 'setConversationWritingSkill': {
@@ -4412,18 +4422,18 @@ export async function apply(ctx) {
         if (isSingleReplyMode(chat)) return { draft: null, executionTrace: [], execution: null }
         const { draft, traceTarget } = dreamSikeDraftWorkTarget(chat)
         const nativeSession = agentRegistry.get(sessionId)?.session || sessionStore.get(sessionId)
-        const executionTrace = chat?.playPresetId === DREAM_SIKE_AGENT_PRESET
+        const executionTrace = isWritingAgentExecution(chat)
           ? dreamSikeExecutionTrace(nativeSession, traceTarget) : []
         const executionRoot = str(traceTarget?.operationId || draft?.operationId)
         const executionBranch = str(traceTarget?.branchId || draft?.branchId || chat?.timeline?.branchId)
-        const executionUsage = chat?.playPresetId === DREAM_SIKE_AGENT_PRESET
+        const executionUsage = isWritingAgentExecution(chat)
           ? await modelRequestLog.executionUsage(chat.id, executionRoot || undefined, executionBranch) : null
         const execution = dreamSikeExecutionView(executionUsage, chat?.dreamSikeExecutionPolicy)
         if (draft) {
           draft.resumable = false
           const agent = agentRegistry.get(sessionId)
           const session = nativeSession
-          if (chat.playPresetId === DREAM_SIKE_AGENT_PRESET && ['draft', 'ready'].includes(draft.status)
+          if (isWritingAgentExecution(chat) && ['draft', 'ready'].includes(draft.status)
             && (!agent || agent.status === 'idle')) {
             if (session) {
               const events = sessionEvents(session)
@@ -4706,7 +4716,7 @@ export async function apply(ctx) {
     if (isSingleReplyMode(chat)) return saved
     // Independent Agent presets own their per-game settings. Library changes are
     // adopted explicitly, never silently replacing switches saved in either mode.
-    if (chat.playPresetId === DREAM_SIKE_AGENT_PRESET || chat.playPresetSettingsIndependent || chat.playPresetConfigurations) return project(saved)
+    if (isWritingAgentExecution(chat) || chat.playPresetSettingsIndependent || chat.playPresetConfigurations) return project(saved)
     if (!saved?.presetPath || !chat.id) return project(saved)
     let text
     try { text = await fileResources.readText(normalizeResourcePath(saved.presetPath, 'preset')) } catch { return project(saved) }
@@ -4720,7 +4730,7 @@ export async function apply(ctx) {
       const head = (await chatPersistence.readSlice(chat.id, [], ['_storageRevision', 'runtimePresetSnapshot.presetPath', 'tavernHelperLifecycleRevision', 'playPresetId', 'playPresetSettingsIndependent']))?.chat
       // Applying another preset meanwhile wins over refreshing this one.
       if (!head || head.runtimePresetSnapshot?.presetPath !== saved.presetPath) return project(saved)
-      if (head.playPresetId === DREAM_SIKE_AGENT_PRESET || head.playPresetSettingsIndependent) return project(saved)
+      if (['dream-sike-dsh', 'hushen-dsh'].includes(head.playPresetId) || head.playPresetSettingsIndependent) return project(saved)
       if (await patchChat(chat.id, head._storageRevision, [
         { op: 'set', path: ['runtimePresetSnapshot'], value: fresh },
         { op: 'set', path: ['runtimePresetPath'], value: fresh.presetPath },

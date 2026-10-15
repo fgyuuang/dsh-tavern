@@ -40,7 +40,7 @@ export function applyTavernSettingsPatch(current, patch) {
     let dreamSikeExecutionPolicy = current.dreamSikeExecutionPolicy
     if (Object.hasOwn(patch, 'dreamSikeExecutionPolicy')) {
       const policyPatch = patch.dreamSikeExecutionPolicy
-      if (policyPatch === null || typeof policyPatch !== 'object' || Array.isArray(policyPatch)) throw new Error('梦境思客执行策略格式无效')
+      if (policyPatch === null || typeof policyPatch !== 'object' || Array.isArray(policyPatch)) throw new Error('写作 Agent 执行策略格式无效')
       dreamSikeExecutionPolicy = normalizeDreamSikeExecutionPolicy({ ...current.dreamSikeExecutionPolicy, ...policyPatch })
     }
     next.defaultPlaySettings = normalizePlayDefaults({ ...current, ...patch, dreamSikeExecutionPolicy,

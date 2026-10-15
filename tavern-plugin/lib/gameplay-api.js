@@ -40,7 +40,7 @@ export function createGameplayApi(deps) {
       const resolved = await llm.resolveCallConfig(args.model)
       const selected = { provider: resolved.provider, model: resolved.model, ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}) }
       const sessionId = 'test-' + randomUUID()
-      if (args.playPresetId !== undefined && !['tavern', 'dream-sike-dsh'].includes(args.playPresetId)) throw new Error('未知的酒馆 Agent 预设')
+      if (args.playPresetId !== undefined && !['tavern', 'dream-sike-dsh', 'hushen-dsh'].includes(args.playPresetId)) throw new Error('未知的酒馆 Agent 预设')
       const playPresetId = args.mode === 'card' ? 'tavern' : args.playPresetId === undefined ? undefined : normalizePlayPresetId(args.playPresetId)
       if (args.generationMode !== undefined && !['agent', 'sillytavern-once'].includes(args.generationMode)) throw new Error('未知的回复方式')
       await store.writeJson('automation/' + sessionId + '.json', { sessionId, createdAt: Date.now(), model: selected })

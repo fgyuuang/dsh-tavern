@@ -11,7 +11,7 @@ import { normalizeResourcePath } from './file-resources.js'
 import { diffJson } from './json-mutation.js'
 import { readDreamSikeDraft, markDreamSikeDraftCommitted, carryDreamSikeDraftIntoTurn, dreamSikeTurnIdentity, readyDreamSikeDraft } from './dream-sike-draft.js'
 import { rebindDreamSikePreparation } from './dream-sike-preparation.js'
-import { isSingleReplyMode, isDreamSikeAgentExecution } from './generation-mode.js'
+import { isSingleReplyMode, isWritingAgentExecution } from './generation-mode.js'
 
 export const cordisToolNames = Object.freeze([
   'cordis_inspect_list',
@@ -188,7 +188,7 @@ export function foregroundFrameInputs(plan, sourceText, projectedText, presetSna
       source: { stage: 'mvu-background-owner' }
     })
   }
-  if (isDreamSikeAgentExecution(chat) && chat.dreamSikeDraft?.resumedFrom
+  if (isWritingAgentExecution(chat) && chat.dreamSikeDraft?.resumedFrom
     && ['draft', 'ready'].includes(chat.dreamSikeDraft.status)) {
     inputs.push({
       kind: 'foreground.writing-rules',
@@ -683,6 +683,7 @@ export function createTurnOrchestrator(options) {
       const projectionText = assistantText
       reply = projectReply(sourceText, {
         projectionText,
+        hushenAgent: chat.playPresetId === 'hushen-dsh' && isWritingAgentExecution(chat),
         regexScripts: composeTavernRegexScripts(extensions, presetRegexScripts),
         placement: 2,
         isEdit: false,
@@ -753,7 +754,7 @@ export function createTurnOrchestrator(options) {
       return item.kind === 'body' && item.status === 'running' && Number(item.turn) === turn
     })
     if (operation === undefined) throw new Error('找不到本轮正文 operation，请重新生成本轮正文')
-    if (isDreamSikeAgentExecution(chat)) {
+    if (isWritingAgentExecution(chat)) {
       const ready = readDreamSikeDraft(chat)
       if (!ready || ready.status !== 'ready' || ready.turn !== turn || ready.operationId !== operation.id
         || ready.sessionId !== input.sessionId || ready.branchId !== operation.basedOn.branchId
@@ -823,7 +824,7 @@ export function createTurnOrchestrator(options) {
         draft.presentationWarnings = Array.isArray(reply.warnings) ? clone(reply.warnings) : []
         if (isSingleReplyMode(draft)) consumeScriptPrompts(draft)
         rememberCommit(draft, turn, { mode, userText, requestId, scriptReference }, before, now)
-        if (isDreamSikeAgentExecution(draft) && !markDreamSikeDraftCommitted(draft, { turn, operationId: operation.id }, now())) {
+        if (isWritingAgentExecution(draft) && !markDreamSikeDraftCommitted(draft, { turn, operationId: operation.id }, now())) {
           throw new Error('梦境思客DSH草稿状态已变化，正式正文未提交')
         }
       }
@@ -893,7 +894,7 @@ export function createTurnOrchestrator(options) {
     if (isSingleReplyMode(chat)) return []
     const mode = chat.mode || 'story'
     const webTools = chat.webSearchEnabled === true ? ['web_search'] : []
-    const draftTools = isDreamSikeAgentExecution(chat)
+    const draftTools = isWritingAgentExecution(chat)
       ? ['sike_read_turn', 'sike_prepare_turn', 'sike_put_draft', 'sike_patch_draft', 'sike_run_module', 'sike_check_draft', 'sike_ready_draft', 'tavern_memory'] : []
     if (mode === 'script') return ['tavern_read_variables', 'skill', 'tavern_read_skill_reference', 'tavern_read_script', 'tavern_recall_history', 'worldbook_search', ...draftTools, ...webTools]
     if (mode === 'card') return [...CARD_MEMORY_TOOLS, 'web_search', shellToolName, ...dshFileToolNames, 'skill', 'tavern_read_skill_reference', 'tavern_save_skill', ...cordisToolNames, 'tavern_user_profile_read', 'tavern_user_profile_save', 'tavern_read_card', 'tavern_read_card_raw', 'tavern_read_play_chat', 'tavern_read_worldbook', 'tavern_update_worldbook', 'tavern_read_preset', 'tavern_update_preset', 'tavern_read_regex_library', 'tavern_copy_card', 'tavern_update_card', 'tavern_restore_card', 'tavern_validate_card', 'tavern_test_response']

@@ -101,7 +101,7 @@
 				ensurePreset: async function (sessionId, request) {
 					// Select before writing the opening; the Session stream publishes preset state.
 					// Keep Tavern's private Skill roots; its preset also mounts Cordis tools for card workbenches.
-					const agentPreset = request && request.kind === "play" && request.playPresetId === "dream-sike-dsh" ? "dream-sike-dsh" : "tavern";
+					const agentPreset = request && request.kind === "play" && isWritingAgentPresetId(request.playPresetId) ? request.playPresetId : "tavern";
 					let agentPresets = injectedAgentPresets;
 					if (!agentPresets) {
 						try {

@@ -70,7 +70,7 @@ $base = [string](@(Invoke-RepoGit @('rev-parse', '--verify', "$BaseCommit^{commi
 $head = [string](@(Invoke-RepoGit @('rev-parse', 'HEAD'))[0])
 & git -C $repoRoot merge-base --is-ancestor $base $head
 if ($LASTEXITCODE -ne 0 -or $base -eq $head) { throw 'HEAD 必须是指定基线之后的提交。' }
-$dirty = @(Invoke-RepoGit @('status', '--porcelain', '--untracked-files=all', '--', 'presets/dream-sike-dsh', 'tavern-plugin/lib'))
+$dirty = @(Invoke-RepoGit @('status', '--porcelain', '--untracked-files=all', '--', 'presets/dream-sike-dsh', 'presets/hushen-dsh', 'tavern-plugin/lib'))
 if ($dirty.Count) { throw '运行文件有未提交变更；请先完成构建与提交。' }
 $sourceVersion = (Get-Content -LiteralPath (Get-Contained $repoRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 $appVersion = (Get-Content -LiteralPath (Get-Contained $appRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
@@ -84,14 +84,14 @@ foreach ($path in $installed) {
     $null = Get-Contained $appRoot $path
     if (-not $inventorySet.Add($path)) { throw "安装清单含重复路径：$path" }
 }
-$changes = @(Invoke-RepoGit @('-c', 'core.quotepath=false', 'diff', '--name-status', '--no-renames', $base, $head, '--', 'presets/dream-sike-dsh', 'tavern-plugin/lib'))
+$changes = @(Invoke-RepoGit @('-c', 'core.quotepath=false', 'diff', '--name-status', '--no-renames', $base, $head, '--', 'presets/dream-sike-dsh', 'presets/hushen-dsh', 'tavern-plugin/lib'))
 if (-not $changes.Count) { throw '没有已提交的运行文件差异。' }
 $files = @()
 foreach ($line in $changes) {
     $parts = $line -split "`t"
     if ($parts.Count -ne 2 -or $parts[0] -notin @('A', 'M')) { throw "仅允许新增或修改普通文件，拒绝：$line" }
     $relative = $parts[1]
-    if ($relative -notmatch '^(presets/dream-sike-dsh/.+|tavern-plugin/lib/.+)$') { throw "部署路径不受支持：$relative" }
+    if ($relative -notmatch '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+)$') { throw "部署路径不受支持：$relative" }
     $source = Get-Contained $repoRoot $relative
     $target = Get-Contained $appRoot $relative
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "源文件不存在：$relative" }
@@ -172,7 +172,7 @@ $entries = @($m.files)
 if (-not $entries.Count) { throw '部署清单没有文件。' }
 $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($entry in $entries) {
-    if ($entry.relativePath -notmatch '^(presets/dream-sike-dsh/.+|tavern-plugin/lib/.+)$' -or -not $seen.Add($entry.relativePath) -or $entry.operation -notin @('replace', 'create') -or $entry.deployedSha256 -notmatch '^[0-9a-f]{64}$') { throw '部署文件记录无效。' }
+    if ($entry.relativePath -notmatch '^(presets/(dream-sike-dsh|hushen-dsh)/.+|tavern-plugin/lib/.+)$' -or -not $seen.Add($entry.relativePath) -or $entry.operation -notin @('replace', 'create') -or $entry.deployedSha256 -notmatch '^[0-9a-f]{64}$') { throw '部署文件记录无效。' }
     $target = Contained $app $entry.relativePath
     if ($entry.operation -eq 'replace') {
         if ($entry.originalSha256 -notmatch '^[0-9a-f]{64}$' -or $entry.backupRelativePath -ne ('originals/' + $entry.relativePath)) { throw '原文件备份记录无效。' }

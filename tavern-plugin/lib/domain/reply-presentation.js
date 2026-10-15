@@ -4,6 +4,7 @@ export { editableReplyParts, projectDisplayParts, hasHtmlCodeBlock, displayModeO
 import { visibleTemplateDisplay, annotateTemplateStatusParts } from './template-variable-display.js'
 import { createHash } from 'node:crypto'
 import { applyTavernRegexText } from './tavern-regex-display.js'
+import { projectHushenSupplementDisplay } from './hushen-display.js'
 
 function str(value) {
   return typeof value === 'string' ? value : (value === undefined || value === null ? '' : String(value))
@@ -56,6 +57,7 @@ export function projectReplyLayers(value, options = {}) {
     }
   }
   display.text = resolveDisplayIdentityMacros(display.text, options)
+  if (options.hushenAgent === true) display.text = projectHushenSupplementDisplay(projectionText, display.text)
   const displayProjection = projectDisplayParts(display.text)
   const displayMode = displayProjection.parts.some(part => part.kind === 'html') ? 'html' : 'markdown'
 
@@ -138,6 +140,7 @@ export function createReplyHistoryProjector({ maxCacheBytes = 16 * 1024 * 1024, 
   }
   function signatureOf(options) {
     return digest(JSON.stringify({ regexScripts: options.regexScripts || [],
+      hushenAgent: options.hushenAgent === true,
       charName: options.charName, userName: options.macroState?.userName,
       placement: options.placement, isEdit: options.isEdit, depth: options.depth }))
   }

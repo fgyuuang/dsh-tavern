@@ -15,6 +15,11 @@ export function isDreamSikeAgentExecution(chat) {
     && ['story', 'script'].includes(chat.mode || 'story')
 }
 
+/** Both authors share the draft engine while retaining independent rule compilers. */
+export function isWritingAgentExecution(chat) {
+  return ['dream-sike-dsh', 'hushen-dsh'].includes(chat?.playPresetId) && !isSingleReplyMode(chat)
+    && ['story', 'script'].includes(chat.mode || 'story')
+}
 /** Return an atomic patch; changing execution never replaces the source preset. */
 export function selectGenerationMode(chat, value, readiness = {}) {
   if (value !== AGENT_GENERATION_MODE && value !== SINGLE_REPLY_GENERATION_MODE) throw new Error('未知的回复方式')

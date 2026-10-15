@@ -5,9 +5,8 @@ import { installWorkspaceInstructionPresentation } from '../domain/workspace-ins
 import { presentModelError } from '../domain/model-error-presentation.js'
 import { markRequestAttempt, markRequestHandled, requestAttemptOf, requestHandledBy } from '../domain/request-lineage.js'
 import { randomUUID } from 'node:crypto'
-import { isSingleReplyMode, isDreamSikeAgentExecution } from '../domain/generation-mode.js'
+import { isSingleReplyMode, isWritingAgentExecution } from '../domain/generation-mode.js'
 
-const DREAM_SIKE_AGENT_PRESET = 'dream-sike-dsh'
 
 export function registerModelStreamHooks({
   agentRegistry,
@@ -108,7 +107,7 @@ export function registerModelStreamHooks({
       const branchId = str(backgroundContext?.branchId || attempt.branchId || coordinates.branchId)
       const rootTurn = Number(backgroundContext?.rootTurn ?? attempt.rootTurn ?? coordinates.rootTurn ?? coordinates.turn) || 0
       let executionReservation = null
-      if (isDreamSikeAgentExecution(chat) && rootOperationId && stage) {
+      if (isWritingAgentExecution(chat) && rootOperationId && stage) {
         executionReservation = await modelRequestLog.reserveExecutionAttempt({
           chatId: chat.id, attemptId: attempt.id, rootOperationId, branchId, rootTurn,
           turn: Number(coordinates.turn ?? attempt.turn) || 0, step: Number(coordinates.step ?? attempt.step) || 0,
@@ -117,7 +116,7 @@ export function registerModelStreamHooks({
           stage, purpose, provider: str(options.provider), model: str(options.model), policy: chat.dreamSikeExecutionPolicy
         })
         if (executionReservation?.accepted === false) {
-          const error = new Error('梦境思客' + ({ query: '写前查询', initial: '正文初稿', revision: '正文修订', addons: '后续附加内容' }[stage] || stage)
+          const error = new Error('剧情 Agent ' + ({ query: '写前查询', initial: '正文初稿', revision: '正文修订', addons: '后续附加内容' }[stage] || stage)
             + '请求额度已用完，当前成果已保留；调整对应额度后可继续。')
           error.code = 'DREAM_SIKE_REQUEST_LIMIT'
           error.stage = stage
@@ -128,7 +127,7 @@ export function registerModelStreamHooks({
       }
       let requestRecord = null
       if (chat !== undefined && ['story', 'script', 'card'].includes(chat.mode)
-        && (options.purpose === undefined || chat.playPresetId === DREAM_SIKE_AGENT_PRESET || Boolean(backgroundContext))) {
+        && (options.purpose === undefined || isWritingAgentExecution(chat) || Boolean(backgroundContext))) {
         const auditCoordinates = { ...coordinates, executionStage: stage, rootOperationId, branchId, rootTurn,
           operationId: str(coordinates.operationId || attempt.operationId), attemptId: attempt.id }
         try {

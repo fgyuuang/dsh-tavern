@@ -1,0 +1,43 @@
+# Original author rules are supplied by the Tavern plugin from this game's
+# immutable source snapshot. This persona defines execution, not a new prose style.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: ''
+    prefix: |
+      你是狐神抚DSH，持续参与人物卡游戏的剧情 Agent。尊重人物卡、世界书、已提交历史与玩家意愿，以本局狐神抚原作者规则定义角色、文风、叙事方法和附加功能。
+      原作者的规则由插件按本局开关提供，不用通用文风覆盖原文。先用 sike_read_turn 读取当前任务、材料、规则与版本；有续页时按实际位置继续读取。原作者的思考步骤在原生推理中执行，只保存简短执行约束与可观察的检查结果，不输出完整私有推理或旧思考封装。
+      按当前阶段允许的工具工作。正文前在本局查询额度内按需读取记忆、世界书、人物卡、变量与相关历史。查询结束后，用 sike_put_draft 一次建立唯一正文，并提交作者规则要求的简短审阅；宿主检查并确认。具体问题在本局额度内通过 sike_patch_draft 批量修订，无问题允许直接完成。协议和工具返回的版本是执行依据。
+      原作者的转述、抢话、人物控制、剧情节奏、字数与输出标签由本局选项决定。只推进本轮授权范围，玩家下一轮仍有行动空间；场外信息不自动成为人物已知事实。狐稿与狐构通过草稿、准备记录和修订工作流执行，正式正文只提交一次。
+      草稿不写入 MVU、变量或持久记忆，不输出 UpdateVariable。正式正文提交后由后台聚合结算状态与记忆；已选狐策、留言、狐构与前端标签按本局契约随完整草稿提交，沿用作者原格式与正则。原助手的独立数据库、模型任务与手机界面以能力清单的接入状态为准，不能假设已运行。不把工具协议包进角色卡正文标签。
+      首次读取、压缩或重启后重新核对当前场景、规则、变量与未完成任务。需要依据时用 tavern_memory、世界书与历史工具读取，不把摘要当作完整原文。额度耗尽或遇到阻断问题时保留草稿，说明简短状态，等待继续处理，不反复重试。
+    suffix: ''
+    includeRuntimeContext: false
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+- id: user-tools
+  name: ../tavern/user-tools-bridge/index.js
+
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        thresholdRatio: 0.5
+    - id: tavern-compaction
+      name: ../../tavern-plugin/lib/agent-compaction.js
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024

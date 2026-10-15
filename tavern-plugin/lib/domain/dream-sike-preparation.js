@@ -1,6 +1,6 @@
-import { dreamSikeContractView, needsDreamSikeEditorialReview } from './dream-sike-contract.js'
+import { writingAgentContractView as dreamSikeContractView, needsWritingAgentEditorialReview as needsDreamSikeEditorialReview } from './writing-agent-contract.js'
 import { hasPrivateWritingProtocol } from './writing-private-protocol.js'
-import { isDreamSikeAgentExecution } from './generation-mode.js'
+import { isWritingAgentExecution } from './generation-mode.js'
 
 const FIELDS = ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt']
 const str = value => typeof value === 'string' ? value : ''
@@ -12,14 +12,14 @@ function same(receipt, identity) {
 }
 
 export function needsDreamSikePreparation(chat) {
-  return isDreamSikeAgentExecution(chat)
+  return isWritingAgentExecution(chat)
     && needsDreamSikeEditorialReview(chat)
-    && dreamSikeContractView(chat.runtimePresetSnapshot)?.entries.some(entry => entry.action === 'agent-planning') === true
+    && dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.entries.some(entry => ['agent-planning', 'native-private-planning'].includes(entry.action)) === true
 }
 
 /** A receipt of materials actually served by the read tool, not inferred reasoning. */
 export function recordDreamSikeTurnRead(chat, identity, now = Date.now(), served = {}) {
-  const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)
+  const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)
   const current = chat.dreamSikePreparation
   if (same(current, identity) && current.contractDigest === digest) {
     addServedReferences(current, served)
@@ -87,7 +87,7 @@ export function rebindDreamSikePreparation(chat, fromIdentity, toIdentity) {
     || fromIdentity.branchId !== toIdentity.branchId || fromIdentity.storyRevision !== toIdentity.storyRevision) return false
   const receipt = chat.dreamSikePreparation
   if (!same(receipt, fromIdentity)
-    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) return false
+    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)) return false
   const rebound = { ...receipt, ...toIdentity }
   chat.dreamSikePreparation = rebound
   const draft = chat.dreamSikeDraft
@@ -101,7 +101,7 @@ export function prepareDreamSikeWriting(chat, identity, brief, now = Date.now())
   if (brief !== undefined && brief !== null) return prepareDreamSikeTurn(chat, identity, brief, now)
   const receipt = chat.dreamSikePreparation
   if (!same(receipt, identity) || !receipt.readAt
-    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) {
+    || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)) {
     throw new Error('请先读取本回合材料与当前作者规则，再提交正文')
   }
   if (!receipt.preparedAt) {
@@ -115,7 +115,7 @@ export function prepareDreamSikeWriting(chat, identity, brief, now = Date.now())
 /** Save the short writing brief. Never accept a transcript of private thinking. */
 export function prepareDreamSikeTurn(chat, identity, brief, now = Date.now(), { coverage } = {}) {
   const receipt = chat.dreamSikePreparation
-  const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)
+  const digest = str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)
   if (!same(receipt, identity) || receipt.contractDigest !== digest) {
     throw new Error('请先用 sike_read_turn 读取当前回合与最新预设契约')
   }
@@ -158,7 +158,7 @@ export function assertDreamSikePreparation(chat, identity, draft = null) {
     || (!receipt.brief && !(receipt.submissionMode === 'inline' && receipt.briefOmitted === true && receipt.readAt))) {
     throw new Error('本局已启用写前决策流程：先 sike_read_turn，再随正文提交可选六项简报；作者核对步骤仍须在内部执行')
   }
-  if (receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot)?.digest)) {
+  if (receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)) {
     throw new Error('预设规则已变化，请重新读取回合并更新写作准备')
   }
 }
