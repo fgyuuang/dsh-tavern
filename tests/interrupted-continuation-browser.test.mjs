@@ -47,20 +47,15 @@ test('中断提示直接继续现有草稿，防止双击重复排队并保持�
   assert.deepEqual(await page.evaluate(() => window.replays), [])
 })
 
-test('single reply shows retained text in chat safely and explicitly continues its digest', config, async t => {
+test('single reply recovery is kept out of the composer dock', config, async t => {
   const page = await fixture(t)
   await page.evaluate(() => window.show({ generationMode: 'sillytavern-once', dreamSikeDraftState: null }))
-  await page.getByText('保留正文（未提交）', { exact: true }).waitFor()
-  assert.equal(await page.locator('details').evaluate(element => element.open), true)
-  assert.match(await page.locator('pre').textContent(), /保留正文<script>/)
-  assert.equal(await page.evaluate(() => window.unsafe), undefined)
-  await page.getByRole('button', { name: '继续本回合' }).click()
-  await page.waitForFunction(() => window.replays.length === 1)
-  assert.deepEqual(await page.evaluate(() => window.replays[0]), { id: 'session', reply: { turn: 8, digest: 'partial-digest' } })
+  assert.equal(await page.locator('#root').textContent(), '')
+  assert.equal(await page.getByRole('button', { name: '继续本回合' }).count(), 0)
   await page.evaluate(() => window.show({ canReplayFailedTurn: false, interruptedReplyArchive: [
     { branchId: 'branch', turn: 8, seq: 2, preview: '持久保存的正文', characters: 8, status: 'interrupted' }
   ] }, true))
-  await page.getByText('持久保存的正文', { exact: true }).waitFor()
+  assert.equal(await page.locator('#root').textContent(), '')
   assert.equal(await page.getByRole('button', { name: '继续本回合' }).count(), 0)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth<=window.innerWidth), true)
 })

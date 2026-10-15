@@ -3058,6 +3058,15 @@ details.dsh-tavern-recall-guide > summary .dsh-tavern-recall-guide-heading > spa
 .dsh-tavern-interrupted-archive { min-width: 0; max-width: 100%; margin: 12px 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; font-size: 13px; }
 .dsh-tavern-interrupted-preview summary { cursor: pointer; padding: 8px 0; }
 .dsh-tavern-interrupted-preview pre { max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; }
+.dsh-tavern-interrupted-transcript { box-sizing: border-box; width: min(100%, 760px); min-width: 0; margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l2); border-left: 3px solid var(--dsw-alias-state-warning-primary, #c9872b); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 13px; }
+.dsh-tavern-interrupted-transcript-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.dsh-tavern-interrupted-transcript-head span { color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.dsh-tavern-interrupted-transcript-entry { margin-top: 8px; }
+.dsh-tavern-interrupted-transcript-entry summary { cursor: pointer; padding: 5px 0; color: var(--dsw-alias-label-secondary); }
+.dsh-tavern-interrupted-transcript-entry pre { max-height: 520px; min-width: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.75; }
+.dsh-tavern-interrupted-transcript-actions { display: flex; justify-content: flex-end; padding-top: 8px; }
+.dsh-tavern-interrupted-transcript-recovery p, .dsh-tavern-interrupted-transcript-error { margin: 8px 0; overflow-wrap: anywhere; line-height: 1.55; }
+.dsh-tavern-interrupted-transcript-error { color: var(--dsw-alias-state-error-primary, #c64545); }
 .dsh-composer-preset-menu { box-sizing: border-box; position: fixed; z-index: 1000; width: min(340px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 16px; border: 1px solid var(--dsw-alias-border-l2, #d9dfd9); border-radius: 12px; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #28352c); box-shadow: 0 8px 32px #0002; font-size: 13px; }
 .dsh-composer-preset-menu header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .dsh-composer-preset-menu label { display: grid; gap: 6px; margin: 12px 0; }

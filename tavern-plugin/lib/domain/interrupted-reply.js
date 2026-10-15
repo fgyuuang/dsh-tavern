@@ -104,7 +104,10 @@ export function projectInterruptedReply(messages, chat, turn) {
   const marker = currentResume(chat, turn)
   if (!marker) return messages
   return [...messages,
-    { role: 'assistant', content: [{ type: 'text', text: marker.text }] },
-    { role: 'user', content: [{ type: 'text', text: '上条回复因连接中断而未完成。沿用本轮原有预设、人物与格式要求，只接着补完剩余内容，不要重写或重复已有部分，也不要重新开始本轮。已有内容尚未提交；完整回复由系统合并后统一提交。' }] }
+    // Pi-AI's foreign-assistant adapter requires every assistant history item to
+    // carry a source. These ephemeral messages are request-only and must never
+    // be appended to the native session surface.
+    { role: 'assistant', source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'interrupted-reply-prefix' }, content: [{ type: 'text', text: marker.text }] },
+    { role: 'user', source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'interrupted-reply-continuation' }, content: [{ type: 'text', text: '上条回复因连接中断而未完成。沿用本轮原有预设、人物与格式要求，只接着补完剩余内容，不要重写或重复已有部分，也不要重新开始本轮。已有内容尚未提交；完整回复由系统合并后统一提交。' }] }
   ]
 }

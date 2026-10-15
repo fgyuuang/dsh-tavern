@@ -41,7 +41,11 @@ test('resume retains original messages and merges only the remaining reply; anot
   const projected = projectInterruptedReply(original, chat, 5)
   assert.equal(projected[0], original[0])
   assert.equal(projected[1].role, 'assistant')
+  assert.equal(projected[1].source?.kind, 'plugin', 'pi-ai conversion requires source.kind on synthetic assistant history')
+  assert.equal(projected[1].source?.form, 'interrupted-reply-prefix')
   assert.equal(projected[1].content[0].text, draft.text)
+  assert.equal(projected[2].source?.kind, 'plugin')
+  assert.equal(projected[2].source?.form, 'interrupted-reply-continuation')
   assert.equal(singleReplyText(chat, 5, '后半段'), draft.text + '后半段')
   chat.timeline.operations.next = { id: 'next', kind: 'body', turn: 5, status: 'failed', basedOn: { branchId: 'branch', revision: 2 } }
   events.push({ seq: 3, type: 'assistant/attempt', data: { turn: 5, stream: [{ type: 'text-chunks', texts: ['后半段'] }] } })
