@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
       React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
       const native = React.useSyncExternalStore(listener => ctx.sessions.list.subscribe(listener), () => ctx.sessions.list.getSnapshot(), () => ctx.sessions.list.getSnapshot())
       const [mode, setMode] = React.useState('standard'), [root, setRoot] = React.useState(info?.root || '')
-      const [details, setDetails] = React.useState(info), [busy, setBusy] = React.useState(false), [error, setError] = React.useState('')
+      const [details, setDetails] = React.useState(info), [busy, setBusy] = React.useState(false), [error, setError] = React.useState(''), [query, setQuery] = React.useState('')
       const pending = React.useRef(null), guard = React.useRef(false)
       React.useEffect(() => {
         let active = true
@@ -39,16 +39,25 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
         } catch (failure) { setError(String(failure.message || failure)) }
         finally { guard.current = false; setBusy(false) }
       }
+      const selectedMode = details?.modes?.find(row => row.id === mode)
+      const visibleRecords = records.slice().reverse().filter(row => [native.byId?.[row.sessionId]?.title, row.title, row.path].some(value => String(value || '').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
       return h('section', { className: 'tavern-project-agent', 'aria-label': '项目 Agent' },
-        h('header', null, h('small', null, 'DSH 原生工作区'), h('h2', null, '项目 Agent'), h('p', null, '设计预设、维护资源、修改与调试。')),
-        h('div', { className: 'tavern-project-modes', role: 'group', 'aria-label': '新对话的原生模式' }, ...(details?.modes || []).map(row => h('button', { key: row.id, type: 'button', disabled: busy, 'aria-pressed': mode === row.id, title: row.description, onClick: () => setMode(row.id) }, row.name))),
-        h('p', { className: 'tavern-project-mode-note' }, details?.modes?.find(row => row.id === mode)?.description),
-        h('details', null, h('summary', null, '工作目录与持久记忆'), h('label', null, '项目目录', h('input', { value: root, disabled: busy, 'aria-label': 'Agent 项目目录', onChange: event => setRoot(event.target.value) })), h('p', null, '默认工作区含 PROJECT.md、memory/ 与按需 Skills。也可选择已有项目；文件与记忆会跨对话保留。')),
-        h('button', { type: 'button', className: 'dsh-tavern-btn tavern-project-create', disabled: busy || !details || !root.trim(), onClick: create }, busy ? '正在建立…' : '＋ 新建 Agent 对话'),
-        error ? h('p', { role: 'alert' }, error) : null,
-        h('h3', null, '项目对话'),
-        ...records.slice().reverse().map(row => h('button', { key: row.sessionId, className: 'tavern-project-session', type: 'button', 'aria-current': props.currentSessionId === row.sessionId ? 'page' : undefined, disabled: busy, onClick: () => { void open(row.sessionId).catch(failure => setError(String(failure.message || failure))) } }, h('strong', null, native.byId?.[row.sessionId]?.title || row.title), h('small', null, row.nativePresetId + ' · ' + row.path.split(/[\\/]/).at(-1)))),
-        !records.length ? h('p', { className: 'tavern-project-mode-note' }, '选择模式后新建对话。模式从创建时生效。') : null)
+        h('button', { type: 'button', className: 'tavern-project-create', disabled: busy || !details || !root.trim(), onClick: create }, busy ? '正在建立…' : '新建 Agent 对话'),
+        h('div', { className: 'tavern-project-context' },
+          h('label', { className: 'tavern-project-mode', title: selectedMode?.description },
+            h('span', null, '模式'),
+            h('select', { value: mode, disabled: busy || !details, 'aria-label': '新对话的原生模式', onChange: event => setMode(event.target.value) }, ...(details?.modes || []).map(row => h('option', { key: row.id, value: row.id }, row.name))))),
+        h('details', { className: 'tavern-project-directory' },
+          h('summary', { title: root }, '工作目录', h('span', null, root.split(/[\\/]/).filter(Boolean).at(-1) || '加载中…')),
+          h('label', null, '项目目录', h('input', { value: root, disabled: busy, 'aria-label': 'Agent 项目目录', onChange: event => setRoot(event.target.value) })),
+          h('p', null, '默认目录提供项目说明、持久记忆和 Skills。也可以填写已有项目的目录。'),
+          h('p', null, selectedMode?.description)),
+        error ? h('p', { className: 'tavern-project-error', role: 'alert' }, error) : null,
+        h('div', { className: 'tavern-project-list-heading' }, h('h3', null, '项目对话'), h('span', null, records.length || '')),
+        records.length > 0 ? h('input', { type: 'search', className: 'tavern-project-search', placeholder: '搜索对话', 'aria-label': '搜索 Agent 对话', value: query, onChange: event => setQuery(event.target.value) }) : null,
+        h('div', { className: 'tavern-project-sessions' },
+          ...visibleRecords.map(row => h('button', { key: row.sessionId, className: 'tavern-project-session', title: (details?.modes?.find(mode => mode.id === row.nativePresetId)?.name || row.nativePresetId) + ' · ' + row.path, type: 'button', 'aria-current': props.currentSessionId === row.sessionId ? 'page' : undefined, disabled: busy, onClick: () => { void open(row.sessionId).catch(failure => setError(String(failure.message || failure))) } }, h('span', null, native.byId?.[row.sessionId]?.title || row.title))),
+          !records.length ? h('p', { className: 'tavern-project-empty' }, '在这里设计预设、维护资源和调试插件。选择模式后即可开始。') : !visibleRecords.length ? h('p', { className: 'tavern-project-empty', role: 'status' }, '没有匹配的对话') : null))
     }
     ctx.tavernUi.registerSidebarWorkspace({ id: 'agent', label: 'Agent', sessions: store, component: ProjectAgentPanel })
     ctx.effect(() => { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = ctx.tavernUi.assetUrl('workspace.css'); document.head.append(link); return () => link.remove() }, 'project Agent styles')

@@ -22,13 +22,13 @@ test('independent Agent panel selects native mode before registering, without se
     plugin.apply(ctx);
     modules['react-dom/client'].createRoot(document.getElementById('root')).render(modules.react.createElement(workspace.component,{onSessionsChanged:()=>{},onOpen:()=>{}}));
   ` })
-  await page.getByRole('button', { name: '创造模式', exact: true }).click()
-  await page.getByRole('button', { name: '＋ 新建 Agent 对话', exact: true }).click()
+  await page.getByRole('combobox', { name: '新对话的原生模式' }).selectOption('cordis')
+  await page.getByRole('button', { name: '新建 Agent 对话', exact: true }).click()
   await page.waitForFunction(() => window.calls.some(row => row.method === 'native-open'))
   const calls = await page.evaluate(() => window.calls.filter(row => ['native-create', 'native-preset', 'register', 'native-open'].includes(row.method)))
   assert.deepEqual(calls.map(row => row.method), ['native-create', 'native-preset', 'register', 'native-open'])
   assert.equal(calls[1].preset, 'cordis')
   assert.equal(await page.evaluate(() => window.calls.some(row => /startChat|prompt|Default/.test(row.method))), false)
-  assert.equal(await page.getByRole('group', { name: '新对话的原生模式' }).getByRole('button').count(), 4)
+  assert.equal(await page.getByRole('combobox', { name: '新对话的原生模式' }).locator('option').count(), 4)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
 })

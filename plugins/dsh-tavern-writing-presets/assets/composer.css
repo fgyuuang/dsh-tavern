@@ -1,11 +1,17 @@
-.dsh-composer-preset-trigger { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; max-width: 150px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary, inherit); font: inherit; font-size: 12px; cursor: pointer; }
-.dsh-composer-preset-trigger:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.1)); }
+.dsh-composer-preset-trigger { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; max-width: 150px; padding: 3px 8px; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.dsh-composer-preset-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dsh-composer-preset-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dsh-composer-preset-menu { box-sizing: border-box; position: fixed; z-index: 1000; width: min(340px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 16px; border: 1px solid var(--dsw-alias-border-l2, #d9dfd9); border-radius: 12px; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #28352c); box-shadow: 0 8px 32px #0002; font-size: 13px; }
-.dsh-composer-preset-menu header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.dsh-composer-preset-menu label { display: grid; gap: 6px; margin: 12px 0; }
-.dsh-composer-preset-menu label:has(input[type=checkbox]) { display: flex; align-items: center; gap: 8px; }
-.dsh-composer-preset-menu select { width: 100%; min-width: 0; min-height: 36px; font: inherit; color: inherit; background: var(--dsw-specific-input-major, transparent); border: 1px solid var(--dsw-alias-border-l2, #d9dfd9); border-radius: 6px; padding: 6px; }
-.dsh-composer-preset-menu p { font-size: 12px; line-height: 1.6; opacity: .75; margin: 8px 0; }
-.dsh-composer-preset-trigger:focus-visible, .dsh-composer-preset-menu :is(button, select, input):focus-visible { outline: 2px solid var(--dsh-tavern-accent, #587363); outline-offset: 2px; }
+.dsh-composer-preset-menu { --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); box-sizing: border-box; position: fixed; z-index: 1100; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 12px; border: 0; border-radius: var(--dsw-radius-xl, 20px); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent); font-size: 13px; }
+.dsh-composer-preset-menu header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 8px; }
+.dsh-composer-preset-menu header strong { font-size: 13px; font-weight: 500; }
+.dsh-composer-preset-menu header button { min-height: 28px; padding: 3px 8px; border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.dsh-composer-preset-menu label { display: grid; gap: 6px; margin: 10px 0; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.dsh-composer-preset-menu label:has(input[type=checkbox]) { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--dsw-alias-label-primary); }
+.dsh-composer-preset-menu input[type=checkbox] { accent-color: var(--dsw-alias-state-business-primary); }
+.dsh-composer-preset-menu select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm, 8px); padding: 5px 8px; }
+.dsh-composer-preset-menu > .dsh-tavern-btn { width: 100%; min-height: 32px; border: 0; background: transparent; font-size: 12px; }
+.dsh-composer-preset-menu button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-composer-preset-menu p { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 1.6; margin: 6px 0; }
+.dsh-composer-preset-menu [role=alert] { color: var(--dsw-alias-state-error-primary); }
+.dsh-composer-preset-trigger:focus-visible, .dsh-composer-preset-menu :is(button, select, input):focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 @media (max-width: 640px) { .dsh-composer-preset-trigger { max-width: 110px; min-height: 36px; } }

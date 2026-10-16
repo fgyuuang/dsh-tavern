@@ -143,7 +143,7 @@
 					if (!execution) return null;
 					const counts = execution.counts || {};
 					const limits = execution.limits || {};
-					const labels = { query: "写前查询", initial: "正文初稿", revision: "检查/修订/恢复", settlement: "状态结算", addons: "预设附加", "addons-retry": "附加手动重试", compaction: "压缩", maintenance: "其他后台" };
+					const labels = { query: "写前查询", initial: "正文初稿", revision: "可选修订", completion: "正文完成", settlement: "状态结算", addons: "预设附加", "addons-retry": "附加手动重试", compaction: "压缩", maintenance: "其他后台" };
 					const requests = Array.isArray(execution.requests) ? execution.requests : [];
 					const counted = Object.values(counts).reduce(function (sum, value) { return sum + Math.max(0, Number(value) || 0); }, 0);
 					const blocked = requests.filter(function (item) { return item.status === "blocked"; }).length;
@@ -159,10 +159,10 @@
 					const inputTokens = tokenTotal("inputTokens");
 					const cacheReadTokens = tokenTotal("cacheReadTokens");
 					const outputTokens = tokenTotal("outputTokens");
-					const stageRows = ["query", "initial", "revision", "settlement", "addons", "addons-retry", "compaction", "maintenance"]
-						.filter(function (stage) { return Number(counts[stage]) > 0 || Number.isFinite(Number(limits[stage])); })
+					const stageRows = ["query", "initial", "revision", "completion", "settlement", "addons", "addons-retry", "compaction", "maintenance"]
+						.filter(function (stage) { return Number(counts[stage]) > 0 || limits[stage] != null && Number.isFinite(Number(limits[stage])); })
 						.map(function (stage) {
-							const limit = Number.isFinite(Number(limits[stage])) ? " / " + limits[stage] : "";
+							const limit = limits[stage] != null && Number.isFinite(Number(limits[stage])) ? " / " + limits[stage] : "";
 							return h("span", { key: stage }, labels[stage] + " " + (Number(counts[stage]) || 0) + limit);
 						});
 					const tokenText = [inputTokens === null ? "" : "输入 " + inputTokens,

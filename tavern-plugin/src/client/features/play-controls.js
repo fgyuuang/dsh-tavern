@@ -1189,11 +1189,11 @@
             }
             const policy = record?.policy || { queryRequests: 1, revisionRequests: 1 };
             return h("section", { className: "dsh-local-section dsh-sike-execution-policy", "aria-label": "Agent 执行预算" },
-                h("h3", null, "Agent 执行"),
-                h("p", { className: "dsh-local-help" }, "独立设置本局各阶段的模型请求上限。运行中的回合不变；新回合采用新预算。继续中断回合时会重放原输入，并沿同一逻辑回合累计已用额度。"),
+                h("h3", null, "按需优化"),
+                h("p", { className: "dsh-local-help" }, "Agent 先完成正文，按需要使用查询与修订。这些设置控制可选优化次数；正文保存、确认和中断续写不占修订额度。"),
                 select("queryRequests", "正文前查询上限", [[1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
-                select("revisionRequests", "正文修订与检查/恢复上限", [[0, "最多 0 次（不请求检查或修改）"], [1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
-                h("p", { className: "dsh-local-help", "aria-live": "polite" }, record ? "该额度计入初稿后的检查、审阅、修改及继续/恢复请求。前台计划上限：" + (Number(policy.queryRequests) + 1 + Number(policy.revisionRequests)) + " 次（查询 + 初稿 1 次 + 修订/恢复）；附加内容自动生成最多另 1 次。结算模型请求单独计数，可能因人物设计、工具续答或恢复而超过一次；它不计入这个前台上限。" : "正在读取预算…"),
+                select("revisionRequests", "可选正文修订", [[0, "关闭额外修订"], [1, "最多 1 次模型请求"], [2, "最多 2 次模型请求"]]),
+                h("p", { className: "dsh-local-help", "aria-live": "polite" }, record ? "当前允许 " + Number(policy.queryRequests) + " 次查询、" + Number(policy.revisionRequests) + " 次额外修订。优化次数用完后进入正文完成阶段。变量结算和平行世界等附加内容在正式正文之后处理。" : "正在读取设置…"),
                 record?.busy ? h("p", { className: "dsh-local-warning", role: "status" }, "当前回合或后台任务正在运行，完成后可调整预算。",
                     h("button", { type: "button", className: "dsh-tavern-btn", onClick: () => rpc("getDreamSikeExecutionPolicy", { sessionId: props.sessionId }, props.sessionId)
                         .then(setRecord, failure => setError(String(failure.message || failure))) }, "刷新状态")) : null,
@@ -1276,7 +1276,6 @@
             const activity = describeTavernActivity(coordination.view && coordination.view.activity);
             const idleLabel = activity.busy ? (activity.label || (activity.role === "settlement" ? "正在结算本回合" : "正在处理后台任务")) : "等待你的行动";
             return h(React.Fragment, null,
-              h(DreamSikeLiveTextPreview, { ...props, maxWidth: composerWidth }),
               h("section", { className: "dsh-sike-interaction-dock", "aria-label": (props.agentTitle || "写作 Agent") + " 工作台", "data-mobile-expanded": String(mobileToolsOpen),
                 style: composerWidth > 0 ? { maxWidth: composerWidth + "px", marginInline: "auto", boxSizing: "border-box" } : undefined },
                 h("div", { className: "dsh-sike-interaction-identity" },

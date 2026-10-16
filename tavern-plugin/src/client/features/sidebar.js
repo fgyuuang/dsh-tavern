@@ -1219,14 +1219,14 @@
 				: h("div", { className: "dsh-tavern-update-actions" },
 					h("button", { className: "dsh-tavern-update-button", disabled: checkingOrRunning || updateStatus.phase === "restart-required" || updateStatus.phase === "installed-restart-required", onClick: checkUpdate }, updateStatus.phase === "checking" ? "正在检查…" : (updateStatus.phase === "running" ? "正在更新…" : (updateStatus.phase === "cancelling" ? "正在取消…" : (updateStatus.phase === "blocked" ? "等待安全停止" : (updateStatus.phase === "installed-restart-required" ? "请手动重启" : (updateStatus.phase === "restart-required" ? "重启 Desktop 后可用" : "检查更新")))))),
 					cancelSupported ? h("button", { className: "dsh-tavern-update-button", disabled: updateStatus.phase === "cancelling", onClick: cancelUpdate }, updateStatus.phase === "cancelling" ? "正在取消…" : "取消更新") : null);
-			const modeTabs = h('div', { className: 'dsh-tavern-mode-switch' },
-                h('button', { className: uiMode === 'play' ? 'active' : '', disabled: busy, onClick: () => switchPlayRequestMode('dsh') }, '游玩'),
-                h('button', { className: uiMode === 'card' ? 'active' : '', disabled: busy, onClick: () => switchMode('card') }, '卡片'),
-                ...extraWorkspaces.map(entry => h('button', { key: entry.id, className: uiMode === entry.id ? 'active' : '', disabled: busy, onClick: () => switchMode(entry.id) }, entry.label)));
+			const modeTabs = h('nav', { className: 'dsh-tavern-mode-switch', 'aria-label': '工作区' },
+                h('button', { type: 'button', 'aria-pressed': uiMode === 'play', className: uiMode === 'play' ? 'active' : '', disabled: busy, onClick: () => switchPlayRequestMode('dsh') }, '游玩'),
+                h('button', { type: 'button', 'aria-pressed': uiMode === 'card', className: uiMode === 'card' ? 'active' : '', disabled: busy, onClick: () => switchMode('card') }, '卡片'),
+                ...extraWorkspaces.map(entry => h('button', { key: entry.id, type: 'button', 'aria-pressed': uiMode === entry.id, className: uiMode === entry.id ? 'active' : '', disabled: busy, onClick: () => switchMode(entry.id) }, entry.label)));
             const extraWorkspace = extraWorkspaces.find(entry => entry.id === uiMode);
             if (extraWorkspace) return h(React.Fragment, null, collapsedSidebar,
                 h('div', { className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
-                    h('div', { className: 'dsh-tavern-side-head' }, h('strong', null, 'DSH Tavern'), props.embedded ? null : h('button', { className: 'dsh-tavern-side-icon', onClick: props.toggleSidebar, 'aria-label': '收起侧栏' }, '◧')),
+                    h('div', { className: 'dsh-tavern-side-head' }, h('div', { className: 'dsh-tavern-side-brand dsh-tavern-lockup', role: 'img', 'aria-label': 'DSH Tavern' }), props.embedded ? null : h('button', { className: 'dsh-tavern-side-icon', onClick: props.toggleSidebar, 'aria-label': '收起侧栏' }, '◧')),
                     modeTabs, h(extraWorkspace.component, { currentSessionId: current, visible: !collapsed,
                         onSessionsChanged: () => refresh(['sessions']), onOpen: () => { if (mainOpening) props.hideOpening(); setPicking(false); } })));
 			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },

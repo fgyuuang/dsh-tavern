@@ -52,7 +52,10 @@ function createAgentWorkbenchFeatureModule() {
         function update(transform) {
             setPreferences(current => { const next = transform(current); remember(props.sessionId, next); return next; });
         }
-        function select(panelId) { update(current => ({ ...current, selected: panelId })); }
+        function select(panelId) {
+            update(current => ({ ...current, selected: panelId }));
+            tabRefs.current.get(panelId)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+        }
         React.useEffect(() => {
             function requested(event) {
                 if (event.detail?.sessionId !== props.sessionId || !event.detail.panelId) return;
@@ -83,7 +86,7 @@ function createAgentWorkbenchFeatureModule() {
         }
         return h("section", { className: "dsh-agent-workbench", "aria-label": "Agent 工作台" },
             h("header", { className: "dsh-agent-workbench-head" },
-                h("div", { className: "dsh-agent-workbench-identity" }, h("span", { className: "dsh-agent-workbench-kicker" }, (isWritingAgentPresetId(modeView.view?.playPresetId) ? writingAgentTitle(modeView.view) : "原酒馆预设") + " · 创作空间"), h("h2", null, modeView.view?.generationMode === "sillytavern-once" ? "预设与创作" : "Agent 工作台")),
+                h("div", { className: "dsh-agent-workbench-identity" }, h("h2", null, modeView.view?.generationMode === "sillytavern-once" ? "预设与创作" : "Agent 工作台"), h("span", { className: "dsh-agent-workbench-kicker" }, isWritingAgentPresetId(modeView.view?.playPresetId) ? writingAgentTitle(modeView.view) : "原酒馆预设")),
                 h("button", { ref: managementTrigger, type: "button", className: "dsh-agent-workbench-manage", disabled: !enabled, "aria-expanded": managing, "aria-controls": identity + "-modules", onClick: () => setManaging(value => !value) }, "管理模块")),
             !enabled ? h("div", { className: "dsh-agent-workbench-empty", role: "status" }, modeView.loading ? "正在读取本局模式…" : "在本局设置选择梦境思客DSH或狐神抚DSH，即可打开创作工作台。DSH 原版使用原有交互界面。") : h(React.Fragment, null,
                 h("div", { className: "dsh-agent-workbench-status" }, h("span", { className: "dsh-agent-workbench-dot", "data-busy": String(activity.busy || running), "aria-hidden": true }), running && props.visible && isWritingAgentView(modeView.view) ? h(DreamSikeMainTurnStatus, { sessionId: props.sessionId }) : h("span", { role: "status" }, running ? "正在生成回复" : activity.busy ? activity.label || "正在处理本回合" : "等待你的行动"), h("span", { className: "dsh-agent-workbench-status-note" }, "当前游戏")),
@@ -92,7 +95,7 @@ function createAgentWorkbenchFeatureModule() {
                     h("p", null, "只调整本局的界面显示。Agent 继续使用已启用的能力。"),
                     panels.map(panel => h("label", { key: panel.id, className: "dsh-agent-workbench-module-choice" }, h("input", { type: "checkbox", checked: !preferences.hidden.includes(panel.id), onChange: () => toggle(panel) }), h("span", null, h("strong", null, panel.label), h("small", null, panel.owner || "工作台插件"))))) : null,
                 panels.length ? h(React.Fragment, null,
-                    visiblePanels.length ? h("nav", { className: "dsh-agent-workbench-nav", role: "tablist", "aria-label": "创作模块" }, visiblePanels.map((panel, index) => h("button", { key: panel.id, id: identity + "-tab-" + index, ref: node => { if (node) tabRefs.current.set(panel.id, node); else tabRefs.current.delete(panel.id); }, type: "button", role: "tab", tabIndex: panel === selected ? 0 : -1, "aria-selected": panel === selected, "aria-controls": identity + "-panel-" + panel.id, className: "dsh-agent-workbench-tab", onClick: () => select(panel.id), onKeyDown: event => navigate(event, index) }, icon(panel.id), h("span", null, h("strong", null, panel.label), h("small", null, panel.description))))) : h("div", { className: "dsh-agent-workbench-empty", role: "status" }, "模块已收起。打开“管理模块”可恢复显示。"),
+                    visiblePanels.length ? h("nav", { className: "dsh-agent-workbench-nav", role: "tablist", "aria-label": "创作模块" }, visiblePanels.map((panel, index) => h("button", { key: panel.id, id: identity + "-tab-" + index, ref: node => { if (node) tabRefs.current.set(panel.id, node); else tabRefs.current.delete(panel.id); }, type: "button", role: "tab", title: panel.description, tabIndex: panel === selected ? 0 : -1, "aria-selected": panel === selected, "aria-controls": identity + "-panel-" + panel.id, className: "dsh-agent-workbench-tab", onClick: () => select(panel.id), onKeyDown: event => navigate(event, index) }, h("span", null, h("strong", null, panel.label))))) : h("div", { className: "dsh-agent-workbench-empty", role: "status" }, "模块已收起。打开“管理模块”可恢复显示。"),
                     panels.filter(panel => panel === selected || panel.keepAlive && visited.includes(panel.id)).map(panel => h("div", { key: panel.id, id: identity + "-panel-" + panel.id, role: "tabpanel", hidden: panel !== selected, "aria-labelledby": panel === selected ? identity + "-tab-" + visiblePanels.indexOf(panel) : undefined, tabIndex: 0, className: "dsh-agent-workbench-panel" },
                         (props.visible || panel.keepAlive && visited.includes(panel.id)) ? h(tavernPluginBoundary(), { key: panel.id + ":" + (retries[panel.id] || 0), owner: panel.owner, fallback: h("div", { className: "dsh-agent-workbench-empty", role: "alert" }, h("strong", null, panel.label + "暂时无法显示"), h("p", null, "你可以切换其他模块，或重新打开这一模块。"), h("button", { type: "button", onClick: () => setRetries(current => ({ ...current, [panel.id]: (current[panel.id] || 0) + 1 })) }, "重新打开模块")) }, h(panel.component, { ...context, visible: props.visible && panel === selected })) : null))) : h("div", { className: "dsh-agent-workbench-empty", role: "status" }, "暂无可用的工作台模块。")));
     }
