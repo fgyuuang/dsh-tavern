@@ -11,28 +11,31 @@ test('Agent workspace opens a native conversation and puts the four-mode selecto
   await page.setContent('<body class="dsh-tavern-shell-active"><div class="dsh-tavern-sidebar" style="position:absolute;inset:0 0 0 auto;width:390px"><div class="dsh-tavern-side-head">DSH Tavern</div><nav class="dsh-tavern-mode-switch"><button>游玩</button><button>卡片</button><button class="active">Agent</button></nav><div id="agent-root" style="display:flex;flex:1;min-height:0"></div></div><div style="position:fixed;left:12px;right:12px;bottom:16px;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #8885;border-radius:16px;background:#8881"><div style="flex:1;min-height:42px;padding:12px;border:1px solid #8884;border-radius:10px">给 Agent 发送消息…</div><div id="root"></div><button type="button" style="min-height:32px">发送</button></div></body>')
   await page.addStyleTag({ content: await readFile(new URL('../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8') })
   await page.addStyleTag({ content: ':root{--dsw-specific-sidebar-fill:#fff;--dsw-specific-input-major:#fff;--dsw-specific-menu:#fff;--dsw-alias-label-primary:#292c31;--dsw-alias-label-secondary:#686d74;--dsw-alias-label-tertiary:#92969d;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-border-l2:#e6e8eb;--dsw-alias-border-l3:#d8dbe0;--dsw-alias-interactive-bg-hover:#f1f2f4;--dsw-alias-interactive-bg-active:#e9edf4;--dsw-alias-button-elevated-fill:#fff;--dsw-alias-button-floating-hover:#f5f6f8;--dsw-alias-brand-primary:#587363;--dsw-alias-state-error-primary:#c64545;--dsw-radius-sm:8px;--dsw-radius-md:12px;--dsw-elevation-prominent:0 8px 24px rgba(0,0,0,.16)}body{margin:0;background:#fff}' })
-  await page.addStyleTag({ content: await readFile(new URL('../plugins/dsh-tavern-project-agent/assets/workspace.css', import.meta.url), 'utf8') })
+  const projectCss = await readFile(new URL('../plugins/dsh-tavern-project-agent/assets/workspace.css', import.meta.url), 'utf8')
   await page.addScriptTag({ content: await browserReactScript() + `
     window.calls=[];let records=[];let nativeListeners=new Set();let view={byId:{'previous-story':{blank:false}},current:'previous-story'};
     window.__ModuleLoader__={load(descriptor){window.plugin=descriptor.factory(name=>modules[name])}};
     ${await readFile(new URL('../plugins/dsh-tavern-project-agent/client.js', import.meta.url), 'utf8')}
     const info={root:'D:/tavern/project',modes:${JSON.stringify(PROJECT_AGENT_MODES)}};
-    const ctx={tavernUi:{callHost:async(name,{method,args})=>{window.calls.push({method,args});if(method==='info')return info;if(method==='list')return {sessions:records};if(method==='register'){records=[{sessionId:args.sessionId,nativePresetId:args.presetId,title:info.modes.find(row=>row.id===args.presetId).name,path:info.root}];return {session:records[0]}}},registerSidebarWorkspace:entry=>window.workspace=entry,assetUrl:()=> 'data:text/css,'},
+    const ctx={tavernUi:{callHost:async(name,{method,args})=>{window.calls.push({method,args});if(method==='stylesheet')return {css:${JSON.stringify(projectCss)}};if(method==='info')return info;if(method==='list')return {sessions:records};if(method==='register'){records=[{sessionId:args.sessionId,nativePresetId:args.presetId,title:info.modes.find(row=>row.id===args.presetId).name,path:info.root}];return {session:records[0]}}},registerSidebarWorkspace:entry=>window.workspace=entry,assetUrl:()=>{throw Error('HTTP assets unavailable')}},
       slots:{inject:(_name,register)=>register(),register:(_descriptor,component)=>{window.agentModeSlot=component;return()=>{}}},
       sessions:{list:{subscribe:listener=>{nativeListeners.add(listener);return()=>nativeListeners.delete(listener)},getSnapshot:()=>view},subagentAddress:()=>undefined,
         create:async()=>{window.calls.push({method:'native-create'});view={...view,current:'new-native',byId:{...view.byId,'new-native':{blank:true}}};nativeListeners.forEach(listener=>listener());return 'new-native'},
         refresh:async()=>{},open:async id=>{window.calls.push({method:'native-open',id});view={...view,current:id};nativeListeners.forEach(listener=>listener())}},
       workspaces:{create:async args=>{window.calls.push({method:'workspace-create',args});return {workspaceId:'w'}}},
       remote:{agentPresets:{select:async(id,preset)=>{window.calls.push({method:'native-preset',id,preset});return {ok:true}}}},effect:fn=>fn()};
-    plugin.apply(ctx);
+    plugin.apply(ctx).then(()=>{
     window.root=modules['react-dom/client'].createRoot(document.getElementById('agent-root'));
     window.root.render(modules.react.createElement(workspace.component,{onSessionsChanged:()=>{},onOpen:()=>{}}));
     window.composerRoot=modules['react-dom/client'].createRoot(document.getElementById('root'));
     window.renderAgentComposer=()=>window.composerRoot.render(window.agentModeSlot({sessionId:'new-native'}));
     window.setAgentSessionBlank=blank=>{view={...view,byId:{...view.byId,'new-native':{blank}}};nativeListeners.forEach(listener=>listener())};
+    });
   ` })
   await page.getByRole('button', { name: '＋ 新建 Agent 对话' }).click()
   await page.waitForFunction(() => window.calls.some(row => row.method === 'native-open'))
+  assert.equal(await page.locator('style[data-tavern-project-agent]').count(), 1)
+  assert.equal(await page.locator('.tavern-project-search').evaluate(element => getComputedStyle(element).borderRadius), '8px')
   assert.equal(await page.evaluate(() => window.plugin.inject.includes('remote')), true)
   assert.equal(await page.getByRole('combobox', { name: '新对话的原生模式' }).count(), 0)
   assert.equal(await page.locator('.dsh-tavern-side-new').count(), 1)
@@ -45,6 +48,7 @@ test('Agent workspace opens a native conversation and puts the four-mode selecto
   const selector = page.getByRole('button', { name: 'Agent 模式', exact: true })
   await selector.click()
   assert.equal(await page.getByRole('menuitemradio').count(), 4)
+  assert.equal(await page.getByRole('menu', { name: '选择 Agent 模式' }).evaluate(element => getComputedStyle(element).position), 'fixed')
   await page.getByRole('menuitemradio', { name: /创造模式/ }).click()
   await page.waitForFunction(() => window.calls.some(row => row.method === 'native-preset' && row.preset === 'cordis'))
   await page.waitForFunction(() => window.calls.some(row => row.method === 'register' && row.args.presetId === 'cordis'))

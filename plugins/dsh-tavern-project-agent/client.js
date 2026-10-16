@@ -1,8 +1,13 @@
 window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require => {
   const React = require('react'), ReactDom = require('react-dom'), h = React.createElement
-  return { name: 'dsh-tavern-project-agent', inject: ['tavernUi', 'slots', 'sessions', 'workspaces', 'remote', 'remote.agentPresets'], apply(ctx) {
+  return { name: 'dsh-tavern-project-agent', inject: ['tavernUi', 'slots', 'sessions', 'workspaces', 'remote', 'remote.agentPresets'], async apply(ctx) {
     if (typeof ctx.tavernUi.registerSidebarWorkspace !== 'function') return
     const rpc = (method, args = {}) => ctx.tavernUi.callHost('dsh-tavern-project-agent/request', { method, args })
+    // Native desktop can disable ordinary HTTP asset access. Use the same
+    // authorized host transport as plugin data, and mount only after CSS arrives.
+    const { css } = await rpc('stylesheet')
+    if (typeof css !== 'string' || !css.trim()) throw new Error('Agent 工作区样式未能加载')
+    ctx.effect(() => { const style = document.createElement('style'); style.dataset.tavernProjectAgent = ''; style.textContent = css; document.head.append(style); return () => style.remove() }, 'project Agent styles')
     let records = [], ids = [], info = null
     const listeners = new Set()
     const store = { getSnapshot: () => ids, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
@@ -118,7 +123,6 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
         error ? h('span', { className: 'tavern-agent-composer-error', role: 'alert' }, error) : null)
     }
     ctx.tavernUi.registerSidebarWorkspace({ id: 'agent', label: 'Agent', sessions: store, component: ProjectAgentPanel })
-    ctx.effect(() => { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = ctx.tavernUi.assetUrl('workspace.css') + '?v=20261016-menu2'; document.head.append(link); return () => link.remove() }, 'project Agent styles')
     ctx.effect(() => ctx.slots.inject('conversation.input.right', () => ctx.slots.register({ name: 'conversation.input.right', id: 'dsh-tavern-project-agent-mode', order: 70, label: 'Agent mode' }, () => React.createElement(ProjectAgentComposerMode))), 'project Agent composer mode')
     void refresh().catch(() => {})
   } }
