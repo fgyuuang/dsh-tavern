@@ -854,6 +854,12 @@
 				const followup = dreamSikeMode && settled && finalAssistantStep && !sessionTransitioning ? React.createElement(DreamSikeFollowup, { sessionId: props.sessionId, turn: storyTurn, latest: storyTurn === latestProjectionTurn, frameOwner: props.frameOwner, frameSizing: liveState.view?.tavernRuntimePolicy?.frameSizing, trustedCardMode: Boolean(liveState.view?.tavernRuntimePolicy?.trustedCardMode), executeSlash: props.executeSlash }) : null;
 				return React.createElement("div", { ref:historyNode, className: "dsh-tavern-assistant", "data-streaming": data.status === "running" || undefined }, body, refusalNode, pendingMessage, pluginMediaNode, trailingIllustration, pluginActions, mvuReceiptNode, followup, inlineStatus);
 			}
+
+            function TavernWritingTurnPreview(props) {
+                const live = useLiveTavernView(props.sessionId, "writing-turn-preview", [["playPresetId"], ["generationMode"]]);
+                return isWritingAgentView(live.view) && props.turn?.status === "open"
+                    ? React.createElement(DreamSikeLiveTextPreview, { ...props, running: true }) : null;
+            }
 			function TavernForkAssistantAction(props) {
 				const liveState = useScopedLiveTavernView(props.sessionId, String(props.messageId || ""), [["mode"], ["forkTurnsByMessageId", String(props.messageId || "")]]);
 				const [forking, setForking] = React.useState(false);
@@ -918,6 +924,11 @@
                     tavernSessionModes.listeners.add(sync); sync();
                     return () => { stop(); tavernSessionModes.listeners.delete(sync); releases.splice(0).forEach(dispose => dispose()); };
 				}, "dsh-tavern: scoped story renderers; native Agent sessions use DSH renderers");
+				input.ctx.effect(function () {
+					return input.slots.inject("conversation.chat.turnTail", function () { return input.slots.register({
+                        name: "conversation.chat.turnTail", id: "dsh-tavern:writing-turn-preview", order: 0
+                    }, TavernWritingTurnPreview); });
+                }, "dsh-tavern: read-only writing preview in the chat transcript");
 				input.ctx.effect(function () {
 					return input.slots.inject("conversation.chat.assistant-actions", function () { return input.slots.register({
 						name: "conversation.chat.assistant-actions", id: "dsh-tavern-fork", order: 20,
