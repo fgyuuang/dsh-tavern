@@ -926,7 +926,12 @@
 				}, "dsh-tavern: scoped story renderers; native Agent sessions use DSH renderers");
 				input.ctx.effect(function () {
 					return input.slots.inject("conversation.chat.turnTail", function () { return input.slots.register({
-                        name: "conversation.chat.turnTail", id: "dsh-tavern:writing-turn-preview", order: 0
+                        name: "conversation.chat.turnTail", id: "dsh-tavern:writing-turn-preview",
+                        select: owner => {
+                            const current = input.ctx.sessions.list.getSnapshot().current;
+                            const view = liveTavernView.getSnapshot(current).view;
+                            return owner.turn?.status === "open" && isWritingAgentView(view) ? true : null;
+                        }
                     }, TavernWritingTurnPreview); });
                 }, "dsh-tavern: read-only writing preview in the chat transcript");
 				input.ctx.effect(function () {
