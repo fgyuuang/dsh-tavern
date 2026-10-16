@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
       const native = React.useSyncExternalStore(listener => ctx.sessions.list.subscribe(listener), () => ctx.sessions.list.getSnapshot(), () => ctx.sessions.list.getSnapshot())
       const [root, setRoot] = React.useState(info?.root || '')
       const [details, setDetails] = React.useState(info), [busy, setBusy] = React.useState(false), [error, setError] = React.useState(''), [query, setQuery] = React.useState('')
-      const pending = React.useRef(null), guard = React.useRef(false), activation = React.useRef('')
+      const pending = React.useRef(null), guard = React.useRef(false)
       React.useEffect(() => {
         let active = true
         Promise.all([rpc('info'), refresh()]).then(([value]) => { info = value; if (active) { setDetails(value); setRoot(current => current || value.root); publish() } }).catch(failure => { if (active) setError(String(failure.message || failure)) })
@@ -41,16 +41,6 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
         finally { guard.current = false; setBusy(false) }
       }
       const visibleRecords = records.slice().reverse().filter(row => [native.byId?.[row.sessionId]?.title, row.title, row.path].some(value => String(value || '').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
-      React.useEffect(() => {
-        if (!details) return
-        const sessionIds = store.getSnapshot()
-        if (props.currentSessionId && sessionIds.includes(props.currentSessionId)) { activation.current = ''; return }
-        const key = JSON.stringify([props.currentSessionId || '', sessionIds])
-        if (activation.current === key || guard.current) return
-        activation.current = key
-        if (sessionIds.length) void open(sessionIds.at(-1)).catch(failure => setError(String(failure.message || failure)))
-        else void create()
-      }, [details, props.currentSessionId, native.current, native.byId?.[props.currentSessionId]?.blank])
       const projectName = root.split(/[\\/]/).filter(Boolean).at(-1) || '加载中…'
       return h('section', { className: 'dsh-tavern-project-agent', 'aria-label': '项目 Agent', style: { flex: '1 1 auto', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 } },
         h('button', { type: 'button', className: 'dsh-tavern-side-new', disabled: busy || !details || !root.trim(), onClick: create }, busy ? '正在建立…' : '＋ 新建 Agent 对话'),

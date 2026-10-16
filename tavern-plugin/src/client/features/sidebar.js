@@ -745,9 +745,9 @@
                 if (extraWorkspace) {
                     // An extension workspace owns a different set of native sessions.
                     // Leaving the previous Tavern session selected made its chat appear
-                    // under the Agent sidebar, while the session-less landing is hidden
-                    // by the Tavern shell. Clear only a foreign selection; the Agent
-                    // panel opens its latest session or creates the first one.
+                    // under the Agent sidebar. Clear only a foreign selection; switching
+                    // workspace must not silently open or create a native Agent session.
+                    // The Agent panel lists existing projects until the user chooses one.
                     if (!extraWorkspace.sessions.getSnapshot().includes(current)) props.sessions.clear();
                     return;
                 }
