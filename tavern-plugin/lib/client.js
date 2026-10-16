@@ -14436,7 +14436,16 @@ function TavernOpeningInput(props) {
                 if (mainOpening) props.hideOpening();
 				playPrewarmRef.current.cancel();
 				setUiMode(nextMode); setPicking(false); setMenuSession(null);
-                if (extraWorkspaces.some(entry => entry.id === nextMode)) return;
+                const extraWorkspace = extraWorkspaces.find(entry => entry.id === nextMode);
+                if (extraWorkspace) {
+                    // An extension workspace owns a different set of native sessions.
+                    // Leaving the previous Tavern session selected made its chat appear
+                    // under the Agent sidebar, while the session-less landing is hidden
+                    // by the Tavern shell. Clear only a foreign selection; the Agent
+                    // panel opens its latest session or creates the first one.
+                    if (!extraWorkspace.sessions.getSnapshot().includes(current)) props.sessions.clear();
+                    return;
+                }
 				const first = history.filter(function (item) {
 					if (groupOfMode(item.mode) !== nextMode) return false;
 					if (nextMode !== "play") return true;

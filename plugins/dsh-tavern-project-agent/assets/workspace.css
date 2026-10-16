@@ -12,12 +12,7 @@
 }
 .tavern-project-create:hover { background: var(--dsw-alias-interactive-bg-hover, #8882); }
 .tavern-project-agent button:disabled { opacity: .5; cursor: default; }
-.tavern-project-context { display: flex; align-items: center; min-height: 30px; }
-.tavern-project-mode { display: flex; align-items: center; gap: 6px; padding-inline: 6px; min-width: 0; }
-.tavern-project-mode > span { color: var(--dsw-alias-label-tertiary, #888); font-size: 12px; }
-.tavern-project-mode select { max-width: 100%; min-height: 30px; padding: 3px 20px 3px 4px; border: 0; border-radius: 6px; background-color: transparent; cursor: pointer; }
-.tavern-project-mode select:hover { background-color: var(--dsw-alias-interactive-bg-hover, #8881); }
-.tavern-project-mode option { color: var(--dsw-alias-label-primary, #202124); background: var(--dsw-specific-menu, #fff); }
+.tavern-project-hint { margin: -2px 2px 2px; color: var(--dsw-alias-label-tertiary, #888); font-size: 11px; line-height: 1.5; }
 .tavern-project-directory { flex: none; color: var(--dsw-alias-label-secondary, #74767b); }
 .tavern-project-directory summary { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; list-style: none; cursor: pointer; font-size: 12px; }
 .tavern-project-directory summary::-webkit-details-marker { display: none; }
@@ -39,5 +34,12 @@
 .tavern-project-session[aria-current=page] { background: var(--dsw-alias-interactive-bg-active, #8882); }
 .tavern-project-empty { margin: 0; padding: 8px; color: var(--dsw-alias-label-secondary, #74767b); line-height: 1.8; font-size: 12px; }
 .tavern-project-error { margin: 0; padding: 8px; color: var(--dsw-static-red-500, #c64545); font-size: 12px; overflow-wrap: anywhere; }
+.tavern-agent-composer-mode { position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 148px; min-height: 30px; padding: 0 7px; border: 1px solid var(--dsw-alias-border-l2, #8883); border-radius: 8px; color: var(--dsw-alias-label-secondary, #74767b); background: var(--dsw-specific-input-major, transparent); font: 12px/1.2 var(--dsh-tavern-font-sans, 'Segoe UI', system-ui, sans-serif); }
+.tavern-agent-composer-mode > span:first-child { color: var(--dsw-alias-label-tertiary, #888); }
+.tavern-agent-composer-mode select { width: 100%; min-width: 0; max-width: 112px; min-height: 26px; padding: 2px 16px 2px 2px; border: 0; border-radius: 5px; color: var(--dsw-alias-label-primary, #202124); background: transparent; cursor: pointer; font: inherit; }
+.tavern-agent-composer-mode select:disabled { opacity: .75; cursor: default; }
+.tavern-agent-composer-mode option { color: var(--dsw-alias-label-primary, #202124); background: var(--dsw-specific-menu, #fff); }
+.tavern-agent-composer-locked { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-primary, #202124); }
+.tavern-agent-composer-error { position: absolute; z-index: 20; bottom: calc(100% + 8px); right: 0; width: min(280px, calc(100vw - 24px)); padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l2, #8883); border-radius: 8px; color: var(--dsw-static-red-500, #c64545); background: var(--dsw-specific-menu, #fff); box-shadow: var(--dsw-effect-elevation-3); overflow-wrap: anywhere; }
 .tavern-project-agent :is(button, select, input, summary):focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4d6bfe); outline-offset: -2px; }
-@media (pointer: coarse) { .tavern-project-session { min-height: 44px; } }
+@media (pointer: coarse) { .tavern-project-session { min-height: 44px; } .tavern-agent-composer-mode { min-height: 36px; } }
