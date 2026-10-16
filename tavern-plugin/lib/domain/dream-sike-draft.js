@@ -57,8 +57,13 @@ function sameIdentity(draft, identity) {
     && draft.turn === identity.turn && draft.operationId === identity.operationId
     && draft.branchId === identity.branchId && draft.storyRevision === identity.storyRevision
 }
+function assertCurrentTurnIdentity(chat, identity) {
+  const current = dreamSikeTurnIdentity(chat, identity.sessionId, identity.turn)
+  if (!sameIdentity(current, identity)) throw new Error('回合或分支已变化，拒绝过期正文操作')
+}
 
 function requireCurrentDraft(chat, identity) {
+  assertCurrentTurnIdentity(chat, identity)
   const draft = object(chat.dreamSikeDraft)
   if (!sameIdentity(draft, identity)) throw new Error('当前回合尚未建立草稿，或草稿已随分支变化失效')
   if (draft.status === 'committed') throw new Error('该草稿已提交')
@@ -240,7 +245,9 @@ export function dreamSikeExecutionTrace(session, draft) {
 }
 
 export function putDreamSikeDraft(chat, identity, text, now = Date.now()) {
+  assertCurrentTurnIdentity(chat, identity)
   assertDraftText(text)
+  prepareDreamSikeWriting(chat, identity, undefined, now)
   assertDreamSikePreparation(chat, identity)
   if (dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.followupModules?.some(module => module.id === '807eefad-93ca-490c-a629-1d51038e3626')) text = draftModuleBase(text, 'parallel')
   assertDraftText(text)
@@ -300,13 +307,19 @@ export function patchDreamSikeDraft(chat, identity, { expectedVersion, find, rep
 }
 
 /** One host transaction saves the authored body, its optional brief, and its review. */
-export function submitDreamSikeDraft(chat, identity, { text, brief, review }, now = Date.now()) {
+export function submitDreamSikeDraft(chat, identity, { text, brief, review, finalize = true }, now = Date.now()) {
   const previous = requireMatchingDraft(chat, identity)
   if (previous?.status === 'ready' && previous.text === text) return readyDreamSikeDraft(chat, identity, previous.version, now)
-  prepareDreamSikeWriting(chat, identity, brief, now)
+  try { prepareDreamSikeWriting(chat, identity, brief, now) }
+  catch (error) {
+    // A malformed optional brief must never discard a complete body. Explicit
+    // prepare calls still validate their full schema and source references.
+    prepareDreamSikeWriting(chat, identity, undefined, now)
+    chat.dreamSikePreparation.briefWarning = String(error.message || error).slice(0, 300)
+  }
   putDreamSikeDraft(chat, identity, text, now)
   chat.dreamSikeDraft.executionPolicy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
-  return finishDreamSikeDraftSubmission(chat, identity, chat.dreamSikeDraft.version, review, now)
+  return finishDreamSikeDraftSubmission(chat, identity, chat.dreamSikeDraft.version, review, now, { finalize })
 }
 
 function requireMatchingDraft(chat, identity) {
@@ -314,23 +327,40 @@ function requireMatchingDraft(chat, identity) {
 }
 
 /** A repair request applies its entire patch batch before checking the resulting version. */
-export function reviseDreamSikeDraft(chat, identity, { expectedVersion, review, ...patch }, now = Date.now()) {
+export function reviseDreamSikeDraft(chat, identity, { expectedVersion, review, finalize = true, ...patch }, now = Date.now()) {
   const draft = requireCurrentDraft(chat, identity)
   const policy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
-  if ((Number(draft.revisionCount) || 0) >= policy.revisionRequests) {
+  const structuralRepair = (draft.checks?.issues || []).some(item => !item.code.startsWith('editorial-') && !optionalProseIssue(item.code))
+  const optionalRevisionCount = Math.max(0, (Number(draft.revisionCount) || 0) - (Number(draft.requiredRepairCount) || 0))
+  if (optionalRevisionCount >= policy.revisionRequests && !structuralRepair) {
     throw Object.assign(new Error('本回合局部修订额度已用尽，草稿已保留。若要继续处理，请结束当前失败运行后调整本局预算；继续时会沿用本逻辑回合已用请求数。'), { code: 'DREAM_SIKE_REVISION_LIMIT' })
   }
+  const previousVersion = draft.version
   patchDreamSikeDraft(chat, identity, { expectedVersion, ...patch }, now)
+  if (structuralRepair && draft.version !== previousVersion) draft.requiredRepairCount = (Number(draft.requiredRepairCount) || 0) + 1
   draft.executionPolicy = policy
-  return finishDreamSikeDraftSubmission(chat, identity, draft.version, review, now)
+  return finishDreamSikeDraftSubmission(chat, identity, draft.version, review, now, { finalize })
 }
 
 /** Deterministic checks and confirmation never need a separate model request. */
-export function finishDreamSikeDraftSubmission(chat, identity, expectedVersion, review, now = Date.now()) {
+export function finishDreamSikeDraftSubmission(chat, identity, expectedVersion, review, now = Date.now(), { finalize = true, text } = {}) {
+  const current = requireCurrentDraft(chat, identity)
+  if (requireVersion(expectedVersion) !== current.version) throw new Error('草稿版本已变化，请重新读取后检查')
+  if (text !== undefined && current.status === 'draft' && text !== current.text) {
+    assertDraftText(text)
+    if (dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.followupModules?.some(module => module.id === '807eefad-93ca-490c-a629-1d51038e3626')) text = draftModuleBase(text, 'parallel')
+    assertDraftText(text)
+    const previousVersion = current.version
+    current.text = text; current.version++; current.checks = null; current.updatedAt = now
+    current.changes.push({ kind: 'completed-body', summary: '使用本轮最新完整正文', beforeVersion: previousVersion, afterVersion: current.version, at: now })
+    current.trace.push({ phase: 'draft', action: '已保存本轮最新完整正文', at: now })
+    expectedVersion = current.version
+  }
+  prepareDreamSikeWriting(chat, identity, undefined, now)
   checkDreamSikeDraft(chat, identity, expectedVersion, { now, review })
   const draft = chat.dreamSikeDraft
   if (draft.checks.editorial) draft.inlineReview = { version: draft.version, review: copy(draft.checks.editorial.review) }
-  if (!draft.checks.issues.length) readyDreamSikeDraft(chat, identity, draft.version, now)
+  if (finalize && !draft.checks.issues.length) readyDreamSikeDraft(chat, identity, draft.version, now)
   return copy(draft)
 }
 
@@ -382,32 +412,33 @@ export function inspectDreamSikeDraft(text) {
   }
   return issues
 }
+const optionalProseIssue = code => /^preset-(?:body-length|banned-word|banned-dash|banned-phrase)$/.test(code)
 
 export function checkDreamSikeDraft(chat, identity, expectedVersion, now = Date.now(), review = undefined) {
   // Keep the historic numeric timestamp call signature for host integrations.
   if (now && typeof now === 'object') { review = now.review; now = now.now ?? Date.now() }
   const draft = requireCurrentDraft(chat, identity)
   if (requireVersion(expectedVersion) !== draft.version) throw new Error('草稿版本已变化，请重新读取后检查')
-  const issues = inspectDreamSikeDraft(draft.text).concat(inspectDreamSikeContractDraft(chat, draft.text))
+  const optionalLimit = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy).revisionRequests
+  const optionalUsed = Math.max(0, (Number(draft.revisionCount) || 0) - (Number(draft.requiredRepairCount) || 0))
+  const allIssues = inspectDreamSikeDraft(draft.text).concat(inspectDreamSikeContractDraft(chat, draft.text))
+  const optionalNotes = optionalUsed >= optionalLimit ? allIssues.filter(item => optionalProseIssue(item.code)) : []
+  const issues = allIssues.filter(item => !optionalNotes.includes(item))
   if (review === undefined && draft.inlineReview?.version === draft.version) review = draft.inlineReview.review
   draft.checks = { version: draft.version, issues, checkedAt: now }
+  if (optionalNotes.length) draft.checks.notes = optionalNotes.map(item => item.message)
   if (needsDreamSikeEditorialReview(chat)) {
     const contract = dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)
     const editorial = inspectEditorialReview(review)
-    const policy = normalizeDreamSikeExecutionPolicy(chat.dreamSikeExecutionPolicy)
     const rounds = Number(draft.revisionCount) || 0
-    // Structure problems (missing axis, invalid evidence) always block; revise notes only block
-    // while the revision budget lasts. Without this the editor's never-empty findings deadlock
-    // every turn: the review always returns revise, so confirmation could never succeed.
-    const exhausted = rounds >= policy.revisionRequests
-    const blocking = exhausted
-      ? editorial.issues.filter(item => !/^editorial-revise-/.test(item.code) || item.code === 'editorial-revise-format')
-      : editorial.issues
-    const notes = exhausted ? editorial.issues.filter(item => /^editorial-revise-/.test(item.code) && item.code !== 'editorial-revise-format') : []
-    issues.push(...blocking)
+    // Editorial metadata is optional optimization. Keep concrete observations,
+    // but never spend another provider call merely to repair its JSON/evidence.
+    // Actual author format, private/state protocol and tag checks above remain
+    // authoritative and cannot be waived by a model's pass/revise declaration.
+    const notes = editorial.issues
     draft.checks.editorial = {
-      required: true, version: draft.version, contractDigest: str(contract?.digest),
-      passed: blocking.length === 0, review: editorial.review,
+      required: false, version: draft.version, contractDigest: str(contract?.digest),
+      passed: true, review: editorial.review,
       rounds, ...(notes.length ? { notes: notes.map(item => item.message) } : {})
     }
   }
@@ -427,7 +458,7 @@ export function readyDreamSikeDraft(chat, identity, expectedVersion, now = Date.
   if (needsDreamSikeEditorialReview(chat)) {
     const editorial = draft.checks.editorial
     const contract = dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)
-    if (!editorial || !editorial.passed || editorial.version !== draft.version) throw new Error('请先完成当前版本的六维正文审阅，并修订已发现的问题')
+    if (!editorial || editorial.version !== draft.version) throw new Error('草稿检查已过期，请检查当前版本正文')
     if (editorial.contractDigest !== str(contract?.digest)) throw new Error('预设规则已变化，请依据当前契约重新检查草稿')
   }
   if (draft.checks.issues.length > 0) throw new Error('草稿仍有待处理的格式或协议问题')

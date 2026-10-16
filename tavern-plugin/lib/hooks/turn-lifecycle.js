@@ -6,7 +6,7 @@ import { prependSystemInstruction } from '../domain/system-append.js'
 import { sessionStablePrefixSections, withCurrentWorldbook } from '../domain/session-stable-prefix.js'
 import { synchronizeBodyEdits } from '../domain/body-editor.js'
 import { synchronizeTemplateHistory } from '../domain/template-history.js'
-import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft } from '../domain/dream-sike-draft.js'
+import { readDreamSikeDraft, dreamSikeTurnIdentity, readyDreamSikeDraft, submitDreamSikeDraft, finishDreamSikeDraftSubmission } from '../domain/dream-sike-draft.js'
 import { randomUUID } from 'node:crypto'
 import { applyDreamSikeToolPhase, dreamSikeToolPhase } from '../domain/dream-sike-tool-phase.js'
 import { dreamSikeExecutionStageForPhase } from '../domain/dream-sike-execution-usage.js'
@@ -55,12 +55,40 @@ export function registerTurnLifecycleHooks({
     if (userText === '' && !inputAttachments(userContent).length) return
     const requestId = requestIdForTurn(session, payload.turn)
     const assistant = assistantResultForTurn(session, payload.turn)
-    const chat = await chatForSession(sessionId)
+    let chat = await chatForSession(sessionId)
     if (!chat) return
     const dreamMode = isWritingAgentExecution(chat) && ['story', 'script'].includes(chat.mode || 'story')
-    const draft = dreamMode ? readDreamSikeDraft(chat) : null
+    let draft = dreamMode ? readDreamSikeDraft(chat) : null
     if (dreamMode && draft?.status === 'committed' && draft.turn === payload.turn
       && draft.sessionId === sessionId && draft.branchId === chat.timeline?.branchId && chat.nativeCommits?.[String(payload.turn)]) return
+    if (dreamMode && updateChat) {
+      const currentDraft = draft?.turn === payload.turn && draft.sessionId === sessionId
+        && draft.branchId === chat.timeline?.branchId && draft.storyRevision === chat.timeline?.revision
+      // Normal visible prose is a valid Agent result too. Saving it must not
+      // depend on a particular tool choreography or optional review metadata.
+      const body = assistant?.text?.trim() || ''
+      const statusOnly = body.length < 120 && /^(?:[（(]?正文|草稿|本回合|已(?:经)?完成|完成|done|completed)/i.test(body)
+        && /已(?:保存|确认|提交|完成)|由宿主|完成提示|^(?:完成|done|completed)[。.!！\s]*$/i.test(body)
+      if (currentDraft || body && !statusOnly) {
+        const expected = dreamSikeTurnIdentity(chat, sessionId, payload.turn)
+        chat = await updateChat(chat.id, current => {
+          const identity = dreamSikeTurnIdentity(current, sessionId, payload.turn)
+          if (identity.operationId !== expected.operationId || identity.branchId !== expected.branchId
+            || identity.storyRevision !== expected.storyRevision) throw new Error('回合或分支已变化，拒绝过期正文完成事件')
+          const live = current.dreamSikeDraft
+          if (live?.status === 'committed' && current.nativeCommits?.[String(payload.turn)]) return current
+          const matches = live?.turn === identity.turn && live.sessionId === identity.sessionId
+            && live.operationId === identity.operationId && live.branchId === identity.branchId
+            && live.storyRevision === identity.storyRevision
+          if (matches) {
+            finishDreamSikeDraftSubmission(current, identity, live.version, undefined, Date.now(),
+              { text: body && !statusOnly ? body : undefined })
+          } else submitDreamSikeDraft(current, identity, { text: body })
+          return current
+        }, { source: 'dream-sike.complete-body', touchUpdatedAt: false }) || chat
+        draft = readDreamSikeDraft(chat)
+      }
+    }
     let ready = draft?.status === 'ready' && draft.turn === payload.turn && draft.sessionId === sessionId
       && draft.branchId === chat.timeline?.branchId && draft.storyRevision === chat.timeline?.revision
     if (ready) {
@@ -69,7 +97,7 @@ export function registerTurnLifecycleHooks({
       try { readyDreamSikeDraft(structuredClone(chat), dreamSikeTurnIdentity(chat, sessionId, payload.turn), draft.version) }
       catch { ready = false }
     }
-    if (dreamMode && (!ready || assistant === null)) {
+    if (dreamMode && !ready) {
       const fingerprint = JSON.stringify([draft?.version, draft?.status, draft?.checks?.version,
         draft?.checks?.issues?.map(issue => issue.code), draft?.checks?.editorial?.passed,
         chat.dreamSikePreparation?.preparedAt, chat.dreamSikePreparation?.ruleReadRanges?.length])
@@ -85,7 +113,8 @@ export function registerTurnLifecycleHooks({
           id: randomUUID(), role: 'user',
           content: [{ type: 'text', text: ready
             ? '草稿已确认。请结束本回合，输出一句简短的完成提示；正式正文由酒馆从已确认草稿提交。'
-            : '本回合尚未通过当前规则的正文确认。先用 sike_read_turn 核对状态；若写作准备缺失或过期，调用 sike_prepare_turn。已有草稿继续处理，不重复建立；没有草稿才 sike_put_draft。再 sike_check_draft、sike_ready_draft，必要时 sike_patch_draft。不要直接结束。' }],
+            : draft?.text ? '正文已保留。只修复当前版本列明的确定性格式或协议问题，然后结束提交；使用 sike_patch_draft 局部修复，不重读、重做准备或追加六维审阅。可选优化额度不限制必要修复。'
+              : '请直接完成本回合的完整可见正文，或用 sike_put_draft 保存正文。检索、Skill、准备和审阅均按需使用，不要求额外流程或完成提示。' }],
           source: { kind: 'plugin', plugin: 'dsh-tavern', form: 'dream-sike-continue' }
         })
         return
@@ -96,7 +125,7 @@ export function registerTurnLifecycleHooks({
       throw new Error(message)
     }
     incompleteStops.delete(payload.agent)
-    if (assistant === null || (assistant.text === '' && !(dreamMode && ready))) {
+    if (!(dreamMode && ready) && (assistant === null || assistant.text === '')) {
       const reasoningOnly = assistant !== null && assistant.reasoningOnly === true
       const message = reasoningOnly
         ? '模型本轮只返回了思考过程，没有返回正文；请重新生成本轮正文。'
@@ -119,7 +148,7 @@ export function registerTurnLifecycleHooks({
       assistantText: dreamMode ? draft.text : (isSingleReplyMode(chat)
         ? singleReplyText(chat, payload.turn, assistant?.text || '')
         : (assistant === null ? '' : assistant.text)),
-      nativeAnchor: roundAnchor(payload.turn, inputEventForTurn(session, payload.turn), assistant.event)
+      nativeAnchor: roundAnchor(payload.turn, inputEventForTurn(session, payload.turn), assistant?.event)
     })
     if (saved.reply) replaceAssistantReply(session, assistant, saved.reply.sessionText)
   })

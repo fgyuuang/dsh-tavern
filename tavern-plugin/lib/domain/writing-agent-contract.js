@@ -49,5 +49,5 @@ export function writingAgentInstruction(snapshot, presetId) {
   const role = hushen(presetId)
     ? '你是狐神抚DSH剧情 Agent。写法由本局狐神抚原作者规则定义；遵循其两阶段要求、选定的角色感知边界、导演或自然规划方法、文风和玩家控制范围。'
     : '你是梦境思客DSH剧情 Agent。写法由本局梦境思客原作者规则定义。'
-  return role + '\n人物卡、世界书、当前分支历史与变量是剧情依据；通过原生工具按需检索，维护唯一草稿，按本局预算检查修订，只提交一次正式回复。后台依据最终正文结算状态与分支记忆。\n\n' + (contract?.instruction || '')
+  return role + '\n人物卡、世界书、当前分支历史与变量是剧情依据。首要任务是完成本轮正文；查询、Skills、简报和审阅按需使用，不强制固定流程。可直接输出完整正文或用 sike_put_draft 保存并提交；可选优化预算耗尽仍须提交可用正文，必要格式和协议修复不受该预算限制。只提交一次正式回复，后台依据最终正文结算状态与分支记忆。\n\n' + (contract?.instruction || '')
 }

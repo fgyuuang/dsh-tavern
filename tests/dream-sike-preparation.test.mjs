@@ -23,13 +23,15 @@ function fixture() {
     timeline: { branchId: 'b', revision: 1, operations: { op: { id: 'op', kind: 'body', status: 'running', turn: 1, basedOn: { branchId: 'b', revision: 1 } } } } }
   return { chat, identity: dreamSikeTurnIdentity(chat, 's', 1) }
 }
-test('enabled planning requires an actual read followed by a brief before drafting; no story or variables are changed', () => {
+test('enabled planning permits direct drafting while optional explicit preparation preserves its own evidence', () => {
   const { chat, identity } = fixture()
   assert.equal(needsDreamSikePreparation(chat), true)
-  assert.throws(() => putDreamSikeDraft(chat, identity, '她接过信，问：“交给谁？”'), /sike_prepare_turn/)
+  const direct = structuredClone(chat)
+  assert.equal(putDreamSikeDraft(direct, identity, '她接过信，问：“交给谁？”').status, 'draft')
+  assert.equal(direct.dreamSikePreparation.readAt, null)
   assert.throws(() => prepareDreamSikeTurn(chat, identity, brief()), /先用 sike_read_turn/)
   recordDreamSikeTurnRead(chat, identity, 10)
-  assert.throws(() => putDreamSikeDraft(chat, identity, '她接过信。'), /sike_prepare_turn/)
+  assert.equal(putDreamSikeDraft(structuredClone(chat), identity, '她接过信。').status, 'draft')
   prepareDreamSikeTurn(chat, identity, brief(), 20)
   putDreamSikeDraft(chat, identity, '她接过信，问：“交给谁？”', 30)
   checkDreamSikeDraft(chat, identity, 1, { review: review() })
@@ -55,7 +57,7 @@ test('changed contract, branch, operation and turn cannot reuse a read or prepar
     const { chat, identity } = fixture()
     recordDreamSikeTurnRead(chat, identity)
     prepareDreamSikeTurn(chat, identity, brief())
-    assert.throws(() => putDreamSikeDraft(chat, change(identity), '正文'), /sike_prepare_turn/)
+    assert.throws(() => putDreamSikeDraft(chat, change(identity), '正文'), /分支已变化|运行中正文/)
   }
   const { chat, identity } = fixture()
   recordDreamSikeTurnRead(chat, identity)
@@ -81,11 +83,10 @@ test('updated brief invalidates review; retry of identical brief does not invali
   assert.equal(chat.dreamSikeDraft.checks, null)
   assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /先检查/)
 })
-test('enabled planning tools enforce read/prepare in the registered native tool loop', async () => {
+test('registered tools retain optional read/prepare compatibility without requiring extra review requests', async () => {
   const { chat } = fixture(), registered = new Map()
   registerDreamSikeTools({ tools: { register(t) { registered.set(t.name, t) } }, chatForSession: async () => chat, updateChat: async (_id, mutate) => mutate(chat), activeTurnOf: () => 1 })
   const exec = { agent: { session: { id: 's' } } }
-  await assert.rejects(registered.get('sike_put_draft').execute({ text: '她接过信。' }, exec), /sike_prepare_turn/)
   const read = JSON.parse((await registered.get('sike_read_turn').execute({}, exec)).report)
   assert.equal(read.preparationRequired, true)
   assert.equal(read.preparation.brief, null)
@@ -100,7 +101,7 @@ test('turn reader exposes current action, real history references and complete b
   chat.timeline.operations.op.userText = '这是当前回合行动，不采用历史末条。'
   chat.messages = [{ id: 'saved-message-7', uid: 'original-uid', turn: 7, role: 'assistant', text: '历史原文'.repeat(300) },
     { role: 'user', text: '历史末条不能作为本轮行动。' }]
-  const longRule = '作者原文逐项核对。'.repeat(1300)
+  const longRule = '作者原文逐项核对。'.repeat(5000)
   chat.runtimePresetSnapshot.front.entries.push({ id: 'exact-author-rule', content: longRule })
   registerDreamSikeTools({ tools: { register(t) { registered.set(t.name, t) } }, chatForSession: async () => chat, updateChat: async (_id, mutate) => mutate(chat), activeTurnOf: () => 1 })
   const read = args => registered.get('sike_read_turn').execute(args, { agent: { session: { id: 's' } } }).then(value => JSON.parse(value.report))
@@ -114,7 +115,7 @@ test('turn reader exposes current action, real history references and complete b
   assert.equal(first.recent[1].ref, 'floor:b:1')
   assert.equal(first.materialAreas.dreamer_input.reference, 'action:op')
   assert.equal(first.materialAreas.writing_setting.rulePage, 'presetRules')
-  assert.ok(first.presetRules.rules.reduce((sum, rule) => sum + rule.content.length, 0) <= 8000)
+  assert.ok(first.presetRules.rules.reduce((sum, rule) => sum + rule.content.length, 0) <= 20000)
   assert.equal(first.presetRules.hasMore, true)
   let page = first, restored = '', count = 0
   while (true) {
@@ -161,6 +162,8 @@ test('failure recovery rebinds the same prepared draft, including after persiste
   const saved = JSON.parse(JSON.stringify(chat))
   saved.dreamSikeResume = { nextTurn: 2, sessionId: 's', branchId: 'b', storyRevision: 1, sourceOperationId: 'op', sourceVersion: 1, failedTurn: 1 }
   const next = { ...identity, turn: 2, operationId: 'op2' }
+  saved.timeline.operations.op.status = 'failed'
+  saved.timeline.operations.op2 = { ...saved.timeline.operations.op, id: 'op2', turn: 2, status: 'running' }
   carryDreamSikeDraftIntoTurn(saved, next)
   assert.equal(readyDreamSikeDraft(saved, next, 1).status, 'ready')
   assert.equal(saved.dreamSikePreparation.operationId, 'op2')
@@ -174,22 +177,28 @@ test('disabling the source planning rule or using another preset does not impose
   assert.equal(needsDreamSikePreparation(chat), false)
 })
 
-test('stopping hook repairs stale ready drafts instead of declaring success or committing them', async () => {
+test('stopping hook restores an optional preparation receipt and submits the retained body exactly once', async () => {
   const { chat, identity } = fixture()
   recordDreamSikeTurnRead(chat, identity)
   prepareDreamSikeTurn(chat, identity, brief())
   putDreamSikeDraft(chat, identity, '她接过信。')
   checkDreamSikeDraft(chat, identity, 1, { review: review() })
   readyDreamSikeDraft(chat, identity, 1)
+  delete chat.dreamSikeDraft.preparation
+  delete chat.dreamSikePreparation
   const hooks = new Map(), steering = [], commits = [], failures = []
   registerTurnLifecycleHooks({
     ctx: { on(name, handler) { hooks.set(name, handler) } },
     backgroundAgentRunner: { requestContext() {}, owns() { return false } },
     fullTemplateRuntime: { cancel() {} }, clearRuntimePresetRequestState() {},
     chatForSession: async () => chat,
+    updateChat: async (_id, mutate) => mutate(chat),
     userMessageForTurn: () => ({ content: [{ type: 'text', text: '递信' }] }),
     contentText: () => '递信', requestIdForTurn: () => 'req',
-    foregroundHandoff: { async finalize(input) { commits.push(input); return {} } },
+    foregroundHandoff: { async finalize(input) {
+      commits.push(input); chat.nativeCommits = { '1': { turn: 1 } }; chat.dreamSikeDraft.status = 'committed'
+      return {}
+    } },
     turnOrchestrator: { async recordFailure(input) { failures.push(input) } }
   })
   const agent = { session: { id: 's', events: [{ type: 'turn/start', data: { turn: 1 } },
@@ -197,15 +206,10 @@ test('stopping hook repairs stale ready drafts instead of declaring success or c
   await hooks.get('agent/turn-stopping')({ agent, turn: 1 })
   assert.equal(commits.length, 1)
   assert.equal(steering.length, 0)
-  delete chat.dreamSikeDraft.preparation
-  delete chat.dreamSikePreparation
   await hooks.get('agent/turn-stopping')({ agent, turn: 1 })
   assert.equal(commits.length, 1)
-  assert.match(steering.at(-1).content[0].text, /sike_prepare_turn/)
-  assert.doesNotMatch(steering.at(-1).content[0].text, /草稿已确认/)
-  assert.equal(chat.dreamSikeDraft.status, 'ready') // validation was read-only
-  await hooks.get('agent/turn-stopping')({ agent, turn: 1 })
-  await assert.rejects(hooks.get('agent/turn-stopping')({ agent, turn: 1 }), /状态没有推进/)
-  assert.equal(failures.length, 1)
-  assert.equal(commits.length, 1)
+  assert.equal(steering.length, 0)
+  assert.equal(chat.dreamSikeDraft.status, 'committed')
+  assert.equal(chat.dreamSikePreparation.readAt, null)
+  assert.equal(failures.length, 0)
 })

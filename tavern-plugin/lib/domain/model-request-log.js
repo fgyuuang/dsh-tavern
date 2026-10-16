@@ -153,14 +153,17 @@ export function createModelRequestLog(options = {}) {
 
   const executionLimits = Object.freeze({
     query: policy => normalizeDreamSikeExecutionPolicy(policy).queryRequests,
-    initial: () => 1,
+    // A Skill/read-only request is not a body. Until a durable draft exists,
+    // the foreground still owns its initial generation opportunity.
+    initial: null,
     revision: policy => normalizeDreamSikeExecutionPolicy(policy).revisionRequests,
+    completion: null,
     settlement: null,
     addons: () => 1,
     compaction: null,
     maintenance: null
   })
-  const executionStages = ['query', 'initial', 'revision', 'settlement', 'addons', 'addons-retry', 'compaction', 'maintenance']
+  const executionStages = ['query', 'initial', 'revision', 'completion', 'settlement', 'addons', 'addons-retry', 'compaction', 'maintenance']
   function freshExecution(input, policy, stamp) {
     return {
       version: 1,
@@ -188,7 +191,8 @@ export function createModelRequestLog(options = {}) {
 
   /** Reserve the provider-boundary attempt in the same serialized index as request evidence. */
   function reserveExecutionAttempt(input = {}) {
-    const chatId = str(input.chatId), attemptId = str(input.attemptId), stage = str(input.stage)
+    const chatId = str(input.chatId), attemptId = str(input.attemptId), requestedStage = str(input.stage)
+    let stage = requestedStage
     if (!chatId || !attemptId || !executionStages.includes(stage)) return Promise.resolve({ accepted: true, tracked: false })
     return enqueue(chatId, async function () {
       const stamp = now(), base = 'model-requests/' + chatId + '/'
@@ -217,12 +221,20 @@ export function createModelRequestLog(options = {}) {
             used: state.current.counts?.[stage] || 0, existing: true }
           return index
         }
-        const limitRule = executionLimits[stage]
-        const limit = typeof limitRule === 'function' ? limitRule(state.current.policy) : null
-        const used = Math.max(0, Number(state.current.counts?.[stage]) || 0)
+        let limitRule = executionLimits[stage]
+        let limit = typeof limitRule === 'function' ? limitRule(state.current.policy) : null
+        let used = Math.max(0, Number(state.current.counts?.[stage]) || 0)
+        // Assembly and provider dispatch may straddle an in-flight attempt. A
+        // stale optional phase must not reject the request that finishes a body.
+        if (input.allowBodyCompletion === true && ['query', 'revision'].includes(stage)
+          && Number.isSafeInteger(limit) && used >= limit) {
+          stage = 'completion'; limit = null
+          used = Math.max(0, Number(state.current.counts.completion) || 0)
+        }
         const blocked = Number.isSafeInteger(limit) && used >= limit
         const request = {
           attemptId, stage, status: blocked ? 'blocked' : 'reserved',
+          ...(stage !== requestedStage ? { plannedStage: requestedStage } : {}),
           operationId,
           turn: Math.max(0, Number(input.rootTurn ?? input.turn) || 0),
           step: Math.max(0, Number(input.step) || 0), purpose: str(input.purpose),

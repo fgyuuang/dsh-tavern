@@ -33,14 +33,15 @@ function review() {
 
 const BODY = '林然接过封信，指尖停在封口旁。“交给谁？”'
 
-test('启用源预设时协议通过仍必须有六维正文审阅', () => {
+test('六维审阅是可选优化，缺失时保留备注但完整正文可确认', () => {
   const { chat, identity } = fixture()
   putDreamSikeDraft(chat, identity, BODY)
   const checked = checkDreamSikeDraft(chat, identity, 1)
-  assert.equal(checked.checks.editorial.required, true)
-  assert.equal(checked.checks.editorial.passed, false)
-  assert.equal(checked.checks.issues[0].code, 'editorial-missing')
-  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+  assert.equal(checked.checks.editorial.required, false)
+  assert.equal(checked.checks.editorial.passed, true)
+  assert.deepEqual(checked.checks.issues, [])
+  assert.ok(checked.checks.editorial.notes.length)
+  assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
 })
 
 test('完整可观察审阅绑定草稿版本和契约，允许零补丁', () => {
@@ -58,13 +59,13 @@ test('完整可观察审阅绑定草稿版本和契约，允许零补丁', () =>
   assert.equal(readyDreamSikeDraft(chat, identity, 1).revisionCount, 0)
 })
 
-test('revise 阻止确认，局部修订使旧审阅失效，重新审阅后可确认', () => {
+test('revise 记录可选优化依据，主动局部修订仍使旧检查失效', () => {
   const { chat, identity } = fixture()
   putDreamSikeDraft(chat, identity, BODY)
   const findings = review()
   findings.style = { status: 'revise', evidence: '指尖停顿不够具体，改为指尖停在封口的红蜡旁。' }
-  assert.match(checkDreamSikeDraft(chat, identity, 1, { review: findings }).checks.issues[0].message, /红蜡/)
-  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /修订/)
+  assert.match(checkDreamSikeDraft(chat, identity, 1, { review: findings }).checks.editorial.notes[0], /红蜡/)
+  assert.equal(readyDreamSikeDraft(structuredClone(chat), identity, 1).status, 'ready')
   patchDreamSikeDraft(chat, identity, { expectedVersion: 1, find: '封口旁', replacement: '封口的红蜡旁' })
   assert.equal(chat.dreamSikeDraft.checks, null)
   assert.throws(() => readyDreamSikeDraft(chat, identity, 2), /先检查/)
@@ -83,7 +84,7 @@ test('契约规则变更使已就绪检查失效，不能借幂等确认绕过',
   assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /预设规则已变化/)
 })
 
-test('缺失维度、空泛结果、额外推理和过长依据均不能通过审阅', () => {
+test('缺失维度或无效审阅不阻断正文，无效和私有依据不进入审阅记录', () => {
   for (const mutate of [
     value => { delete value.style },
     value => { value.style.evidence = '全部检查通过，没有问题' },
@@ -99,18 +100,20 @@ test('缺失维度、空泛结果、额外推理和过长依据均不能通过�
     const value = review()
     mutate(value)
     const checked = checkDreamSikeDraft(chat, identity, 1, { review: value })
-    assert.equal(checked.checks.editorial.passed, false)
-    assert.ok(checked.checks.issues.length)
-    assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+    assert.equal(checked.checks.editorial.passed, true)
+    assert.deepEqual(checked.checks.issues, [])
+    assert.ok(checked.checks.editorial.notes.length)
+    assert.doesNotMatch(JSON.stringify(checked.checks.editorial.review), /完整的内部思考|旧卡完整思考|privateReasoning|"chain"/)
+    assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
   }
 })
 
-test('重新检查已就绪草稿发现问题时恢复待修订状态', () => {
+test('重新检查省略可选审阅时仍可使用已通过的正文', () => {
   const { chat, identity } = fixture()
   putDreamSikeDraft(chat, identity, BODY)
   checkDreamSikeDraft(chat, identity, 1, { review: review() })
   readyDreamSikeDraft(chat, identity, 1)
-  assert.equal(checkDreamSikeDraft(chat, identity, 1).status, 'draft')
+  assert.equal(checkDreamSikeDraft(chat, identity, 1).status, 'ready')
 })
 
 test('无原始写作规则时保留既有确定性检查路径', () => {
@@ -147,7 +150,7 @@ test('源预设旧思考协议标签和代码块不能进入正文，HTML 与可
   assert.deepEqual(inspectDreamSikeDraft('<dream_plot><dream_body><div>正文</div></dream_body><dream_after_format></dream_after_format></dream_plot>'), [])
 })
 
-test('原生工具向 Agent 暴露契约与审阅结构，审阅缺失反馈能引导修订', async () => {
+test('原生工具暴露契约与可选审阅，省略回执即可一次保存确认正文', async () => {
   const { chat } = fixture()
   const registered = new Map()
   registerDreamSikeTools({
@@ -161,13 +164,13 @@ test('原生工具向 Agent 暴露契约与审阅结构，审阅缺失反馈能�
   const report = JSON.parse(read.report)
   assert.equal(report.editorialRequired, true)
   assert.ok(report.presetContract.digest)
-  assert.match(report.next, /六维/)
-  assert.ok(registered.get('sike_check_draft').parameters.properties.review)
+  assert.match(report.next, /review和brief可省略/)
+  assert.equal(registered.get('sike_check_draft').parameters.properties.review.type, undefined, 'native json schema must admit optional metadata for host validation')
   await registered.get('sike_put_draft').execute({ text: BODY }, exec)
   const missing = await registered.get('sike_check_draft').execute({ expectedVersion: 1 }, exec)
-  assert.match(missing.report, /六个检查维度/)
+  assert.equal(missing.draft.status, 'ready')
   const checked = await registered.get('sike_check_draft').execute({ expectedVersion: 1, review: review() }, exec)
-  assert.match(checked.report, /Agent 判断/)
+  assert.match(checked.report, /已检查确认/)
   assert.equal((await registered.get('sike_ready_draft').execute({ expectedVersion: 1 }, exec)).draft.status, 'ready')
 })
 
@@ -180,11 +183,11 @@ test('修订预算用尽后保留审稿记录但不再阻断确认', () => {
   findings.style = { status: 'revise', evidence: '迟疑被直接解释了，应改成停顿与递信动作。' }
 
   const first = checkDreamSikeDraft(chat, identity, 1, { now: 100, review: findings })
-  assert.equal(first.checks.editorial.passed, false)
-  assert.ok(first.checks.issues.some(item => item.code === 'editorial-revise-style'))
-  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+  assert.equal(first.checks.editorial.passed, true)
+  assert.deepEqual(first.checks.issues, [])
+  assert.ok(first.checks.editorial.notes.some(note => note.includes('迟疑')))
 
-  chat.dreamSikeDraft.editorialRounds = 2
+  chat.dreamSikeDraft.revisionCount = 2
   const second = checkDreamSikeDraft(chat, identity, 1, { now: 200, review: findings })
   assert.equal(second.checks.editorial.passed, true)
   assert.deepEqual(second.checks.issues, [])
@@ -193,15 +196,16 @@ test('修订预算用尽后保留审稿记录但不再阻断确认', () => {
   assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
 })
 
-// Structure problems are exempt from the budget: a missing axis or unusable evidence still blocks.
-test('结构缺陷不受修订预算豁免', () => {
+// Review metadata is advisory; actual body/protocol structure is tested independently above.
+test('审阅元数据结构缺陷仅记录备注，正文结构检查仍独立执行', () => {
   const { chat, identity } = fixture()
   putDreamSikeDraft(chat, identity, BODY)
   chat.dreamSikeDraft.editorialRounds = 5
   const broken = review()
   broken.character = { status: 'pass', evidence: '通过' }
   const checked = checkDreamSikeDraft(chat, identity, 1, { now: 100, review: broken })
-  assert.equal(checked.checks.editorial.passed, false)
-  assert.ok(checked.checks.issues.some(item => item.code === 'editorial-invalid-character'))
-  assert.throws(() => readyDreamSikeDraft(chat, identity, 1), /六维正文审阅/)
+  assert.equal(checked.checks.editorial.passed, true)
+  assert.deepEqual(checked.checks.issues, [])
+  assert.ok(checked.checks.editorial.notes.some(note => note.includes('角色行为')))
+  assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
 })

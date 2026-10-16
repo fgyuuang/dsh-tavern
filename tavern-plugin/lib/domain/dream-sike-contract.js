@@ -57,8 +57,8 @@ export const DREAM_SIKE_CONTRACT_INSTRUCTION = `【Agent 写作契约】
 写前核对设定、相关历史和格式，分析人物动机、情绪与各自可知信息；按原预设的叙事者和输入处理方式决定本回合推进。需要依据时用原生检索工具。原来的思考链是写作决策流程，不在正文、工具参数或工作窗输出完整私有推理、think/simple_thinking标签或思考口号。
 原作者的四章步骤与各可选模块是本局工作方法。sike_read_turn 提供原文规则索引、已展开写规、叙事者、人物分析和材料区域；有规则续读位置时按需继续读取，不能把索引摘要当作完整规则。原 dream_setting、dream_dx_setting、dream_history、dreamer_input、writing_setting 的开闭标签条目已按原生边界移除，这些名称在保留下来的作者原句中表示待核对的材料范围，按 sike_read_turn 的 materialAreas 解析为当前卡片、有效世界书、状态、本回合输入和分支历史；按名称对应的分析职责照旧执行，不因标签不存在而跳过，也不把原生工具消息改为旧酒馆的文本协议。
 首次读取回合保留材料、规则与当前草稿。连续续读作者规则时使用 includeMaterials=false、includeDraft=false，避免每页重复材料；只续读草稿时使用 includeRules=false。压缩、重启后或需要重新核对材料时显式 includeMaterials=true、includeRules=true。引用和摘要不能代替尚未读取的原文。
-已启用写前决策流程时，先调用 sike_read_turn，按需加载 dream-sike-planning Skill；查询结束后用 sike_put_draft 一次提交正文与六维 review。可在同次提交的 brief 中保存 scene、characters、knowledge、style、progression、stopAt 六项简短事实与执行约束，不要求单独 prepare 请求。省略 brief 不免除作者原文的内部核对，宿主不会伪造简报。候选事件链在内部评估，不提交推理过程。读取和准备记录与当前回合、分支及规则版本绑定，不能由其他回合沿用。
-按选中作者的完整审稿规则检查正文，以六项可观察标准提交 review：人物声音与行动、信息差、已选文风与字数、时间因果与情节承接、玩家重大决定的保留、当前正文场景与卡片格式。各项为 pass/revise 和简短具体正文依据；这是审稿结果，不是推理过程。宿主同次保存、检查，通过后直接确认并结束，不再发起独立 review Agent 或额外 check/ready 请求。同次发现的具体缺陷合并为 sike_patch_draft 的 patches 数组，并一并提交修改后 review。局部修订额度由本局设置为 0–2 次，无问题允许零补丁。额度耗尽后非阻断文风和内容建议记作备注，协议、格式和审阅结构错误仍暂停保留草稿。不能用“标签没错”代替文风检查。
+首要任务是交付本轮完整正文。当前请求已经装配的作者原文和材料直接复用；只有缺少具体依据时才用 sike_read_turn、记忆、世界书或 Skills 补查。可直接输出完整正文，也可用一次 sike_put_draft({text,review?,brief?}) 保存并提交。brief 可选记录 scene、characters、knowledge、style、progression、stopAt；宿主不会伪造简报。候选事件链及原作者核对步骤在内部执行，不提交推理过程。读取和准备记录绑定当前回合、分支与规则版本。
+按选中作者的完整审稿规则在内部核对人物、信息差、文风字数、因果承接、玩家选择和输出格式。六维 review 是可选的可观察记录，缺失或结构不完整不阻断正文。宿主确定性检查通过后直接提交；只有已明确需要继续优化时传 finalize=false，再以当前 expectedVersion 和唯一片段的 patches 局部修改。本局 0–2 次修订预算约束可选优化，不限制首篇正文、必要格式或协议修复、最终提交。预算结束即交付可用正文，不为回执、独立审稿或完成提示增加调用。不能用“标签没错”代替作者文风核对。
 简单场景可减少检索次数，仍须遵守文风和已启用输出功能。扩写、转述、禁止抢话、深度扮演与大纲模式的角色控制范围采用本局选定原文，不能把这些选项写成同一种行为；未授权的重大决定仍留给玩家，深度扮演的明确授权仅在当前回合生效。若选定平行事件，结算后仍按作者原文输出场外展示，但它是派生内容，不回写本轮变量、记忆或正式世界事实，场内人物不能因此自动知情。需要改变权威状态的事件留待后续正式剧情确认。
 确认后仅提交草稿原文一次，不在聊天重写或缩短正文。压缩后本契约和已选规则仍会重新装配；长期事实按需从记忆及原历史恢复。`
 
@@ -118,7 +118,7 @@ function adapt(entry) {
       .replace('对于作废段落，输出`</dream_delete>`。', '对于作废段落，用唯一定位的局部补丁删除或改写，不在正文输出 dream_delete。')
       .replace('每次分析开头为：`<!-- 分析之`。', '检查结果采用原生审稿工具的简短可观察依据，不输出分析注释。')
       .replace('正文的**每一段**都必须先草稿、分析，再输出正文。', '正文的**每一段**都必须经过草稿与检查，正式提交仅使用修正后的正文。')
-      .replace(/## 输出格式规范[\s\S]*?(?=## 范例)/, '## 原生执行格式\n按上述完整作者规则检查每段，在 sike_put_draft 同次提交正文及六维 review；发现具体缺陷时，在本局修订额度内一次提交 sike_patch_draft 的 patches 与修改后 review。宿主同次检查并确认，不再发起独立审稿。以下为作者原示例，仅作为规则参照；其中的注释、分析和 dream_delete 不是正式输出格式。\n\n') }
+      .replace(/## 输出格式规范[\s\S]*?(?=## 范例)/, '## 原生执行格式\n按上述完整作者规则检查每段，在内部核对后用 sike_put_draft 提交正文，六维 review 可选；明确需要继续优化时先传 finalize=false，再按当前版本以 sike_patch_draft 批量局部修订。宿主检查并提交，不为审阅回执另起调用。以下为作者原示例，仅作为规则参照；其中的注释、分析和 dream_delete 不是正式输出格式。\n\n') }
   }
   if (id === IDS.flash && content.includes('{{setvar::sleep_var_thinking_level::') && content.includes('思考核心在于角色分析和遵守写规')) {
     return { action: 'agent-style-focus', content: content
@@ -130,7 +130,7 @@ function adapt(entry) {
   if (id === IDS.selfCheck && content.includes('# 检查范围') && content.includes('# 修复格式') && content.includes('# 输出格式')) {
     return { action: 'agent-editorial-review', content: content
       .replace('FIND、REPLACE 成对输出。', 'FIND、REPLACE 成对作为局部修订参数，分别对应 find、replacement。')
-      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n使用 sike_put_draft 的 review 记录上述逐项审稿结果和简短正文依据；若需修订，使用 sike_patch_draft 的 expectedVersion、patches 数组及修改后 review 一次提交。也支持单项 find、replacement。宿主按返回的当前版本校验并直接确认，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则；本局修订额度为 0–2 次，无问题允许零补丁，不强凑改动数量。额度耗尽后纯文风和内容建议记为备注，协议、格式或审阅结构错误暂停保留草稿。') }
+      .replace(/# 输出格式[\s\S]*$/, '# 原生执行格式\n在内部执行上述逐项审稿；可选使用 sike_put_draft 的 review 记录简短正文依据。若明确需要继续优化，先传 finalize=false，再使用 sike_patch_draft 的 expectedVersion 和 patches 一次提交。也支持单项 find、replacement。宿主按返回的当前版本校验并直接确认，不向正文插入 dream_self_check、review 或 patch 标签。\n沿用上述检查范围与唯一定位规则；本局 0–2 次额度约束可选文风优化，无问题立即完成，不强凑改动。额度耗尽即提交可用正文，必要格式和协议修复不计入可选预算；审阅结构不阻断正文。') }
   }
   if (id === IDS.parallel && content.includes('# 平行事件思考') && content.includes('# 平行事件输出')) return { action: 'native-parallel-format', content: content
     .replace('在`<simple_thinking>`内进行一次简短的思考。该思考遵循以下步骤：', '在内部进行一次简短的核对，不向正文输出核对过程。该核对遵循以下步骤：')

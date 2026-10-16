@@ -98,16 +98,22 @@ export function rebindDreamSikePreparation(chat, fromIdentity, toIdentity) {
 /** The writing submission may carry a brief; never invent one when it was omitted. */
 export function prepareDreamSikeWriting(chat, identity, brief, now = Date.now()) {
   if (!needsDreamSikePreparation(chat)) return null
-  if (brief !== undefined && brief !== null) return prepareDreamSikeTurn(chat, identity, brief, now)
-  const receipt = chat.dreamSikePreparation
+  let receipt = chat.dreamSikePreparation
   if (!same(receipt, identity) || !receipt.readAt
     || receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)) {
-    throw new Error('请先读取本回合材料与当前作者规则，再提交正文')
+    // The native request already carries the selected author prompt and turn
+    // context. Tool-read receipts describe optional research, not permission to
+    // write. Do not manufacture a claim that the read tool was invoked.
+    receipt = same(receipt, identity) ? receipt : { ...identity, readAt: null }
+    receipt.contractDigest = str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)
+    receipt.submissionMode = 'direct'
+    chat.dreamSikePreparation = receipt
   }
+  if (brief !== undefined && brief !== null) return prepareDreamSikeTurn(chat, identity, brief, now)
   if (!receipt.preparedAt) {
     receipt.preparedAt = now
     receipt.briefOmitted = true
-    receipt.submissionMode = 'inline'
+    receipt.submissionMode ||= 'inline'
   }
   return clone(receipt)
 }
@@ -155,8 +161,9 @@ export function assertDreamSikePreparation(chat, identity, draft = null) {
   if (!needsDreamSikePreparation(chat)) return
   const receipt = draft?.preparation || chat.dreamSikePreparation
   if (!same(receipt, identity) || !receipt.preparedAt
-    || (!receipt.brief && !(receipt.submissionMode === 'inline' && receipt.briefOmitted === true && receipt.readAt))) {
-    throw new Error('本局已启用写前决策流程：先 sike_read_turn，再随正文提交可选六项简报；作者核对步骤仍须在内部执行')
+    || (!receipt.brief && !(receipt.briefOmitted === true
+      && (receipt.submissionMode === 'direct' || receipt.submissionMode === 'inline' && receipt.readAt)))) {
+    throw new Error('当前正文尚未绑定本回合的预设版本，请重新保存正文；写作准备与资料工具按需使用')
   }
   if (receipt.contractDigest !== str(dreamSikeContractView(chat.runtimePresetSnapshot, chat.playPresetId)?.digest)) {
     throw new Error('预设规则已变化，请重新读取回合并更新写作准备')

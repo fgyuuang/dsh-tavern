@@ -14,7 +14,9 @@ async function read(args, proof, withDraft = false) {
   registerDreamSikeTools({ tools: { register: tool => tools.set(tool.name, tool) }, chatForSession: async () => chat,
     updateChat: async (_id, change) => change(chat), activeTurnOf: () => 2,
     requestCoordinates: new Map([['s', { authorRuleDelivery: proof }]]) })
-  const output = await tools.get('sike_read_turn').execute(args, { agent: { session: { id: 's' }, phase: { turn: 2, step: 1 } } })
+  // Exercise the reader's payload projection independently of live phase admission;
+  // once writing starts the foreground no longer exposes research tools.
+  const output = await tools.get('sike_read_turn').execute(args, { agent: { session: { id: 's' }, ...(withDraft ? {} : { phase: { turn: 2, step: 1 } }) } })
   return { ...output, parsed: JSON.parse(output.report), receipt: chat.dreamSikePreparation }
 }
 function proof(contents = rules.map(rule => rule.content)) {

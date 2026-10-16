@@ -5,11 +5,13 @@ const PHASE_STAGE = Object.freeze({
   preparation: 'query',
   'query-paused': 'query',
   draft: 'initial',
-  'draft-retry': 'revision',
-  checking: 'revision',
+  'draft-retry': 'initial',
+  checking: 'completion',
   revision: 'revision',
-  confirming: 'revision',
-  paused: 'revision'
+  repair: 'completion',
+  confirming: 'completion',
+  ready: 'completion',
+  paused: 'completion'
 })
 
 export function dreamSikeExecutionStageForPhase(phase) {
@@ -18,7 +20,7 @@ export function dreamSikeExecutionStageForPhase(phase) {
 
 export function dreamSikeExecutionCounts(usage) {
   const counts = usage?.counts && typeof usage.counts === 'object' ? usage.counts : {}
-  return Object.fromEntries(['query', 'initial', 'revision', 'settlement', 'addons', 'addons-retry', 'compaction', 'maintenance']
+  return Object.fromEntries(['query', 'initial', 'revision', 'completion', 'settlement', 'addons', 'addons-retry', 'compaction', 'maintenance']
     .map(stage => [stage, Math.max(0, Number(counts[stage]) || 0)]))
 }
 
@@ -28,7 +30,8 @@ export function dreamSikeExecutionView(usage, policy) {
   const counts = dreamSikeExecutionCounts(usage)
   const limits = {
     query: normalizedPolicy.queryRequests,
-    initial: 1,
+    initial: null,
+    completion: null,
     revision: normalizedPolicy.revisionRequests,
     addons: 1
   }

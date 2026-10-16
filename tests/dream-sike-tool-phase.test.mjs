@@ -5,98 +5,81 @@ import { dreamSikeTurnIdentity, putDreamSikeDraft, checkDreamSikeDraft, readyDre
 import { recordDreamSikeTurnRead, prepareDreamSikeTurn } from '../tavern-plugin/lib/domain/dream-sike-preparation.js'
 import { registerDreamSikeTools } from '../tavern-plugin/lib/tools/dream-sike.js'
 import { registerRequestHooks } from '../tavern-plugin/lib/hooks/request.js'
-import { mergeDreamSikeDraftModule, dreamSikeDraftModulePlan } from '../tavern-plugin/lib/domain/dream-sike-draft-modules.js'
 const fixture = () => ({ id:'c', sessionId:'s', mode:'story', playPresetId:'dream-sike-dsh', messages:[],
   timeline:{branchId:'b',revision:1,operations:{op:{id:'op',kind:'body',turn:1,status:'running',basedOn:{branchId:'b',revision:1}}}} })
-test('平行模块和独立审稿阶段依次开放，修订后先更新模块再检查确认', () => {
+const usage = counts => ({ rootOperationId: 'op', branchId: 'b', counts })
+
+// Parallel/addon work now follows the formal body; it never gates first delivery.
+test('selected parallel and review rules do not force foreground module calls before body confirmation', () => {
   const chat=fixture(),identity=dreamSikeTurnIdentity(chat,'s',1)
   chat.runtimePresetSnapshot={back:{entries:[{id:'807eefad-93ca-490c-a629-1d51038e3626',content:'DREAM_PARALLEL_EVENT：场外事件。'},
     {id:'4e26a3ac-4d46-45ed-85bf-0110fbe06cd2',content:'# 检查范围\n检查正文。\n# 修复格式\n局部修订。'}]}}
-  const review=Object.fromEntries(['character','knowledge','style','continuity','playerAgency','format'].map(key=>[key,{status:'pass',evidence:'人物停在门口，玩家的回应与下一步选择保留。'}]))
-  const parallel={text:'<dream_parallel_event>塔楼|有人收信。<br>他尚不知道主线动作。</dream_parallel_event>'}
   putDreamSikeDraft(chat,identity,'<dream_plot><dream_body>他在门口。</dream_body><dream_after_format></dream_after_format></dream_plot>')
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'modules')
-  mergeDreamSikeDraftModule(chat,identity,1,dreamSikeDraftModulePlan(chat,'parallel'),parallel,{})
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'review')
-  mergeDreamSikeDraftModule(chat,identity,2,dreamSikeDraftModulePlan(chat,'review'),{review:{...review,style:{status:'revise',evidence:'补足当前场景动作描写，并保持门口停止位置。'}}},{})
-  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,['sike_read_turn','sike_patch_draft'])
-  patchDreamSikeDraft(chat,identity,{expectedVersion:2,find:'他在门口。',replacement:'他在门口抬手敲门。'})
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'modules')
-  mergeDreamSikeDraftModule(chat,identity,3,dreamSikeDraftModulePlan(chat,'parallel'),parallel,{})
-  mergeDreamSikeDraftModule(chat,identity,4,dreamSikeDraftModulePlan(chat,'review'),{review},{})
   assert.equal(dreamSikeToolPhase(chat,'s',1).name,'checking')
-  checkDreamSikeDraft(chat,identity,4)
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'confirming')
+  const checked=checkDreamSikeDraft(chat,identity,1)
+  assert.equal(checked.checks.editorial.required,false)
+  assert.deepEqual(checked.checks.issues,[])
+  assert.equal(readyDreamSikeDraft(chat,identity,1).status,'ready')
+  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,[])
 })
-test('启用作者写前决策时先读再准备，审阅参数缺失只补参数不强迫正文修订', () => {
+
+test('source planning is optional; explicit preparation keeps its evidence without blocking direct drafting', () => {
   const chat=fixture(),identity=dreamSikeTurnIdentity(chat,'s',1)
   chat.runtimePresetSnapshot={front:{entries:[{id:'0da6f4d7-961d-4966-a084-857a3dd876ad',content:'original enabled planning'}]}}
   assert.equal(dreamSikeToolPhase(chat,'s',1).name,'reading')
-  recordDreamSikeTurnRead(chat,identity)
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'preparation')
-  prepareDreamSikeTurn(chat,identity,Object.fromEntries(['scene','characters','knowledge','style','progression','stopAt'].map(key=>[key,'保持当前角色设定及场景事实，留下玩家回应。'])))
+  recordDreamSikeTurnRead(chat,identity,Date.now(),{finishResearch:true})
   assert.equal(dreamSikeToolPhase(chat,'s',1).name,'draft')
+  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,['sike_put_draft'])
+  prepareDreamSikeTurn(chat,identity,Object.fromEntries(['scene','characters','knowledge','style','progression','stopAt'].map(key=>[key,'保持当前角色设定及场景事实，留下玩家回应。'])))
   putDreamSikeDraft(chat,identity,'他等在门口。')
   checkDreamSikeDraft(chat,identity,1)
-  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,['sike_read_turn','sike_check_draft'])
+  assert.equal(readyDreamSikeDraft(chat,identity,1).status,'ready')
 })
-test('阶段只提供当前可用写作工具，保留资料工具，确认前不可再次起草或提前确认', () => {
-  const chat=fixture(), identity=dreamSikeTurnIdentity(chat,'s',1)
-  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,['sike_read_turn','sike_put_draft'])
-  recordDreamSikeTurnRead(chat,identity)
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'draft')
-  putDreamSikeDraft(chat,identity,'门开了一道缝。')
-  const phase=dreamSikeToolPhase(chat,'s',1)
-  assert.equal(phase.name,'checking')
-  const assembly={tools:['sike_put_draft','sike_ready_draft','sike_check_draft','worldbook_search'].map(name=>({name})),sections:[{name:'tool:sike_put_draft',text:'put'},{name:'author',text:'原作者文风'}]}
+
+test('research exhaustion removes generic reads, shell and Skills while preserving authored sections and body submission', () => {
+  const chat=fixture()
+  const reading=dreamSikeToolPhase(chat,'s',1,usage({query:0}))
+  assert.ok(reading.tools.includes('worldbook_search'))
+  assert.ok(reading.tools.includes('skill'))
+  const phase=dreamSikeToolPhase(chat,'s',1,usage({query:1}))
+  assert.equal(phase.name,'draft')
+  const assembly={tools:['sike_put_draft','sike_read_turn','skill','shell','worldbook_search'].map(name=>({name})),
+    sections:[{name:'tool:worldbook_search',text:'search'},{name:'author',text:'原作者文风'}]}
   const projected=applyDreamSikeToolPhase(assembly,phase)
-  assert.deepEqual(projected.tools.map(tool=>tool.name),['sike_check_draft','worldbook_search'])
+  assert.deepEqual(projected.tools.map(tool=>tool.name),['sike_put_draft'])
   assert.ok(projected.sections.some(section=>section.text==='原作者文风'))
-  assert.ok(projected.sections.at(-1).text.includes('当前执行阶段'))
-  assert.equal(assembly.tools.length,4)
-  checkDreamSikeDraft(chat,identity,1)
-  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'confirming')
-  readyDreamSikeDraft(chat,identity,1)
-  assert.deepEqual(dreamSikeToolPhase(chat,'s',1).tools,[])
+  assert.ok(!projected.sections.some(section=>section.name==='tool:worldbook_search'))
+  assert.match(projected.sections.at(-1).text,/当前执行阶段/)
+  assert.equal(assembly.tools.length,5)
 })
-test('同一步的预推测修改或确认不执行，下个模型步骤可继续，无重复写入', async () => {
+
+test('reading and saving may share a Step; speculative second mutations never write another version', async () => {
   let chat=fixture(); const tools=new Map()
   registerDreamSikeTools({tools:{register:t=>tools.set(t.name,t)},chatForSession:async()=>structuredClone(chat),
-    updateChat:async(_id,mutate)=>{chat=await mutate(structuredClone(chat));return chat},activeTurnOf:()=>1})
-  const reviewSchema = tools.get('sike_check_draft').parameters.properties.review.oneOf[0]
-  assert.equal(reviewSchema.type, 'object')
-  assert.deepEqual(reviewSchema.required, ['character','knowledge','style','continuity','playerAgency','format'])
-  for (const axis of Object.values(reviewSchema.properties)) {
-    assert.equal(axis.type, 'object')
-    assert.deepEqual(axis.required, ['status','evidence'])
-    assert.deepEqual(axis.properties.status.enum, ['pass','revise'])
-  }
+    updateChat:async(_id,mutate)=>(chat=await mutate(structuredClone(chat))),activeTurnOf:()=>1})
   const exec={agent:{session:{id:'s'},phase:{turn:1,step:1}}}
   await tools.get('sike_read_turn').execute({},exec)
-  await tools.get('sike_put_draft').execute({text:'门向内开了。'},exec)
+  await tools.get('sike_put_draft').execute({text:'门向内开了。',finalize:false},exec)
   const skipped=await tools.get('sike_patch_draft').execute({expectedVersion:1,find:'向内',replacement:'向外'},exec)
   assert.match(skipped.report,/未执行/)
   assert.equal(chat.dreamSikeDraft.text,'门向内开了。')
   exec.agent.phase.step=2
-  await tools.get('sike_patch_draft').execute({expectedVersion:1,find:'向内',replacement:'向外'},exec)
-  assert.equal(chat.dreamSikeDraft.version,2)
-  await tools.get('sike_patch_draft').execute({expectedVersion:3,find:'不存在',replacement:'错误'},exec)
+  await tools.get('sike_patch_draft').execute({expectedVersion:1,find:'向内',replacement:'向外',finalize:false},exec)
   assert.equal(chat.dreamSikeDraft.version,2)
   exec.agent.phase.step=3
   await tools.get('sike_check_draft').execute({expectedVersion:2},exec)
-  await tools.get('sike_ready_draft').execute({expectedVersion:2},exec)
-  assert.equal(chat.dreamSikeDraft.status,'draft')
-  exec.agent.phase.step=4
-  await tools.get('sike_ready_draft').execute({expectedVersion:2},exec)
   assert.equal(chat.dreamSikeDraft.status,'ready')
+  assert.equal(chat.dreamSikeDraft.text,'门向外开了。')
 })
-test('规则分页和修订超过12步继续原生请求，不再触发固定总步数失败', async () => {
+
+test('native requests beyond twelve Steps are not rejected by a fixed total limit', async () => {
   const handlers=new Map()
   registerRequestHooks({ctx:{on:(name,handler)=>handlers.set(name,handler)},requestCoordinates:new Map(),
-    tavernRetryLimiter:{handle(){}},backgroundAgentRunner:{owns:()=>false},chatForSession:async()=>fixture()})
+    tavernRetryLimiter:{handle(){}},backgroundAgentRunner:{owns:()=>false,requestContext:()=>null},chatForSession:async()=>fixture()})
   for(const step of [12,13,25]) assert.equal(await handlers.get('agent/request')({agent:{session:{id:'s'}},turn:1,step},async()=> 'continued'),'continued')
 })
-test('前台提前生成平行事件时保存主线并移交独立模块，脚本字面值原样保留', () => {
+
+test('early parallel output is deferred while the main body and script literals survive unchanged', () => {
   const chat=fixture(),identity=dreamSikeTurnIdentity(chat,'s',1)
   chat.runtimePresetSnapshot={back:{entries:[{id:'807eefad-93ca-490c-a629-1d51038e3626',content:'DREAM_PARALLEL_EVENT：场外事件。'}]}}
   const script='<script>const example="<dream_parallel_event>脚本字面值</dream_parallel_event>"</script>'
@@ -108,61 +91,21 @@ test('前台提前生成平行事件时保存主线并移交独立模块，脚�
   assert.deepEqual(chat.messages,[])
 })
 
-// The editor keeps returning revise, so the phase must stop demanding another pass once the
-// budget is spent; otherwise the draft can never be confirmed and the turn dies at the step cap.
-test('审稿预算用尽后阶段不再要求新一轮修订，直接进入检查与确认', () => {
-  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
-  chat.runtimePresetSnapshot = { back: { entries: [{ id: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2', content: '# 检查范围\n检查正文。\n# 修复格式\n局部修订。' }] } }
-  const evidence = '人物停在门口，玩家的回应与下一步选择保留。'
-  const revise = Object.fromEntries(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'].map(key => [key, { status: 'pass', evidence }]))
-  revise.style = { status: 'revise', evidence: '补足当前场景动作描写，并保持门口停止位置。' }
-  putDreamSikeDraft(chat, identity, '<dream_plot><dream_body>他在门口。</dream_body><dream_after_format></dream_after_format></dream_plot>')
-  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
-  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'revision')
-  assert.equal(chat.dreamSikeDraft.editorialRounds, 1)
-  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
-  assert.equal(chat.dreamSikeDraft.editorialRounds, 2)
-  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'checking')
-  assert.match(dreamSikePhaseInstruction(dreamSikeToolPhase(chat, 's', 1)), /不追求每项永远全 pass/)
-  const checked = checkDreamSikeDraft(chat, identity, 1)
-  assert.equal(checked.checks.editorial.passed, true)
-  assert.deepEqual(checked.checks.issues, [])
-  assert.equal(dreamSikeToolPhase(chat, 's', 1).name, 'confirming')
-  const phase = dreamSikeToolPhase(chat, 's', 1)
-  assert.equal(phase.context.expectedVersion, 1)
-  assert.deepEqual(phase.context.blockingIssues, [])
-  assert.equal(phase.context.editorialNotes.length, 1)
-  assert.match(dreamSikePhaseInstruction(phase), /非阻断文风建议不要求再次审稿/)
-  assert.ok(phase.tools.includes('sike_patch_draft'), '用户仍可继续局部修改，不受修订额度限制')
-  assert.equal(readyDreamSikeDraft(chat, identity, 1).status, 'ready')
-})
-
-test('实时阶段指令给出真实草稿版本、允许工具与当前阻断理由', () => {
-  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
-  putDreamSikeDraft(chat, identity, '<dream_body>门开了。')
-  checkDreamSikeDraft(chat, identity, 1)
-  const phase = dreamSikeToolPhase(chat, 's', 1)
-  const instruction = dreamSikePhaseInstruction(phase)
-  const current = JSON.parse(instruction.split('\n')[0].replace('【当前执行阶段】', ''))
-  assert.equal(current.phase, 'revision')
-  assert.equal(current.expectedVersion, 1)
-  assert.deepEqual(current.allowedTools, ['sike_read_turn', 'sike_patch_draft'])
-  assert.equal(current.blockingIssues[0].code, 'unbalanced-dream_body')
-  patchDreamSikeDraft(chat, identity, { expectedVersion: 1, find: '门开了。', replacement: '门开了。</dream_body>' })
-  assert.equal(dreamSikeToolPhase(chat, 's', 1).context.expectedVersion, 2)
-  assert.match(dreamSikePhaseInstruction(dreamSikeToolPhase(chat, 's', 1)), /"checkVersion":null/)
-})
-
-// A clean review resets the budget so a later revise round is not skipped.
-test('审稿全通过会清零修订预算', () => {
-  const chat = fixture(), identity = dreamSikeTurnIdentity(chat, 's', 1)
-  chat.runtimePresetSnapshot = { back: { entries: [{ id: '4e26a3ac-4d46-45ed-85bf-0110fbe06cd2', content: '# 检查范围\n检查正文。\n# 修复格式\n局部修订。' }] } }
-  const evidence = '人物停在门口，玩家的回应与下一步选择保留。'
-  const clean = Object.fromEntries(['character', 'knowledge', 'style', 'continuity', 'playerAgency', 'format'].map(key => [key, { status: 'pass', evidence }]))
-  const revise = { ...clean, style: { status: 'revise', evidence: '补足当前场景动作描写。' } }
-  putDreamSikeDraft(chat, identity, '<dream_plot><dream_body>他在门口。</dream_body><dream_after_format></dream_after_format></dream_plot>')
-  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: revise }, {})
-  assert.equal(chat.dreamSikeDraft.editorialRounds, 1)
-  mergeDreamSikeDraftModule(chat, identity, 1, dreamSikeDraftModulePlan(chat, 'review'), { review: clean }, {})
-  assert.equal(chat.dreamSikeDraft.editorialRounds, 0)
+test('zero optional revisions keeps deterministic repair available and exposes the exact live version', () => {
+  const chat=fixture(); chat.dreamSikeExecutionPolicy={revisionRequests:0}
+  const identity=dreamSikeTurnIdentity(chat,'s',1)
+  putDreamSikeDraft(chat,identity,'<dream_body>门开了。')
+  checkDreamSikeDraft(chat,identity,1)
+  const phase=dreamSikeToolPhase(chat,'s',1,usage({revision:20}))
+  const current=JSON.parse(dreamSikePhaseInstruction(phase).split('\n')[0].replace('【当前执行阶段】',''))
+  assert.equal(current.phase,'repair')
+  assert.equal(current.expectedVersion,1)
+  assert.deepEqual(current.allowedTools,['sike_patch_draft','sike_check_draft'])
+  assert.equal(current.blockingIssues[0].code,'unbalanced-dream_body')
+  patchDreamSikeDraft(chat,identity,{expectedVersion:1,find:'门开了。',replacement:'门开了。</dream_body>'})
+  assert.equal(dreamSikeToolPhase(chat,'s',1).context.expectedVersion,2)
+  assert.match(dreamSikePhaseInstruction(dreamSikeToolPhase(chat,'s',1)),/"checkVersion":null/)
+  checkDreamSikeDraft(chat,identity,2)
+  assert.equal(dreamSikeToolPhase(chat,'s',1).name,'confirming')
+  assert.equal(readyDreamSikeDraft(chat,identity,2).status,'ready')
 })

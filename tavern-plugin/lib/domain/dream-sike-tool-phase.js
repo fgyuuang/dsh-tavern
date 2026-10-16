@@ -1,5 +1,5 @@
 import { dreamSikeTurnIdentity } from './dream-sike-draft.js'
-import { assertDreamSikePreparation, dreamSikePreparationView } from './dream-sike-preparation.js'
+import { dreamSikePreparationView } from './dream-sike-preparation.js'
 import { normalizeDreamSikeExecutionPolicy } from './dream-sike-execution-policy.js'
 import { dreamSikeExecutionCounts } from './dream-sike-execution-usage.js'
 import { isWritingAgentExecution } from './generation-mode.js'
@@ -50,33 +50,24 @@ export function dreamSikeToolPhase(chat, sessionId, turn, executionUsage, {
       blockingIssues: (draft?.checks?.issues || []).map(issue => ({ code: issue.code, message: issue.message })),
       editorialNotes: draft?.checks?.editorial?.notes || [] } })
   const preparation = dreamSikePreparationView(chat, identity)
-  const requiresRead = true
   const readComplete = Boolean(preparation?.queriesCompleteAt)
-  if (requiresRead && !preparation?.readAt && queryRemaining === 0) {
-    return phase('query-paused', [], '查询额度已用完但当前回合材料尚未成功读取；保留本轮，不能跳过必要材料检查。')
-  }
-  if (requiresRead && preparation?.readAt && !readComplete && queryRemaining === 0) {
-    return phase('query-paused', [], '作者规则或必要材料仍未读完，查询额度已用尽；保留本轮，不得跳过未读规则直接起草。')
-  }
-  if (requiresRead && (!preparation?.readAt || !readComplete && queryRemaining > 0)) {
-    return phase('reading', ['sike_read_turn', ...queryTools], '先用一次请求读取本回合材料与作者规则，并在同一请求内按需调用允许的记忆、历史、世界书和变量检索工具。sike_read_turn 的 finishResearch 默认 true；仅当已经明确缺少关键资料且查询额度仍有剩余时才传 false，以保留一次补查。每个模型请求都计入查询额度。')
-  }
   if (!draft) {
-    if (admissionCounts.initial > 0) return remaining
-      ? phase('draft-retry', ['sike_put_draft'], '上一次初稿请求没有建立可用草稿；本次重新提交完整正文与六维 review，计入一次修订/恢复额度。')
-      : phase('paused', [], '初稿请求已失败，修订/恢复额度为零；保留本轮状态，调整额度后继续。')
-    return phase('draft', ['sike_put_draft'], '查询结束后一次提交 text 与六维 review；可选 brief 同时提交。宿主在同一写入中保存、检查并确认，通过后直接结束，不再单独调用 prepare、check 或 ready。')
+    if (!readComplete && queryRemaining > 0 && !admissionCounts.initial) return phase('reading',
+      ['sike_read_turn', 'sike_put_draft', ...queryTools],
+      '首要任务是完成本轮正文。当前请求已装配本局作者原文和场景材料；仅在缺少具体事实时查询记忆、世界书或变量，Skills 按需加载。可直接输出完整正文或用 sike_put_draft 保存并提交。无需为取得写作许可重复读取规则、准备或审阅；查询次数是可选优化预算。')
+    return phase('draft', ['sike_put_draft'],
+      '可选研究阶段已结束，现在完成本轮正文；直接输出完整可渲染正文，或一次 sike_put_draft({text,review?,brief?}) 保存并提交。已加载的 Skill 和资料并未消耗正文机会。原作者原文与当前场景已随请求装配，停止重复读取或加载 Skill。需要继续优化时显式 finalize=false；否则宿主保存并检查后直接提交。')
   }
-  try { assertDreamSikePreparation(chat, identity) }
-  catch { return phase('preparation', ['sike_prepare_turn'], '读取后保存六项写作准备，再建立主线草稿。') }
-  if (draft.status === 'ready') return { ...phase('ready', [], '草稿已确认。结束工具调用，返回一句完成提示。'), tools: [] }
-  if (draft.checks?.version !== draft.version) return phase('checking', ['sike_check_draft', ...(remaining ? ['sike_patch_draft'] : [])],
-    '对当前完整草稿提交六维 review；宿主同时检查并直接确认，通过即结束。需要修订时一次提交批量补丁与修改后 review，不再单独请求 ready。')
-  if (draft.checks.issues.some(issue => /^editorial-(missing|extra-axis|invalid-)/.test(issue.code))) return phase('checking', ['sike_check_draft'], '补齐六维审阅结构和具体依据后重新检查；审阅参数缺失不要求修改正文。')
-  if (draft.checks.issues.length) return remaining
-    ? phase('revision', ['sike_patch_draft'], '依据本次缺陷一次提交 patches 与修改后六维 review；宿主批量应用、检查并直接确认。不重复建立草稿，不猜测版本，不为非阻断建议反复审稿。')
-    : { ...phase('paused', [], '局部修订额度已用尽，协议或格式问题仍未通过；保留当前草稿并暂停，调整额度后继续。'), tools: [] }
-  return phase('confirming', ['sike_ready_draft'], '旧检查已通过，直接确认当前版本；正常的新正文与补丁提交由宿主自动完成此步骤。')
+  if (draft.status === 'ready') return phase('ready', [], '正文已保存并确认；立即结束，宿主从该版本提交一次，无需完成提示或再次调用模型。')
+  if (draft.checks?.version !== draft.version) return phase('checking', ['sike_check_draft', 'sike_ready_draft', ...(remaining ? ['sike_patch_draft'] : [])],
+    '正文已保存，结束时宿主会检查当前版本并提交。只在发现具体问题时修订；review 和 brief 均为可选记录，不为补齐结构反复调用模型。')
+  const requiredIssues = draft.checks.issues.filter(issue => !/^preset-(?:body-length|banned-word|banned-dash|banned-phrase)$/.test(issue.code))
+  if (requiredIssues.length) return phase('repair', ['sike_patch_draft', 'sike_check_draft'],
+    '完整正文已保存。修复列明的确定性格式或协议缺陷后提交；必要修复与确认不属于可选文风修订预算。expectedVersion 使用当前版本，不重建正文，不重复研究或审稿。')
+  if (remaining > 0 && draft.status === 'draft') return phase('revision', ['sike_patch_draft', 'sike_check_draft', 'sike_ready_draft'],
+    '正文已经通过协议检查，可直接结束提交。仅有明确改进时，在剩余可选修订预算内批量局部优化；没有问题则立即完成，不为用满预算增加调用。')
+  return phase('confirming', ['sike_ready_draft', 'sike_check_draft'],
+    '可选优化已结束；当前可用正文由宿主检查并提交。立即结束即可，无需额外模型确认；不得因优化预算耗尽丢弃或暂停完整正文。')
 }
 
 /** Shared by the model prompt and rejected out-of-phase calls; never relies on old tool results. */
@@ -84,14 +75,15 @@ export function dreamSikePhaseInstruction(phase) {
   if (!phase) return ''
   return '【当前执行阶段】' + JSON.stringify({ phase: phase.name, allowedTools: phase.tools, moduleKind: phase.moduleKind, ...phase.context })
     + '\n' + phase.instruction
-    + ' 只调用 allowedTools 中的写作工具；expectedVersion 使用此处当前值，不能沿用历史版本。每个模型步骤只执行一次写作状态变更；收到结果后依据新版本继续，其他修改合并进 patches。规则续页只使用实际返回的nextOffset，不在同一步猜测后续页。'
+    + ' expectedVersion 使用此处当前值，不能沿用历史版本。正文是首要成果，检索、Skills、简报和审阅按需使用；允许直接输出符合原作者规则的完整正文。一次请求可先读取后保存正文，版本修改合并进 patches。规则续页只使用实际返回的 nextOffset，不在同一步猜测后续页。'
 }
 
 export function applyDreamSikeToolPhase(assembly, phase) {
   if (!phase) return assembly
   const allowed = new Set(phase.tools)
-  const queryStage = phase.name === 'reading'
-  const keep = name => (!names.has(name) && (!queryTools.has(name) || queryStage)) || allowed.has(name)
+  // A prose Agent is deliberately smaller than the native project Agent. Once
+  // optional research ends, no generic read/shell/Skill tools can reopen it.
+  const keep = name => allowed.has(name)
   return { ...assembly,
     tools: (assembly.tools || []).filter(tool => keep(tool.name)).map(tool => tool.name === 'sike_run_module' && phase.moduleKind
       ? { ...tool, parameters: { ...tool.parameters, properties: { ...tool.parameters?.properties,

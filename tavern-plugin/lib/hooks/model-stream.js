@@ -143,7 +143,7 @@ export function registerModelStreamHooks({
       const coordinates = requestCoordinates.get(sessionId) || {}
       const purpose = str(options.purpose)
       const plannedStage = str(backgroundContext?.stage || attempt.executionStage || coordinates.executionStage)
-      const stage = purpose ? (/compact/i.test(purpose) ? 'compaction' : 'maintenance') : plannedStage
+      let stage = purpose ? (/compact/i.test(purpose) ? 'compaction' : 'maintenance') : plannedStage
       const rootOperationId = str(backgroundContext?.rootOperationId || attempt.rootOperationId || coordinates.rootOperationId)
       const branchId = str(backgroundContext?.branchId || attempt.branchId || coordinates.branchId)
       const rootTurn = Number(backgroundContext?.rootTurn ?? attempt.rootTurn ?? coordinates.rootTurn ?? coordinates.turn) || 0
@@ -154,8 +154,10 @@ export function registerModelStreamHooks({
           turn: Number(coordinates.turn ?? attempt.turn) || 0, step: Number(coordinates.step ?? attempt.step) || 0,
           operationId: str(coordinates.operationId || attempt.operationId),
           allowPolicyUpdate: !backgroundContext && (coordinates.allowExecutionPolicyUpdate === true || attempt.allowExecutionPolicyUpdate === true),
+          allowBodyCompletion: !backgroundContext && !purpose,
           stage, purpose, provider: str(options.provider), model: str(options.model), policy: chat.dreamSikeExecutionPolicy
         })
+        if (executionReservation?.accepted && executionReservation.stage) stage = executionReservation.stage
         if (executionReservation?.accepted === false) {
           const error = new Error('剧情 Agent ' + ({ query: '写前查询', initial: '正文初稿', revision: '正文修订', addons: '后续附加内容' }[stage] || stage)
             + '请求额度已用完，当前成果已保留；调整对应额度后可继续。')

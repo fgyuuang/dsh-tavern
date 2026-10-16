@@ -10,7 +10,7 @@ metadata:
 
 当 `presetRules.delivery` 是 `current-model-request` 时，作者规则已逐字注入当前模型请求，工具只返回核验索引，直接复用已收到的原文。不要为索引重复读取整份规则；需要主动核验、补读或恢复缺失材料时，显式使用 `includeRules: true`。
 
-调用 `sike_read_turn`，以 `presetContract`、玩家行动、最近正文和状态为本回合依据。检查 `preparation.materials` 的截断标志；按本局档位在正文前使用 1–2 次模型查询请求，关键事实未覆盖时按需调用 `worldbook_search`、`tavern_recall_history`、`tavern_read_variables` 或 `tavern_memory`。不要把截断预览当作完整资料，也不要为了覆盖所有资料重复检索。
+首要任务是交付完整正文。当前请求已有作者原文、玩家行动、最近正文和状态时直接复用；仅缺少具体依据或需要恢复分支时调用 `sike_read_turn`。查询档位限制可选研究投入，不能成为起草和提交的许可门槛。关键事实未覆盖时再按需调用 `worldbook_search`、`tavern_recall_history`、`tavern_read_variables` 或 `tavern_memory`；不要为了覆盖所有资料重复检索。
 
 读取已展开的作者规则页，依其完整任务顺序工作。原默认流程的“一、检设定”要求定位历史 uid、相关设定及其可产生的反应，并分别核对正文内与后置格式清单；“二、辨视角”使用本局所选人物分析；“三、遵写规”逐项执行写规并区分输入处理方式；“四、演叙事”考察至少三条因果事件链，再逐步执行选定叙事者核心。各章的具体原句以本局规则读取结果为准，不能用六项简报代替这些步骤。
 
@@ -25,6 +25,6 @@ metadata:
 - `progression`：本轮要呈现的互动与直接后果，不披露完整推演。
 - `stopAt`：正文在哪里停住，留给玩家的下一步选择。
 
-在写前核对中保留原作者完整步骤与六项事实要求；首次调用 `sike_put_draft` 时，可在同一请求的 `brief` 中提交 `scene`、`characters`、`knowledge`、`style`、`progression`、`stopAt`，无需单独调用 `sike_prepare_turn`。同次提交正文和六维审阅。审阅通过后由宿主检查并直接提交，不再调用独立 `sike_check_draft` 或 `sike_ready_draft`。若确实需要修订，按所选的 0–2 次修订请求额度，用一次批量 `sike_patch_draft` 同时提交局部补丁与更新后的审阅。失败时依工具反馈处理，不沿用旧回合或旧规则记录。
+在内部保留原作者完整核对步骤；`brief` 和六维 `review` 均可省略。一次 `sike_put_draft({text,brief?,review?})` 保存正文，宿主确定性检查通过后直接提交；也可直接输出完整正文，由宿主保存和提交。只有已经发现具体改进且希望继续处理时传 `finalize:false`，在可选修订预算内批量局部优化；无问题立即结束。预算耗尽时提交可用正文，必要格式与协议修复不占可选文风预算。不要为补齐回执或完成提示再调用模型。
 
 连续读取规则页时可省略重复的材料与草稿，使用 `includeMaterials=false`、`includeDraft=false`；读取当前草稿时可 `includeRules=false`。首次、压缩或重启后读取完整资料。平行事件及其他已启用附加模块在正文提交和状态结算后由一次独立后台调用生成，不进入主线草稿，也不参与正文前的查询预算。

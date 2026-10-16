@@ -9,9 +9,9 @@ const hash = value => createHash('sha256').update(typeof value === 'string' ? va
 
 export const HUSHEN_CONTRACT_INSTRUCTION = `【狐神抚 DSH · 原作者写作契约】
 本局使用狐神抚原作者规则，保持初始化宏、选项写入、第一阶段基础要求和第二阶段输出前检查的顺序。人物、感知边界、叙事方法、文风、人称、玩家输入转述、抢话授权、篇幅、正文标签、狐策和其他启用功能由已选原文决定。不得替换成其他预设的写法或添加其他预设的文档外壳。
-先 sike_read_turn 读取本轮材料和作者原文；原文分页尚有续读时按需完整读取，摘要不是规则原文。连续续读用 includeMaterials=false、includeDraft=false，避免重复材料。卡片、世界书、分支历史、最新输入和本局记忆按原生工具读取；源文件导出的旧会话记忆不成为当前局事实。
+当前请求已装配的作者原文和材料直接复用；缺少具体依据时才用 sike_read_turn 补查。原文确有缺页时按需完整读取，摘要不是规则原文。连续续读用 includeMaterials=false、includeDraft=false，避免重复材料。卡片、世界书、分支历史、最新输入和本局记忆按原生工具读取；源文件导出的旧会话记忆不成为当前局事实。
 按所选作者方法在内部完成感知边界、人物动机、情绪承接、情节节拍、潜文本、技法、反套路和硬规则核对。原文中的思考输出模板表示作者的工作步骤，不要求输出或存储完整私有推理，不伪造供应商 reasoning 或 assistant 预填充。可以保留可观察的角色内心描写；它与 Agent 的私有推理不同。
-初稿通过 sike_put_draft 一次提交 text 与六维 review。scene、characters、knowledge、style、progression、stopAt 可在同次 brief 中记录简短事实和约束；不要求额外模型调用。review 的 character、knowledge、style、continuity、playerAgency、format 各为 pass/revise 与简短正文依据。发现具体问题时合并为唯一定位的 sike_patch_draft patches，并提交当前 expectedVersion 和修改后 review。本局调用预算约束查询与修订；不为凑次数发起调用。
+正文可直接输出，或通过 sike_put_draft 一次保存 text，review 可选。scene、characters、knowledge、style、progression、stopAt 可在同次 brief 中记录简短事实和约束；不要求额外模型调用。review 的 character、knowledge、style、continuity、playerAgency、format 各为 pass/revise 与简短正文依据。发现具体问题时合并为唯一定位的 sike_patch_draft patches，并提交当前 expectedVersion 和修改后 review。本局预算约束可选查询和文风优化；只有已明确需要继续优化时传 finalize=false。预算结束即提交可用正文，必要格式、协议修复和最终提交不占可选额度；不为审阅回执或凑次数发起调用。
 作者狐稿规则定义检查范围与修正标准，原来的草稿/分析标签仅作工作方法参考。正式正文仅保留完成的可见文档，不夹带 <draft>、<think_fox~> 或完整核对过程。宿主同次检查并确认；通过后只提交草稿一次，不在主聊天重新写一遍。
 正文使用所选原正文标签及原卡片 HTML。狐策四个选项和短评、狐神留言、狐构大纲、狐映信息载体和总结在启用时仍按原协议随本次文档完成；当前实现尚未把这些功能迁往额外调用，不得遗漏。信息载体是可见剧情表现，不能擅自把载体内容升级为角色已知事实。
 MVU、JSONPatch 和状态变量由正文确认后的原生后台结算，同一回合只结算一次；草稿禁止输出 UpdateVariable 或可执行变量补丁。角色卡已要求的可见状态栏保留其标签、字段和顺序，后台采用作者所选状态模式及卡片规则；不另开旧助手模型任务。压缩/重启后恢复规则、当前分支材料和唯一草稿。原脚本高级狐忆、狐裁、数据库、图像和额外模型功能只有标记为已接入的能力可调用，partial 状态不表示原脚本已运行。`

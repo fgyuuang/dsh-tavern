@@ -38,6 +38,12 @@ function jsonArgument(value, label) {
   if (typeof value !== 'string') return value
   try { return JSON.parse(value) } catch (_) { throw new Error(label + ' 需要 JSON 结构，不能是普通文本') }
 }
+function optionalReview(value) {
+  try { return jsonArgument(value, 'review') } catch { return undefined }
+}
+function optionalBrief(args) {
+  try { return briefArgument(args) } catch { return undefined }
+}
 function offsetArgument(value, fallback) {
   if (value === undefined || value === null) return fallback
   const number = typeof value === 'string' ? Number(value.trim()) : value
@@ -55,16 +61,8 @@ function followedVersion(chat, identity, value) {
   return Number.isSafeInteger(live) && live !== requested ? live : requested
 }
 const PREPARATION_KEYS = ['scene', 'characters', 'knowledge', 'style', 'progression', 'stopAt']
-const briefInput = () => jsonInput({ type: 'object', additionalProperties: false,
-  properties: Object.fromEntries(PREPARATION_KEYS.map(key => [key, { type: 'string', required: true }]))
-}, '可选六项简报 {scene, characters, knowledge, style, progression, stopAt}；每项非空、最多400字符。与正文同次提交，不展开内部推理。')
-const reviewInput = () => jsonInput({ type: 'object', additionalProperties: false,
-  properties: Object.fromEntries(DREAM_SIKE_REVIEW_AXES.map(axis => [axis, {
-    type: 'object', required: true, additionalProperties: false,
-    properties: { status: { type: 'string', required: true, enum: ['pass', 'revise'] },
-      evidence: { type: 'string', required: true, description: '8–500字符的具体正文依据，不能只写检查通过' } }
-  }]))
-}, '剧情必填六维审阅：character、knowledge、style、continuity、playerAgency、format，各为 {status:"pass"或"revise",evidence:"当前正文具体依据"}。正文或补丁同次提交；聊天和总结模式省略。对象或其JSON字符串。')
+const briefInput = () => ({ type: 'json', description: '可选六项简报 {scene, characters, knowledge, style, progression, stopAt}；每项非空、最多400字符。对象或JSON字符串均可，宿主单独校验，无效简报不丢弃正文。不展开内部推理。' })
+const reviewInput = () => ({ type: 'json', description: '可选六维审阅：character、knowledge、style、continuity、playerAgency、format，各为 {status:"pass"或"revise",evidence:"当前正文具体依据"}。对象或JSON字符串均可，宿主单独校验；不为补齐回执额外请求模型，无效元数据不丢弃正文。' })
 function briefArgument(args) {
   const nested = jsonArgument(args?.brief, 'brief')
   if (nested && typeof nested === 'object' && !Array.isArray(nested)) return nested
@@ -175,7 +173,7 @@ function turnReport(chat, identity, args = {}) {
     } : null,
     next: (presetRules.hasMore ? '已选作者规则还有未读取部分：用 presetRules.nextOffset / nextContentOffset 分别作为 ruleOffset / ruleContentOffset 续读；不要把分页视为全部规则。' : '当前页已到所选作者规则末尾。')
       + (needsDreamSikeEditorialReview(chat)
-        ? '按已选作者完整规则核对材料、人物、格式、文风和叙事者方法；需要依据时仅在查询阶段检索。资料完整时 finishResearch=true 结束查询；若已明确缺少剧情关键资料且查询额度尚有剩余，finishResearch=false 保留一次补查。查询结束后一次 sike_put_draft({text,review,brief?}) 提交正文、六维审阅及可选简报，宿主同次检查并确认；有问题才在额度内批量局部修订。平行事件等附加内容留给正文与结算后，不提前输出，不展开私有推理。'
+        ? '按已选作者完整规则核对材料、人物、格式、文风和叙事者方法；当前已装配原文和材料直接复用，缺少依据时再检索。可直接输出完整正文或一次 sike_put_draft({text,review?,brief?}) 保存并提交，review和brief可省略；只有明确希望继续优化时传 finalize=false。可选额度结束即提交可用正文，必要格式修复不受其限制。平行事件等附加内容留给正文与结算后，不提前输出，不展开私有推理。'
         : '当前为 ' + (contract?.outputMode || '普通') + ' 输出模式，按该模式的作者原文执行，不要求剧情六项准备或六维剧情审稿；仍须建立、检查并确认唯一回复。')
   }
   if (chat.playPresetId === 'hushen-dsh') {
@@ -189,7 +187,7 @@ function turnReport(chat, identity, args = {}) {
       User_latest_request: { field: 'playerAction', reference: 'action:' + identity.operationId }
     }
     report.next = (presetRules.hasMore ? '原作者规则尚有续页，按 nextOffset / nextContentOffset 继续读取。' : '当前页已到所选原作者规则末尾。')
-      + '按狐神抚原文核对本轮材料、人物各自可知信息、转述与控制边界、文风、字数和正文格式。查询完成后，用一次 sike_put_draft({text,review,brief?}) 提交完整草稿及六维可观察审阅；有具体缺陷才批量修订。狐策、留言、时间栏和已选前端沿用本局原文格式，不输出梦境思客标签，不输出私有思考封装，不写变量协议。'
+      + '按狐神抚原文核对本轮材料、人物各自可知信息、转述与控制边界、文风、字数和正文格式。用一次 sike_put_draft({text,review?,brief?}) 提交完整正文，或直接输出完整正文；review和brief可省略，只有明确希望继续优化时传 finalize=false。狐策、留言、时间栏和已选前端沿用本局原文格式，不输出梦境思客标签，不输出私有思考封装，不写变量协议。'
   }
   if (args.includeMaterials === false) {
     for (const field of ['playerAction', 'posture', 'recent', 'worldBook', 'state']) delete report[field]
@@ -230,7 +228,9 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     return tools.register({ ...tool, async execute(args, exec) {
       const agent = exec?.agent, phase = agent?.phase
       const scoped = agent && Number.isSafeInteger(phase?.turn) && Number.isSafeInteger(phase?.step)
-      const key = scoped ? phase.turn + ':' + phase.step : null
+      // Reads are not body mutations: reading and submitting in one provider
+      // response is safe and avoids a compulsory extra generation round.
+      const key = scoped && tool.name !== 'sike_read_turn' ? phase.turn + ':' + phase.step : null
       if (scoped) {
         const { chat, identity } = await resolve(exec)
         const rootOperationId = executionRootFor(chat, identity)
@@ -292,7 +292,8 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     }
     return { report: action + '，当前版本 ' + draft.version + '；草稿已保留。'
       + (draft.checks?.issues || []).map(issue => issue.message).join('；')
-      + '。按当前阶段一次提交批量补丁与修改后 review；无需另起审稿 Agent。', draft }
+      + (draft.checks?.issues?.length ? '。按当前版本修复列明的格式或协议问题。' : '。可直接结束并提交；仅有明确改进时再局部优化。')
+      + '无需另起审稿 Agent。', draft }
   }
 
   register(defineTool({
@@ -346,7 +347,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
           // another page; the next query request must read that page first.
           finishResearch: args.finishResearch !== false && material.presetRules.hasMore !== true
         })
-        if (material.presetRules.hasMore === true) material.next += ' 作者规则尚有续页，系统会保持写前查询阶段；仅在额度内读取下一页。当前写前查询上限为 ' + queryPolicy.queryRequests + ' 次模型请求。'
+        if (material.presetRules.hasMore === true) material.next += ' 本次主动读取尚有规则续页；当前请求已装配的作者原文可直接复用，不为此阻断正文。缺页时按实际位置补查；当前可选写前查询预算为 ' + queryPolicy.queryRequests + ' 次模型请求。'
         if (input.includeMaterials !== false) material.preparation = dreamSikePreparationView(chat, identity)
         report = JSON.stringify(material)
       }, 'turn.read')
@@ -379,22 +380,24 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
 
   register(defineTool({
     name: 'sike_put_draft',
-    description: '一次提交本回合唯一正文、剧情六维 review 与可选六项 brief。保留作者正文外壳、场景栏及人物卡HTML；宿主同次保存并检查，通过后直接确认和结束，无需额外prepare/check/ready。平行事件、选项、共创和摘要留给结算后的同一附加调用。已有草稿使用批量局部修订，不能重建；未确认草稿不触发正式消息或变量结算。',
+    description: '一次提交本回合唯一正文，review 和 brief 均可省略。保留作者正文外壳、场景栏及人物卡HTML；宿主同次保存并检查，通过后直接确认和结束，无需额外prepare/check/ready。平行事件、选项、共创和摘要留给结算后的同一附加调用。已有草稿使用批量局部修订，不能重建；未确认草稿不触发正式消息或变量结算。',
     parameters: { text: { type: 'string', required: true, description: '完整可渲染主线正文和已选卡片HTML，不含私有推理、变量协议或结算后的附加模块' },
+      finalize: { type: 'boolean', description: '默认 true：保存检查并直接提交。仅已明确需要继续优化时传 false；即使不提供审阅或简报，也能提交完整正文。' },
       brief: briefInput(), review: reviewInput() },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => submitDreamSikeDraft(chat, identity,
-        { text: args.text, brief: briefArgument(args), review: jsonArgument(args.review, 'review') }), 'draft.put')
+        { text: args.text, brief: optionalBrief(args), review: optionalReview(args.review), finalize: args.finalize !== false }), 'draft.put')
       return submissionResult(draft, exec, '正文已保存')
     }
   }))
 
   register(defineTool({
     name: 'sike_patch_draft',
-    description: '在本局0–2次修订额度内，一次提交批量局部 patches 与修改后六维 review；宿主原子应用、检查并直接确认，通过后结束。1–8个片段依序唯一定位，全部有效才保存一个新版本。也兼容单项find/replacement，不得整篇重写或猜测版本。无问题允许零修订。',
+    description: '在本局可选文风优化额度内，一次提交批量局部 patches 与可选 review；必要格式或协议修复不占该额度。宿主原子应用、检查并直接确认，通过后结束。1–8个片段依序唯一定位，全部有效才保存一个新版本。也兼容单项find/replacement，不得整篇重写或猜测版本。无问题允许零修订。',
     parameters: {
       expectedVersion: integerInput('当前草稿版本，整数（例如 3）', true),
+      finalize: { type: 'boolean', description: '默认 true：修复并检查后直接提交；false 保留可选优化草稿。' },
       find: { type: 'string', description: '单项修订的唯一原文片段；与 patches 二选一' },
       replacement: { type: 'string', description: '单项替换内容；可为空字符串' },
       patches: jsonInput({ type: 'array', items: { type: 'object', additionalProperties: false, properties: {
@@ -405,7 +408,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => reviseDreamSikeDraft(chat, identity,
         { expectedVersion: draftVersion(args.expectedVersion), find: args.find, replacement: args.replacement,
-          patches: jsonArgument(args.patches, 'patches'), review: jsonArgument(args.review, 'review') }), 'draft.patch')
+          patches: jsonArgument(args.patches, 'patches'), review: optionalReview(args.review), finalize: args.finalize !== false }), 'draft.patch')
       return submissionResult(draft, exec, '局部修订已保存')
     }
   }))
@@ -427,7 +430,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
   }))
   register(defineTool({
     name: 'sike_check_draft',
-    description: '仅用于恢复旧草稿或纠正遗漏审阅结构；新正文/补丁的同次提交已自动检查和确认。提交当前版本的六维review后，宿主检查通过便直接确认并结束，无需再请求ready。文风判断来自Agent对照作者原文，不等于程序证明质量。',
+    description: '用于按需检查已保存草稿；review可省略，遗漏审阅结构不会阻断正文。新正文/补丁同次已自动检查和确认。宿主检查通过便直接确认并结束，无需再请求ready。文风判断来自Agent对照作者原文，不等于程序证明质量。',
     parameters: {
       expectedVersion: integerInput('要检查的草稿版本，整数', true),
       review: reviewInput()
@@ -435,7 +438,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
       const draft = await write(exec, (chat, identity) => finishDreamSikeDraftSubmission(chat, identity,
-        draftVersion(args.expectedVersion), jsonArgument(args.review, 'review')), 'draft.check')
+        draftVersion(args.expectedVersion), optionalReview(args.review)), 'draft.check')
       return submissionResult(draft, exec, '正文审阅已保存')
     }
   }))
@@ -446,7 +449,7 @@ export function registerDreamSikeTools({ tools, chatForSession, updateChat, acti
     parameters: { expectedVersion: integerInput('已检查通过的草稿版本，整数', true) },
     output, isConcurrencySafe: () => false,
     async execute(args, exec) {
-      const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, followedVersion(chat, identity, args.expectedVersion)), 'draft.ready')
+      const draft = await write(exec, (chat, identity) => readyDreamSikeDraft(chat, identity, draftVersion(args.expectedVersion)), 'draft.ready')
       exec.concludeTurn?.()
       return { report: '版本 ' + draft.version + ' 已确认并锁定。宿主立即结束本回合，从已确认草稿提交正式正文一次。', draft }
     }
