@@ -15,10 +15,18 @@
 .dsh-tavern-project-directory p { margin: 0; padding: 0 6px 8px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 1.55; }
 .tavern-project-search { box-sizing: border-box; flex: none; width: 100%; min-height: 32px; padding: 6px 9px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); }
 .dsh-composer-preset-trigger.tavern-agent-composer-mode { position: relative; max-width: 150px; cursor: pointer; }
-.tavern-agent-composer-mode select { box-sizing: border-box; width: auto; min-width: 0; max-width: 112px; min-height: 24px; padding: 0 14px 0 0; appearance: none; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
-.tavern-agent-composer-mode select:disabled { opacity: .75; cursor: default; }
-.tavern-agent-composer-chevron { margin-left: -13px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 1; pointer-events: none; }
-.tavern-agent-composer-mode option { color: var(--dsw-alias-label-primary); background: var(--dsw-specific-menu, #fff); }
+.tavern-agent-composer-mode:disabled { opacity: .75; cursor: default; }
+.tavern-agent-composer-chevron { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 1; pointer-events: none; }
+.tavern-agent-mode-menu { position: fixed; z-index: 1100; box-sizing: border-box; width: min(260px, calc(100vw - 24px)); overflow: auto; padding: 6px; border: 0; border-radius: var(--dsw-radius-xl, 20px); background: var(--dsw-specific-menu, #fff); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent, 0 8px 28px #0002); font: 13px/1.5 var(--dsh-tavern-font-sans, 'Segoe UI', system-ui, sans-serif); }
+.tavern-agent-mode-heading { padding: 8px 10px 6px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.tavern-agent-mode-menu button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tavern-agent-mode-menu button:hover, .tavern-agent-mode-menu button:focus-visible { background: var(--dsw-alias-interactive-bg-hover, #f3f3f3); }
+.tavern-agent-mode-menu button[aria-checked=true] { background: var(--dsw-alias-interactive-bg-active, #efefef); }
+.tavern-agent-mode-name, .tavern-agent-mode-menu small { display: block; }
+.tavern-agent-mode-menu small { margin-top: 2px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.tavern-agent-mode-check { flex: none; color: var(--dsw-alias-label-secondary); }
+.tavern-agent-mode-menu p { margin: 4px 10px 6px; padding-top: 8px; border-top: .5px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.tavern-agent-mode-menu button:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .tavern-agent-composer-locked { min-width: 0; overflow: hidden; color: var(--dsw-alias-label-primary); text-overflow: ellipsis; white-space: nowrap; }
 .tavern-agent-composer-error { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 8px); width: min(280px, calc(100vw - 24px)); padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; color: var(--dsw-alias-state-error-primary, #c64545); background: var(--dsw-specific-menu, #fff); box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.16)); overflow-wrap: anywhere; }
 .dsh-tavern-project-agent :is(button, select, input, summary):focus-visible,

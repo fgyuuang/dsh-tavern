@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require => {
-  const React = require('react'), h = React.createElement
+  const React = require('react'), ReactDom = require('react-dom'), h = React.createElement
   return { name: 'dsh-tavern-project-agent', inject: ['tavernUi', 'slots', 'sessions', 'workspaces', 'remote', 'remote.agentPresets'], apply(ctx) {
     if (typeof ctx.tavernUi.registerSidebarWorkspace !== 'function') return
     const rpc = (method, args = {}) => ctx.tavernUi.callHost('dsh-tavern-project-agent/request', { method, args })
@@ -64,31 +64,61 @@ window.__ModuleLoader__.load({ id: 'dsh-tavern-project-agent', factory: require 
       const session = sessionId ? snapshot.byId?.[sessionId] : null
       const record = records.find(row => row.sessionId === sessionId)
       const [busy, setBusy] = React.useState(false), [error, setError] = React.useState(''), [pendingMode, setPendingMode] = React.useState('')
+      const [open, setOpen] = React.useState(false), [position, setPosition] = React.useState(null)
+      const trigger = React.useRef(null), menu = React.useRef(null), saving = React.useRef(false), identity = React.useId()
+      React.useEffect(() => { setOpen(false); setError(''); setPendingMode('') }, [sessionId])
+      React.useLayoutEffect(() => {
+        if (!open) return
+        const place = () => {
+          const rect = trigger.current?.getBoundingClientRect()
+          if (rect) setPosition({ left: Math.max(12, Math.min(rect.left, window.innerWidth - 260 - 12)), bottom: Math.max(12, window.innerHeight - rect.top + 8), maxHeight: Math.max(100, rect.top - 20) })
+        }
+        const outside = event => { if (!trigger.current?.contains(event.target) && !menu.current?.contains(event.target)) setOpen(false) }
+        const keydown = event => {
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); return }
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const items = Array.from(menu.current?.querySelectorAll('[role="menuitemradio"]:not(:disabled)') || [])
+          const current = items.indexOf(document.activeElement)
+          const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+          items[index]?.focus()
+        }
+        place(); menu.current?.querySelector('[aria-checked="true"]')?.focus()
+        document.addEventListener('pointerdown', outside); menu.current?.addEventListener('keydown', keydown)
+        window.addEventListener('resize', place); window.addEventListener('scroll', place, true)
+        const element = menu.current
+        return () => { document.removeEventListener('pointerdown', outside); element?.removeEventListener('keydown', keydown); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true) }
+      }, [open])
+      React.useEffect(() => { if (session?.blank !== true) setOpen(false) }, [session?.blank])
       if (!record || ctx.sessions.subagentAddress?.(sessionId)) return null
       const selectedId = pendingMode || record.nativePresetId
       const selectedMode = info?.modes?.find(row => row.id === selectedId)
-      async function change(event) {
-        const presetId = event.target.value
-        if (busy || session?.blank !== true) return
-        setBusy(true); setError(''); setPendingMode(presetId)
+      async function change(presetId) {
+        if (saving.current || session?.blank !== true) return
+        saving.current = true; setBusy(true); setOpen(false); setError(''); setPendingMode(presetId)
         try {
           const result = await ctx.remote.agentPresets.select(sessionId, presetId)
           if (!result.ok) throw Error(result.error?.message || '模式切换失败')
           await rpc('register', { sessionId, presetId })
           await refresh(); setPendingMode('')
         } catch (failure) { setPendingMode(''); setError(String(failure.message || failure)) }
-        finally { setBusy(false) }
+        finally { saving.current = false; setBusy(false); trigger.current?.focus() }
       }
-      return h('label', { className: 'dsh-composer-preset-trigger tavern-agent-composer-mode', title: error || (session?.blank === true ? '首条消息发送前可以切换 Agent 模式' : '会话开始后模式固定') },
-        session?.blank === true
-          ? h(React.Fragment, null,
-            h('select', { 'aria-label': 'Agent 模式', value: selectedId, disabled: busy || !info?.modes?.length, onChange: change }, ...(info?.modes || []).map(row => h('option', { key: row.id, value: row.id }, row.name))),
-            h('span', { className: 'tavern-agent-composer-chevron', 'aria-hidden': true }, '⌄'))
-          : h('span', { className: 'tavern-agent-composer-locked', 'aria-label': 'Agent 模式已锁定' }, selectedMode?.name || selectedId),
+      return h(React.Fragment, null,
+        h('button', { ref: trigger, type: 'button', className: 'dsh-composer-preset-trigger tavern-agent-composer-mode',
+          'aria-label': session?.blank === true ? 'Agent 模式' : 'Agent 模式已锁定', 'aria-haspopup': 'menu', 'aria-expanded': open,
+          'aria-controls': open ? identity : undefined, disabled: busy || !info?.modes?.length || session?.blank !== true,
+          title: session?.blank === true ? '选择 Agent 模式' : '会话开始后模式固定', onClick: () => setOpen(value => !value) },
+          h('span', null, selectedMode?.name || selectedId), h('span', { 'aria-hidden': true, className: 'tavern-agent-composer-chevron' }, '⌄')),
+        open ? ReactDom.createPortal(h('div', { ref: menu, id: identity, role: 'menu', 'aria-label': '选择 Agent 模式', className: 'tavern-agent-mode-menu', style: position || { visibility: 'hidden' } },
+          h('div', { className: 'tavern-agent-mode-heading' }, 'Agent 模式'),
+          ...(info?.modes || []).map(row => h('button', { key: row.id, type: 'button', role: 'menuitemradio', 'aria-checked': row.id === selectedId, disabled: busy, onClick: () => change(row.id) },
+            h('span', null, h('span', { className: 'tavern-agent-mode-name' }, row.name), row.description ? h('small', null, row.description) : null), h('span', { 'aria-hidden': true, className: 'tavern-agent-mode-check' }, row.id === selectedId ? '✓' : ''))),
+          h('p', null, '发送首条消息后固定本局模式。')), document.body) : null,
         error ? h('span', { className: 'tavern-agent-composer-error', role: 'alert' }, error) : null)
     }
     ctx.tavernUi.registerSidebarWorkspace({ id: 'agent', label: 'Agent', sessions: store, component: ProjectAgentPanel })
-    ctx.effect(() => { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = ctx.tavernUi.assetUrl('workspace.css'); document.head.append(link); return () => link.remove() }, 'project Agent styles')
+    ctx.effect(() => { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = ctx.tavernUi.assetUrl('workspace.css') + '?v=20261016-menu2'; document.head.append(link); return () => link.remove() }, 'project Agent styles')
     ctx.effect(() => ctx.slots.inject('conversation.input.right', () => ctx.slots.register({ name: 'conversation.input.right', id: 'dsh-tavern-project-agent-mode', order: 70, label: 'Agent mode' }, () => React.createElement(ProjectAgentComposerMode))), 'project Agent composer mode')
     void refresh().catch(() => {})
   } }
