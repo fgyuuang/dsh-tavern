@@ -31,6 +31,13 @@
 			const [uiMode, setUiMode] = React.useState("play");
 			const [requestMode, setRequestMode] = React.useState("dsh");
 			const compatibilityAvailable = false;
+			const workspaceRootRef = React.useRef(null);
+			React.useLayoutEffect(function () {
+				// The host keeps this flex region mounted while the workspace changes.
+				// Reset any stale programmatic scroll before the new workspace is painted.
+				const region = workspaceRootRef.current?.closest('[class*="_regionArea"]');
+				if (region) region.scrollTop = 0;
+			}, [uiMode, collapsed]);
 			const [trustedCardMode, setTrustedCardMode] = React.useState(true);
 			const [cardEntry, setCardEntry] = React.useState("");
 			const [openingPicker, setOpeningPicker] = React.useState(null);
@@ -1234,11 +1241,11 @@
                 ...extraWorkspaces.map(entry => h('button', { key: entry.id, type: 'button', 'aria-pressed': uiMode === entry.id, className: uiMode === entry.id ? 'active' : '', disabled: busy, onClick: () => switchMode(entry.id) }, entry.label)));
             const extraWorkspace = extraWorkspaces.find(entry => entry.id === uiMode);
             if (extraWorkspace) return h(React.Fragment, null, collapsedSidebar,
-                h('div', { className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
+                h('div', { ref: workspaceRootRef, className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
                     h('div', { className: 'dsh-tavern-side-head' }, h('div', { className: 'dsh-tavern-side-brand dsh-tavern-lockup', role: 'img', 'aria-label': 'DSH Tavern' }), props.embedded ? null : h('button', { className: 'dsh-tavern-side-icon', onClick: props.toggleSidebar, 'aria-label': '收起侧栏' }, '◧')),
                     modeTabs, h(extraWorkspace.component, { currentSessionId: current, visible: !collapsed,
                         onSessionsChanged: () => refresh(['sessions']), onOpen: () => { if (mainOpening) props.hideOpening(); setPicking(false); } })));
-			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },
+			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { ref: workspaceRootRef, className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },
 				h("div", { className: "dsh-tavern-side-head" }, h("div", { className: "dsh-tavern-side-brand dsh-tavern-lockup", role: "img", "aria-label": "DSH Tavern" }), props.embedded ? null : h("button", { className: "dsh-tavern-side-icon", title: "收起侧栏", onClick: props.toggleSidebar }, "◧")),
                 modeTabs,
 				h("button", { className: "dsh-tavern-side-new", disabled: busy, onClick: function () { openPicker(); } }, uiMode === "play" ? (openingPicker ? "继续开局 · " + openingPicker.card.name : requestMode === "sillytavern" ? "＋ 选择人物卡 · 新开silly 对话" : "＋ 选择人物卡 · 新开游玩") : "＋ 新建卡片工作台对话"),
