@@ -31,45 +31,6 @@
 			const [uiMode, setUiMode] = React.useState("play");
 			const [requestMode, setRequestMode] = React.useState("dsh");
 			const compatibilityAvailable = false;
-			const workspaceRootRef = React.useRef(null);
-			React.useLayoutEffect(function () {
-				// Pin the host flex region above dynamic panel rows. The selected sidebar
-				// lives inside this region, so a late panel registration must not push it
-				// below the top brand area. Restore host styles when Tavern unmounts.
-				const region = workspaceRootRef.current?.closest('[class*="_regionArea"]');
-				if (!region) return;
-				const previousRegion = { order: region.style.order, overflow: region.style.overflow };
-				const hostRoot = region.parentElement;
-				const panelList = Array.from(hostRoot?.children || []).find(function (element) { return String(element.className || "").includes("_panelList"); });
-				const previousPanelList = panelList ? {
-					flex: panelList.style.flex,
-					minHeight: panelList.style.minHeight,
-					maxHeight: panelList.style.maxHeight,
-					overflowY: panelList.style.overflowY,
-					overscrollBehavior: panelList.style.overscrollBehavior
-				} : null;
-				region.style.order = "-1";
-				region.style.overflow = "clip";
-				region.scrollTop = 0;
-				if (panelList) {
-					panelList.style.flex = "0 1 auto";
-					panelList.style.minHeight = "0";
-					panelList.style.maxHeight = "min(28vh, 320px)";
-					panelList.style.overflowY = "auto";
-					panelList.style.overscrollBehavior = "contain";
-				}
-				return function () {
-					if (region.style.order === "-1") region.style.order = previousRegion.order;
-					if (region.style.overflow === "clip") region.style.overflow = previousRegion.overflow;
-					if (panelList && previousPanelList) {
-						if (panelList.style.flex === "0 1 auto") panelList.style.flex = previousPanelList.flex;
-						if (panelList.style.minHeight === "0px") panelList.style.minHeight = previousPanelList.minHeight;
-						if (panelList.style.maxHeight === "min(28vh, 320px)") panelList.style.maxHeight = previousPanelList.maxHeight;
-						if (panelList.style.overflowY === "auto") panelList.style.overflowY = previousPanelList.overflowY;
-						if (panelList.style.overscrollBehavior === "contain") panelList.style.overscrollBehavior = previousPanelList.overscrollBehavior;
-					}
-				};
-			}, [uiMode, collapsed]);
 			const [trustedCardMode, setTrustedCardMode] = React.useState(true);
 			const [cardEntry, setCardEntry] = React.useState("");
 			const [openingPicker, setOpeningPicker] = React.useState(null);
@@ -1272,12 +1233,14 @@
                 h('button', { type: 'button', 'aria-pressed': uiMode === 'card', className: uiMode === 'card' ? 'active' : '', disabled: busy, onClick: () => switchMode('card') }, '卡片'),
                 ...extraWorkspaces.map(entry => h('button', { key: entry.id, type: 'button', 'aria-pressed': uiMode === entry.id, className: uiMode === entry.id ? 'active' : '', disabled: busy, onClick: () => switchMode(entry.id) }, entry.label)));
             const extraWorkspace = extraWorkspaces.find(entry => entry.id === uiMode);
-            if (extraWorkspace) return h(React.Fragment, null, collapsedSidebar,
-                h('div', { ref: workspaceRootRef, className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
+            if (extraWorkspace) return h(React.Fragment, null, h(TavernErrorCenter),
+                mainOpening ? h('div', { key: 'opening-parking', className: 'dsh-opening-parking', hidden: true, ref: props.parkOpening }) : null,
+                mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar,
+                h('div', { key: 'tavern-sidebar', className: 'dsh-tavern-sidebar', style: { display: collapsed ? 'none' : undefined, position: 'relative', width: props.embedded ? '100%' : props.width + 'px' } },
                     h('div', { className: 'dsh-tavern-side-head' }, h('div', { className: 'dsh-tavern-side-brand dsh-tavern-lockup', role: 'img', 'aria-label': 'DSH Tavern' }), props.embedded ? null : h('button', { className: 'dsh-tavern-side-icon', onClick: props.toggleSidebar, 'aria-label': '收起侧栏' }, '◧')),
                     modeTabs, h(extraWorkspace.component, { currentSessionId: current, visible: !collapsed,
                         onSessionsChanged: () => refresh(['sessions']), onOpen: () => { if (mainOpening) props.hideOpening(); setPicking(false); } })));
-			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { ref: workspaceRootRef, className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },
+			return h(React.Fragment, null, h(TavernErrorCenter), mainOpening ? h("div", { key: "opening-parking", className: "dsh-opening-parking", hidden: true, ref: props.parkOpening }) : null, mainOpening ? props.renderOpening(openingPage) : null, collapsedSidebar, h("div", { key: "tavern-sidebar", className: "dsh-tavern-sidebar", style: { display: collapsed ? "none" : undefined, position: "relative", width: props.embedded ? "100%" : props.width + "px" } },
 				h("div", { className: "dsh-tavern-side-head" }, h("div", { className: "dsh-tavern-side-brand dsh-tavern-lockup", role: "img", "aria-label": "DSH Tavern" }), props.embedded ? null : h("button", { className: "dsh-tavern-side-icon", title: "收起侧栏", onClick: props.toggleSidebar }, "◧")),
                 modeTabs,
 				h("button", { className: "dsh-tavern-side-new", disabled: busy, onClick: function () { openPicker(); } }, uiMode === "play" ? (openingPicker ? "继续开局 · " + openingPicker.card.name : requestMode === "sillytavern" ? "＋ 选择人物卡 · 新开silly 对话" : "＋ 选择人物卡 · 新开游玩") : "＋ 新建卡片工作台对话"),

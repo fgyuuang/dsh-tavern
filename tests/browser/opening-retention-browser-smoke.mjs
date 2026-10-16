@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { browserReactScript } from '../fixtures/browser-react.mjs'
 const bundle = await browserReactScript()
-const client = await readFile(process.env.DSH_CLIENT_SOURCE || new URL('../../tavern-plugin/lib/client.js', import.meta.url), 'utf8')
+const client = (await readFile(process.env.DSH_CLIENT_SOURCE || new URL('../../tavern-plugin/lib/client.js', import.meta.url), 'utf8')).replace('const tavernUiExtensions = createTavernUiExtensions();', 'const tavernUiExtensions = createTavernUiExtensions(); window.fixtureExtensions=tavernUiExtensions;')
 const css = await readFile(new URL('../../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8')
 const card = { path:'retention.json', name:'开局保留测试', first_mes:'表单' }
 const content = '<label>角色名<input id="name"></label><label><input id="choice" type="checkbox">选项</label><button id="increment" onclick="window.chosen++;this.textContent=window.chosen">增加</button><script>window.chosen=0;window.instance=Math.random();</script>'
@@ -14,6 +14,7 @@ modules['@deepseek-ai/dsh-client-ui-primitives']={MarkdownText:props=>modules.re
 window.__ModuleLoader__={load(d){window.client=d.factory(name=>modules[name]||{});}};
 ${client}
 const React=modules.react, root=modules['react-dom/client'].createRoot(document.querySelector('#app'));
+fixtureExtensions.service.registerSidebarWorkspace({id:'agent',label:'Agent',sessions:{getSnapshot:()=>[],subscribe:()=>()=>{}},component:()=>React.createElement('section',null,'项目对话')});
 let Slot,MainSlot,activePanel=null;const sessionState={current:'',byId:{}};
 const sessions={create:async()=>{throw Error('fixture intentional start failure')},list:{getSnapshot:()=>sessionState,subscribe:()=>()=>{}},binding:()=>null,clear(){sessionState.current='';},open(id){sessionState.current=id;render();},refresh:async()=>{}};
 const workspaces={create:async()=>({workspaceId:'workspace'}),list:{getSnapshot:()=>({byId:{}})}};
@@ -40,6 +41,10 @@ window.verifyOpeningRetention=async function(){
  function preserved(label){check(frame.isConnected && document.querySelector('iframe')===frame && frame.contentWindow.instance===instance && win.document.querySelector('#name').value==='保留的角色' && win.document.querySelector('#choice').checked && win.chosen===1,label);}
  await click(button('暂时收起')?'暂时收起':'关闭');preserved('close keeps original iframe, form and script state');
  await click('卡片');await click('关闭');await click('游玩');preserved('workbench round trip keeps original state');
+ await click('Agent');preserved('Agent switch keeps original iframe and form state');
+ check(!document.querySelector('.dsh-tavern-sidebar .dsh-opening-main-host'),'Agent sidebar never adopts the opening host');
+ check(document.querySelector('.dsh-tavern-side-head').getBoundingClientRect().top<30,'Agent brand remains at the top');
+ await click('游玩');preserved('return from Agent keeps original iframe and form state');
  await click('继续开局 · '+'${card.name}');preserved('return to main conversation keeps original iframe');
  window.fixtureCollapse(true);await until(()=>document.querySelector('.dsh-tavern-sidebar.collapsed'));preserved('collapsed sidebar retains iframe');
  window.fixtureCollapse(false);await until(()=>button('开始新游戏'));preserved('expanded sidebar keeps state');
