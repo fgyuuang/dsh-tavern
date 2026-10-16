@@ -8,7 +8,9 @@ test('Agent workspace opens a native conversation and puts the four-mode selecto
   const { chromium } = await import('playwright'), browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {})
   t.after(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 390, height: 800 } })
-  await page.setContent('<div id="agent-root"></div><div style="position:fixed;left:12px;right:12px;bottom:16px;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #8885;border-radius:16px;background:#8881"><div style="flex:1;min-height:42px;padding:12px;border:1px solid #8884;border-radius:10px">给 Agent 发送消息…</div><div id="root"></div><button type="button" style="min-height:32px">发送</button></div>')
+  await page.setContent('<body class="dsh-tavern-shell-active"><div class="dsh-tavern-sidebar" style="position:absolute;inset:0 0 0 auto;width:390px"><div class="dsh-tavern-side-head">DSH Tavern</div><nav class="dsh-tavern-mode-switch"><button>游玩</button><button>卡片</button><button class="active">Agent</button></nav><div id="agent-root" style="display:flex;flex:1;min-height:0"></div></div><div style="position:fixed;left:12px;right:12px;bottom:16px;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #8885;border-radius:16px;background:#8881"><div style="flex:1;min-height:42px;padding:12px;border:1px solid #8884;border-radius:10px">给 Agent 发送消息…</div><div id="root"></div><button type="button" style="min-height:32px">发送</button></div></body>')
+  await page.addStyleTag({ content: await readFile(new URL('../tavern-plugin/lib/client-assets/tavern.css', import.meta.url), 'utf8') })
+  await page.addStyleTag({ content: ':root{--dsw-specific-sidebar-fill:#fff;--dsw-specific-input-major:#fff;--dsw-specific-menu:#fff;--dsw-alias-label-primary:#292c31;--dsw-alias-label-secondary:#686d74;--dsw-alias-label-tertiary:#92969d;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-border-l2:#e6e8eb;--dsw-alias-border-l3:#d8dbe0;--dsw-alias-interactive-bg-hover:#f1f2f4;--dsw-alias-interactive-bg-active:#e9edf4;--dsw-alias-button-elevated-fill:#fff;--dsw-alias-button-floating-hover:#f5f6f8;--dsw-alias-brand-primary:#587363;--dsw-alias-state-error-primary:#c64545;--dsw-radius-sm:8px;--dsw-radius-md:12px;--dsw-elevation-prominent:0 8px 24px rgba(0,0,0,.16)}body{margin:0;background:#fff}' })
   await page.addStyleTag({ content: await readFile(new URL('../plugins/dsh-tavern-project-agent/assets/workspace.css', import.meta.url), 'utf8') })
   await page.addScriptTag({ content: await browserReactScript() + `
     window.calls=[];let records=[];let nativeListeners=new Set();let view={byId:{'previous-story':{blank:false}},current:'previous-story'};
@@ -30,8 +32,10 @@ test('Agent workspace opens a native conversation and puts the four-mode selecto
     window.setAgentSessionBlank=blank=>{view={...view,byId:{...view.byId,'new-native':{blank}}};nativeListeners.forEach(listener=>listener())};
   ` })
   await page.waitForFunction(() => window.calls.some(row => row.method === 'native-open'))
+  assert.equal(await page.evaluate(() => window.plugin.inject.includes('remote')), true)
   assert.equal(await page.getByRole('combobox', { name: '新对话的原生模式' }).count(), 0)
-  assert.equal(await page.getByText('模式在聊天输入框旁选择；发送第一条消息后固定为本局模式。').count(), 1)
+  assert.equal(await page.locator('.dsh-tavern-side-new').count(), 1)
+  assert.equal(await page.locator('.dsh-tavern-side-row').count(), 1)
   const calls = await page.evaluate(() => window.calls.filter(row => ['native-create', 'native-preset', 'register', 'native-open'].includes(row.method)))
   assert.deepEqual(calls.map(row => row.method), ['native-create', 'native-preset', 'register', 'native-open'])
   assert.equal(calls[1].preset, 'standard')
