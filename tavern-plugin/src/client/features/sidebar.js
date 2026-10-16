@@ -33,10 +33,42 @@
 			const compatibilityAvailable = false;
 			const workspaceRootRef = React.useRef(null);
 			React.useLayoutEffect(function () {
-				// The host keeps this flex region mounted while the workspace changes.
-				// Reset any stale programmatic scroll before the new workspace is painted.
+				// Pin the host flex region above dynamic panel rows. The selected sidebar
+				// lives inside this region, so a late panel registration must not push it
+				// below the top brand area. Restore host styles when Tavern unmounts.
 				const region = workspaceRootRef.current?.closest('[class*="_regionArea"]');
-				if (region) region.scrollTop = 0;
+				if (!region) return;
+				const previousRegion = { order: region.style.order, overflow: region.style.overflow };
+				const hostRoot = region.parentElement;
+				const panelList = Array.from(hostRoot?.children || []).find(function (element) { return String(element.className || "").includes("_panelList"); });
+				const previousPanelList = panelList ? {
+					flex: panelList.style.flex,
+					minHeight: panelList.style.minHeight,
+					maxHeight: panelList.style.maxHeight,
+					overflowY: panelList.style.overflowY,
+					overscrollBehavior: panelList.style.overscrollBehavior
+				} : null;
+				region.style.order = "-1";
+				region.style.overflow = "clip";
+				region.scrollTop = 0;
+				if (panelList) {
+					panelList.style.flex = "0 1 auto";
+					panelList.style.minHeight = "0";
+					panelList.style.maxHeight = "min(28vh, 320px)";
+					panelList.style.overflowY = "auto";
+					panelList.style.overscrollBehavior = "contain";
+				}
+				return function () {
+					if (region.style.order === "-1") region.style.order = previousRegion.order;
+					if (region.style.overflow === "clip") region.style.overflow = previousRegion.overflow;
+					if (panelList && previousPanelList) {
+						if (panelList.style.flex === "0 1 auto") panelList.style.flex = previousPanelList.flex;
+						if (panelList.style.minHeight === "0px") panelList.style.minHeight = previousPanelList.minHeight;
+						if (panelList.style.maxHeight === "min(28vh, 320px)") panelList.style.maxHeight = previousPanelList.maxHeight;
+						if (panelList.style.overflowY === "auto") panelList.style.overflowY = previousPanelList.overflowY;
+						if (panelList.style.overscrollBehavior === "contain") panelList.style.overscrollBehavior = previousPanelList.overscrollBehavior;
+					}
+				};
 			}, [uiMode, collapsed]);
 			const [trustedCardMode, setTrustedCardMode] = React.useState(true);
 			const [cardEntry, setCardEntry] = React.useState("");
